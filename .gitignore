@@ -1,0 +1,10 @@
+node_modules/
+dist/
+release/
+src/embedded.gen.ts
+*.bak
+
+/*.png
+/.readme-capture/
+docs/images/frames/
+.cache/

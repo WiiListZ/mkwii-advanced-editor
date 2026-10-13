@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "objects": {
+    "itembox": {
+      "description": "A rotating item box that starts an item lottery when touched.",
+      "notes": "These labels are examples; check values against the behavior you want in game.",
+      "settings": {
+        "2": {
+          "label": "Player item type",
+          "description": "Item type used for human players.",
+          "values": "0=default; 1=Banana; 2=Mushroom; 7=Green Shell. See the built-in guide for the other original-game codes.",
+          "limits": "Known original-game codes: 0–16 and 597 (0x255)."
+        },
+        "3": {
+          "label": "CPU item type"
+        }
+      }
+    },
+    "0x0065": {
+      "label": "Item Box",
+      "notes": "An ID entry takes priority over the internal-name entry for the same object."
+    },
+    "0x03E8": {
+      "label": "My custom object",
+      "description": "Describe what this custom object does and where its model comes from.",
+      "settings": {
+        "1": {
+          "label": "Speed",
+          "description": "Describe the unit here.",
+          "values": "0=stopped; positive values move the object.",
+          "limits": "Example: 0–120 tested for this custom object."
+        }
+      }
+    }
+  }
+}

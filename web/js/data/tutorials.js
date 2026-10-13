@@ -1,0 +1,177 @@
+// Step-by-step tutorials shown in Help center › Tutorials.
+// Each step is one action in the editor; `tips` are optional notes shown after the steps.
+
+export const TUTORIALS = [
+  {
+    id: 'intro',
+    title: 'Intro camera (opening fly-over)',
+    summary: 'The shots the game shows before the race starts, one after the other.',
+    steps: [
+      'Open the Cameras tab in the left sidebar. The timeline at the top is the intro; it is empty on a new track.',
+      'Fly the 3D view to where the intro starts: hold the right mouse button and use W A S D (Q / E for down / up). The point the view orbits around becomes the look-at point, the zoom of the view is kept too.',
+      'Press "Add keyframe from view". The intro now has a first keyframe at 0 s and a still shot of 3 seconds.',
+      'Click the timeline where the next keyframe should be (each mark is one second), fly the view to the next place and press "Add keyframe from view" again. The camera flies from one keyframe to the next in the time between them.',
+      'To change a keyframe, click its diamond, move the view and press "Set keyframe from view". "Go to" puts the 3D view on the camera at the playhead.',
+      'Drag a diamond left or right to change its time, or type the time in seconds. The keyframes after it keep their time.',
+      'Clicking inside a shot and adding a keyframe there splits it: the camera keeps the same path and passes through the new keyframe.',
+      'Press "Watch" to play the intro in the 3D view from the playhead. Space pauses, the arrows step frame by frame, Esc goes back to editing.',
+    ],
+    tips: [
+      '"Cut to view" on a keyframe makes a hard cut: the shot before still ends on the old view and the next one starts from the 3D view. A cut keyframe has a dashed diamond.',
+      'Each shot between two keyframes is one opening camera of the KMP (with a two-point route when it moves). The speeds are calculated for you; the Inspector still shows every field.',
+      'The "Course selection camera" (same tab) is the view behind the menu while players choose the course.',
+    ],
+  },
+  {
+    id: 'checkpoints',
+    title: 'Start position, checkpoints and laps',
+    summary: 'What the game needs to count laps and positions.',
+    steps: [
+      'Add a Start Position (Track › Start Positions › +) a little behind the finish line, rotated (Y) to face the driving direction.',
+      'Place checkpoints along the whole lap: Checkpoints › +, then click on the road. With "Fit checkpoints to the road" (Settings) each one is as wide as the road.',
+      'Or let the editor do it: Tools › Checkpoints › Generate from enemy routes, once the CPU route exists.',
+      'Make sure exactly one checkpoint is the lap checkpoint (type 0, the finish line). Add a few key checkpoints (1, 2, 3…) around the lap: they must be crossed in order, so they stop shortcuts.',
+      'Check the arrows in the 3D view: they must point in the driving direction. Tools › Checkpoints › Reverse direction or Swap left/right fix them.',
+      'Close the lap: the last group must link to the first one (Tools › Checkpoints › Link groups in sequence).',
+    ],
+    tips: ['The Check tab reports twisted or overlapping checkpoints, missing lap checkpoints and broken links.'],
+  },
+  {
+    id: 'enemy',
+    title: 'CPU routes (enemy routes)',
+    summary: 'The path computer players drive along.',
+    steps: [
+      'Select Enemy Routes (CPU) › + and click points on the road along the racing line. Each click adds a point after the last one; Esc stops.',
+      'Put more points in curves than on straights. Select a point and press A to add one after it.',
+      'For a fork, create a new group for each branch and set the "next" groups of the group before the fork; both branches lead to the group where the paths join.',
+      'Close the lap with Tools › Enemy routes › Link groups in sequence (loop).',
+    ],
+    tips: ['The width of each point is how far CPUs may drift from the line.'],
+  },
+  {
+    id: 'item',
+    title: 'Item routes',
+    summary: 'The path of red and blue shells and Bullet Bill.',
+    steps: [
+      'Tools › Item routes › Copy from enemy routes gives a good start.',
+      'Move points that are too close to walls or too low: homing items follow this line and crash otherwise.',
+      'Close the lap with Tools › Item routes › Link groups in sequence (loop).',
+    ],
+  },
+  {
+    id: 'respawns',
+    title: 'Respawn points',
+    summary: 'Where Lakitu puts players back after a fall.',
+    steps: [
+      'Tools › Respawns › Create from checkpoints places respawns along the lap, facing the driving direction.',
+      'Move any respawn that ended up off the road or inside an object.',
+      'Tools › Checkpoints › Assign nearest respawns makes every checkpoint use the closest respawn.',
+    ],
+    tips: ['Each checkpoint chooses its respawn: select a checkpoint to see and change it in the Inspector.'],
+  },
+  {
+    id: 'objects',
+    title: 'Objects (item boxes, enemies, decorations)',
+    summary: 'Placing game objects on the track.',
+    steps: [
+      'Load Race/Common.szs once in Settings: you get every object name and the shared models.',
+      'Objects › + opens the catalogue. Pick a category, click an object to preview it, then "Add to track" and click on the track. Hold Shift to place several.',
+      'Move it with the gizmo (W / E / R), press G to drop it on the ground.',
+      'Its eight settings change speed, range, timers… the Inspector explains each one.',
+    ],
+    tips: ['Objects that move (cars, boats, Goombas) need a route: create one in Routes and select it in the object\'s Route field.', 'Untick "3-4 players" on heavy decorations to reduce lag in split screen.'],
+  },
+  {
+    id: 'areas',
+    title: 'Areas (replay cameras, fog, currents…)',
+    summary: 'Invisible boxes or cylinders that change something while a kart is inside.',
+    steps: [
+      'Areas › + and click on the track. Choose the Shape (box or cylinder) and the Type.',
+      'Scale it to cover the zone: a scale of 1.0 is 10000 units, starting at its position and going up.',
+      'For replay cameras choose type "Camera (replay)" and pick the camera in the Camera field.',
+      'When areas overlap, the higher Priority wins.',
+    ],
+  },
+  {
+    id: 'cannons',
+    title: 'Cannons',
+    summary: 'A collision that launches the player to a destination.',
+    steps: [
+      'Paint the launch zone with the collision type "Cannon Activator" (Collision › Paint). Its variant is the cannon ID.',
+      'Add a Cannon destination (Cannons › +) where the player should land, and give it the same ID (variant 0 → ID 0, and so on).',
+      'Choose the Shot type: straight, curved or curved slow.',
+    ],
+  },
+  {
+    id: 'paint',
+    title: 'Painting collision types',
+    summary: 'Changing what each part of the ground does (road, grass, boost, fall…).',
+    steps: [
+      'Open the Collision tab and choose Paint. The collision is drawn over the track model at 55% opacity; change it with the Opacity slider, or switch off "Track model".',
+      'Pick the surface type in the grid (hover a colour to read what it does).',
+      'Choose a brush: Triangle (one triangle), Round (everything in a radius), Fill (the connected area of the same type) or Flat area (connected triangles on the same plane).',
+      'Click or drag on the 3D view. The triangle under the cursor is outlined in white.',
+      'Variant and Shadow fine-tune sounds, effects and lighting. Ctrl+Z undoes a stroke.',
+    ],
+    tips: ['Show mode lists the types used in the track: click one to hide or show it.'],
+  },
+  {
+    id: 'shapes',
+    title: 'Drawing new collision',
+    summary: 'Adding collision with shapes that are split into triangles for you.',
+    steps: [
+      'Collision › Edit. Choose the "Surface of new shapes" (Road, Wall…).',
+      'Pick a shape: Triangle, Rectangle, Wall, Box, Cylinder, Sphere or Polygon. Set the height (wall, box, cylinder) and the segments (cylinder, sphere).',
+      'Press "Draw …" and click on the track. The shape is previewed in yellow under the cursor.',
+      'Rectangle: two corners of one side, then a point for the width; it follows slopes, so it is good for ramps. Wall and Box: two points on the ground. Cylinder and Sphere: the centre, then a point on the edge. Polygon: any number of corners, Enter (or a click on the first corner) closes it.',
+      'Backspace removes the last point, Esc cancels.',
+      'When it is done the new triangles are selected: move, rotate or scale them with the gizmo (W / E / R), or change their surface type.',
+    ],
+    tips: ['Floors and walls face the camera, boxes, cylinders and spheres face outwards. Flip normal reverses selected triangles.'],
+  },
+  {
+    id: 'model',
+    title: 'Editing the track model',
+    summary: 'Moving parts of the visible model and adding new ones.',
+    steps: [
+      'With "Edit on" next to Track model, click a part of the model in the 3D view: it turns yellow and the gizmo appears.',
+      'Move, rotate or scale it with W / E / R. Ctrl+C / Ctrl+V copies it, Delete removes it.',
+      'Track model › + › Part from game models copies parts from the other tracks of your game folder (choose the tracks folder in Settings).',
+      'Track model › + › Import 3D model…, or drop OBJ, FBX, glTF, DAE… files on the window, to add your own models with their textures.',
+    ],
+    tips: ['Changing the model does not change the collision: paint or draw collision for new parts.'],
+  },
+  {
+    id: 'textures',
+    title: 'Editing textures and PNG overlays',
+    summary: 'Painting on a texture of the model or of an object.',
+    steps: [
+      'Select a part of the track model (or an object) and press "Edit texture…" in the Inspector.',
+      'Paint with the brush, erase back to the original pixels with Eraser, pick colours with Pick color. The 3D view updates while you paint.',
+      'Overlay PNG… places a PNG over the texture. With "Move overlay" drag it to move it and drag the white handles to resize it (corners keep the proportions, Shift resizes freely). You can come back to it at any time.',
+      'Merge makes the overlay part of the texture; Remove takes it away. Replace PNG… replaces the whole texture.',
+    ],
+  },
+  {
+    id: 'newtrack',
+    title: 'Creating a track from scratch',
+    summary: 'The generator builds a complete, drivable track from a drawn layout.',
+    steps: [
+      'File › Create new track (Ctrl+N). Shape the layout seen from above: drag a point to move it, click on the line to add one, right-click a point to remove it. Middle-drag moves the view.',
+      'On the right set the road and off-road width, wall height, boost panels, laps, item box rows, key checkpoints and respawn spacing.',
+      'Generate track: the road, walls, collision, checkpoints, CPU and item routes, respawns and item boxes are built, and the track opens in the editor.',
+      'Leave "Keep the other files of the open SZS" off for a completely new track; turn it on to reuse the models and effects of the open archive.',
+      'Export the model as OBJ (File › Export) and build course_model.brres with BrawlCrate, or import 3D models directly.',
+    ],
+  },
+  {
+    id: 'save',
+    title: 'Checking, saving and testing',
+    summary: 'Before you try the track in the game.',
+    steps: [
+      'Open the Check tab: it lists problems that crash the game or break laps, and fixes many of them with one click.',
+      'Save with Ctrl+S. With backups enabled in Settings, the first save keeps a .bak copy of the original file.',
+      'Copy the .szs into your game (Race/Course) under the name of the track it replaces, or use it in a custom track distribution.',
+    ],
+  },
+];
