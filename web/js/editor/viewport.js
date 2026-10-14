@@ -10,7 +10,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
-import { KCL_TYPES, OBJECT_DISPLAY, categorizeObject } from '../data/defs.js';
+import { KCL_TYPES, OBJECT_DISPLAY, categorizeObject, objectDisplayY } from '../data/defs.js';
 import { polygonPieces } from '../formats/brres.js';
 import { ModelLibrary, modelKeyForObject } from './models.js';
 import { EffectPreview } from './effect-preview.js';
@@ -36,8 +36,8 @@ export const AREA_TYPE_COLORS = [0xff3b3b, 0xb07cff, 0x9fb4c8, 0x4ade80, 0xff9f4
 
 export const LAYERS = ['VISUAL', 'SKY', 'KCL', 'MODEL', 'GRID', 'KTPT', 'ENPT', 'ITPT', 'CKPT', 'GOBJ', 'POTI', 'AREA', 'CAME', 'JGPT', 'CNPT', 'MSPT'];
 
-// three-mesh-bvh adds/reorders an index buffer; faceIndex then refers to that buffer,
-// while face.a still identifies the original non-indexed triangle we built.
+// Geometries indexed by three-mesh-bvh (without `indirect`) have a reordered index buffer;
+// faceIndex then refers to that buffer, while face.a still identifies the original triangle.
 const sourceTriangle = (hit) => hit.object.geometry.index && hit.face ? Math.floor(hit.face.a / 3) : hit.faceIndex;
 
 export class Viewport extends EventTarget {
@@ -375,7 +375,10 @@ export class Viewport extends EventTarget {
       group.traverse((o) => {
         if (o.isMesh && !o.isSkinnedMesh && !seen.has(o.geometry)) {
           seen.add(o.geometry);
-          o.geometry.computeBoundsTree?.();
+          // indirect: the BVH keeps its own triangle order instead of reordering the index buffer,
+          // so the triangles are still drawn in the file's order. Blended layers (the Dry Dry Ruins
+          // sand) depend on it: reordered, their depth test shows dark triangles of the road below.
+          o.geometry.computeBoundsTree?.({ indirect: true });
         }
       });
       this.courseGroup.add(group);
@@ -704,7 +707,8 @@ export class Viewport extends EventTarget {
     };
     // Detailed model (procedural); falls back to a marker in "markers" mode.
     const model = (key, modelKey, fallbackGeom, color, pos, opts = {}) => {
-      if (this.modelMode === 'markers') return marker(key, fallbackGeom, color, pos, opts);
+      // markerScale: proportions of the plain marker only (the model keeps its own).
+      if (this.modelMode === 'markers') return marker(key, fallbackGeom, color, pos, { ...opts, scale: opts.markerScale ?? opts.scale });
       const selFlag = opts.selected ?? isSel(key);
       const obj = obtain(String(key), `p|${modelKey}|${color}|${selFlag}`, () => {
         const o = this.models.instance(modelKey, { color });
@@ -808,7 +812,7 @@ export class Viewport extends EventTarget {
     // Start positions: a kart.
     if (this.layers.KTPT) for (const e of k.KTPT) {
       const real = this.modelMode === 'real' ? this.startModelProvider?.() : null;
-      if (!real) { model(e.uid, 'kart', this.geo.boxBase, COLORS.KTPT, e.pos, { rot: e.rot, size: s * 1.2, scale: [1, 0.5, 1.6] }); continue; }
+      if (!real) { model(e.uid, 'kart', this.geo.boxBase, COLORS.KTPT, e.pos, { rot: e.rot, size: s * 1.2, markerScale: [1, 0.5, 1.6] }); continue; }
       const selFlag = isSel(e.uid);
       const obj = obtain(String(e.uid), `kart|${selFlag}|${real.template.uuid}`, () => {
         const o = cloneModel(real.template);
@@ -843,7 +847,7 @@ export class Viewport extends EventTarget {
             return o;
           });
           const lift = this.groundLift(real.template, e, !!display?.ground);
-          place(obj, e.uid, display ? [e.pos[0], e.pos[1] + (display.y || 0) + lift, e.pos[2]] : e.pos, { rot: e.rot, scale: display?.scale ? sc.map((v) => v * display.scale) : sc });
+          place(obj, e.uid, display ? [e.pos[0], e.pos[1] + objectDisplayY(display, e) + lift, e.pos[2]] : e.pos, { rot: e.rot, scale: display?.scale ? sc.map((v) => v * display.scale) : sc });
           if (obj.userData.chrBinding) this.animated.push(obj);
           if (obj.userData.billboards.length) this.billboards.push(...obj.userData.billboards);
         } else if (this.modelMode !== 'markers') {
@@ -860,7 +864,7 @@ export class Viewport extends EventTarget {
             return o;
           });
           obj.userData.batchable = !selFlag && key !== 'itembox';
-          place(obj, e.uid, display ? [e.pos[0], e.pos[1] + (display.y || 0), e.pos[2]] : e.pos, { rot: e.rot, scale: sc, size: s * (key === 'itembox' ? 1.2 : 1.4) });
+          place(obj, e.uid, display ? [e.pos[0], e.pos[1] + objectDisplayY(display, e), e.pos[2]] : e.pos, { rot: e.rot, scale: sc, size: s * (key === 'itembox' ? 1.2 : 1.4) });
         } else {
           obj = marker(e.uid, this.geo.boxBase, e.objectId === 0x65 ? COLORS.ITEMBOX : COLORS.GOBJ, e.pos, { rot: e.rot, scale: sc.map(Math.abs), size: s * 1.4 });
         }
@@ -1227,7 +1231,7 @@ export class Viewport extends EventTarget {
     if (displayed) return displayed.position.clone();
     const name = this.objectNameProvider(info.item.objectId);
     const display = OBJECT_DISPLAY[name] || (info.item.objectId === 0x65 ? OBJECT_DISPLAY.itembox : null);
-    return new THREE.Vector3(pos[0], pos[1] + (display?.y || 0), pos[2]);
+    return new THREE.Vector3(pos[0], pos[1] + objectDisplayY(display, info.item), pos[2]);
   }
 
   updateGizmo() {
@@ -1644,10 +1648,10 @@ export class Viewport extends EventTarget {
     // In the desktop window the cursor is kept in place natively (src/window.ts): the browser's
     // pointer lock would show a "press Esc to show your cursor" banner. Pointer lock is only the
     // fallback when the editor runs in a normal browser.
-    const nativeCursor = (action) => {
-      try { Promise.resolve(window.__winctl(action)).catch(() => {}); } catch { /* window closing */ }
+    const nativeCursor = (action, arg) => {
+      try { Promise.resolve(window.__winctl(action, arg)).catch(() => {}); } catch { /* window closing */ }
     };
-    const RECENTER = 150; // CSS px from the start before the hidden cursor is put back
+    const RECENTER = 150; // CSS px from the view's centre before the hidden cursor is put back
     // Capture phase: runs before OrbitControls so Alt+left can switch it to orbit.
     c.addEventListener('pointerdown', (e) => {
       c.focus();
@@ -1656,7 +1660,15 @@ export class Viewport extends EventTarget {
         e.preventDefault();
         this.rmbDown = true;
         const native = this.hideCursorWhileLooking && typeof window.__winctl === 'function';
-        rmb = { moved: 0, x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY, native, warpFrom: null };
+        // The hidden cursor is put back at the centre of the 3D view (not where the button was
+        // pressed, which can be near the screen edge: the cursor would stop there before moving far
+        // enough to be put back, and the view would stop turning).
+        const r = c.getBoundingClientRect();
+        const ax = r.left + r.width / 2, ay = r.top + r.height / 2;
+        rmb = { moved: 0, x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY, native, warpFrom: null, ax, ay,
+          radius: Math.max(20, Math.min(RECENTER, Math.min(r.width, r.height) / 2 - 20)),
+          // Offset from the saved screen position to the centre, in screen pixels.
+          warpArg: `${Math.round((ax - e.clientX) * devicePixelRatio)},${Math.round((ay - e.clientY) * devicePixelRatio)}` };
         if (native) nativeCursor('cursor-save');
         this.controls.enabled = false;
         this.updateCursor();
@@ -1767,18 +1779,18 @@ export class Viewport extends EventTarget {
       if (this.rmbDown) {
         let dx = e.movementX, dy = e.movementY;
         if (rmb?.native) {
-          // The cursor is put back at its start whenever it gets far, so it never stops at the
-          // screen edge. Movement is measured from positions: the first event after the jump is the
-          // one nearer the start than the place it jumped from.
+          // The cursor is put back at the view's centre whenever it gets far from it, so it never
+          // stops at the screen edge. Movement is measured from positions: the first event after the
+          // jump is the one nearer the centre than the place it jumped from.
           const from = rmb.warpFrom;
-          if (from && Math.hypot(e.clientX - rmb.x, e.clientY - rmb.y) < Math.hypot(e.clientX - from.x, e.clientY - from.y)) {
-            rmb.lastX = rmb.x; rmb.lastY = rmb.y; rmb.warpFrom = null;
+          if (from && Math.hypot(e.clientX - rmb.ax, e.clientY - rmb.ay) < Math.hypot(e.clientX - from.x, e.clientY - from.y)) {
+            rmb.lastX = rmb.ax; rmb.lastY = rmb.ay; rmb.warpFrom = null;
           }
           dx = e.clientX - rmb.lastX; dy = e.clientY - rmb.lastY;
           rmb.lastX = e.clientX; rmb.lastY = e.clientY;
-          if (!rmb.warpFrom && Math.max(Math.abs(e.clientX - rmb.x), Math.abs(e.clientY - rmb.y)) > RECENTER) {
+          if (!rmb.warpFrom && Math.max(Math.abs(e.clientX - rmb.ax), Math.abs(e.clientY - rmb.ay)) > rmb.radius) {
             rmb.warpFrom = { x: e.clientX, y: e.clientY };
-            nativeCursor('cursor-recenter');
+            nativeCursor('cursor-recenter', rmb.warpArg);
           }
         } else if (rmb && !rmb.locked && this.hideCursorWhileLooking && c.requestPointerLock) {
           // Browser fallback. Asked on the first move, not on pointerdown: a pending lock makes other

@@ -142,9 +142,9 @@ function FileAssociation() {
     setBusy(false);
   };
   return <div className="mt-2 space-y-2 rounded-md border bg-muted/20 p-2.5">
-    <div className="text-xs font-medium">Open Mario Kart Wii files with this editor {state?.registered ? "· On" : ""}</div>
+    <div className="text-xs font-medium">Open Mario Kart Wii files with this editor {state?.registered ? "· Registered" : ""}</div>
     <p className="text-[11px] leading-relaxed text-muted-foreground">
-      {state && !state.available ? "Available in the installed MKWiiAdvancedEditor.exe." : "Double-click a track or archive (.szs, .wlz, .wbz, .wu8, .kmp, .kcl), a model (.brres), game text (.bmg), an effect (.breff, .breft) or music (.brstm, .brsar) in Explorer to open it here. It also adds the editor to the “Open with” menu. Only for your Windows user."}
+      {state && !state.available ? "Available in the installed MKWiiAdvancedEditor.exe." : "Register this editor for tracks, archives, models, text, effects, BRSTM music and BRSAR sounds. If Explorer still shows another default app (such as SSBB), right-click a .brstm or .brsar file › Open with › MKWii Advanced Editor › Always. Only for your Windows user."}
     </p>
     <Button size="sm" variant="secondary" disabled={!state?.available || busy} onClick={() => change(!state?.registered)}>
       <FileCheck2 /> {state?.registered ? "Remove association" : "Associate Mario Kart Wii files"}

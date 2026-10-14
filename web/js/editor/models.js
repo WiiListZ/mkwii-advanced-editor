@@ -163,6 +163,19 @@ export class ModelLibrary {
     });
   }
 
+  // White round badge with a red "M" (Mario's cap and kart), on a transparent background.
+  emblemTexture() {
+    return this.canvasTexture('emblem', (ctx, n) => {
+      ctx.clearRect(0, 0, n, n);
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(n / 2, n / 2, n * 0.47, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#e0262c';
+      ctx.font = `900 ${Math.round(n * 0.62)}px Arial Black, Arial, sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('M', n / 2, n * 0.54);
+    });
+  }
+
   checkerTexture() {
     return this.canvasTexture('checker', (ctx, n) => {
       const q = n / 8;
@@ -189,17 +202,86 @@ export class ModelLibrary {
 
     switch (key) {
       // --------------------------------------------------- track elements
-      case 'kart': {
-        const body = opts.color ?? 0xe53935;
-        P(B, M(body), [0, 0.32, 0], [0.9, 0.28, 1.5]);
-        P(B, M(body), [0, 0.3, 0.85], [0.7, 0.2, 0.35], [-0.25, 0, 0]);
-        P(B, M(0x333333), [0, 0.5, -0.25], [0.5, 0.25, 0.4]);
-        for (const [x, z] of [[-0.55, 0.5], [0.55, 0.5], [-0.55, -0.5], [0.55, -0.5]]) wheel(x, 0.22, z);
-        P(S, M(0xffd2a6), [0, 0.95, -0.2], 0.24);
-        P(S, M(body), [0, 1.08, -0.2], [0.26, 0.14, 0.26]);
-        P(B, M(body), [0, 1.04, -0.02], [0.3, 0.05, 0.16]);
-        P(T, M(0x222222), [0, 0.68, 0.18], [0.14, 0.14, 0.14], [-0.6, 0, 0]);
-        P(B, M(0x777777), [0, 0.42, -0.85], [0.3, 0.12, 0.2]);
+      case 'kart': { // start position: Mario on the Standard Kart (front is +z, about 2 long)
+        const red = opts.color ?? 0xd8262c, cap = 0xe0262c, blue = 0x2742b8, silver = 0xb9bec6, steel = 0x6f757d;
+        const dark = 0x1f2125, skin = 0xffc79c, white = 0xf7f7f7, brown = 0x5a3216;
+        const badge = M(0xffffff, { map: this.emblemTexture(), transparent: true, alphaTest: 0.4, side: THREE.DoubleSide });
+        const plane = this.geo('plane', () => new THREE.PlaneGeometry(1, 1));
+        // Chassis: steel floor and silver side rails.
+        P(B, M(steel), [0, 0.2, -0.05], [0.62, 0.07, 1.5]);
+        for (const sx of [-1, 1]) P(C, M(silver), [sx * 0.3, 0.27, -0.05], [0.035, 1.5, 0.035], [Math.PI / 2, 0, 0]);
+        // Front cowl: a thick red U around the front wheels, white stripe down the middle of the nose.
+        const arc = this.geo('kart-cowl', () => new THREE.TorusGeometry(1, 0.34, 10, 24, Math.PI));
+        P(arc, M(red), [0, 0.26, 0.34], [0.58, 0.62, 0.55], [Math.PI / 2, 0, 0]);
+        P(B, M(red), [0, 0.2, 0.62], [0.72, 0.12, 0.62]);
+        P(B, M(white), [0, 0.38, 0.97], [0.1, 0.22, 0.05], [-0.25, 0, 0]);
+        P(B, M(white), [0, 0.45, 0.82], [0.1, 0.02, 0.26], [0.15, 0, 0]);
+        // Blue nose tower up to the steering wheel, with the "M" badge.
+        P(B, M(blue), [0, 0.52, 0.5], [0.19, 0.42, 0.13], [-0.45, 0, 0]);
+        P(B, M(blue), [0, 0.62, 0.34], [0.15, 0.12, 0.2]);
+        P(plane, badge, [0, 0.55, 0.58], [0.13, 0.13, 1], [-0.45, 0, 0]);
+        // Steering column and wheel.
+        P(C, M(silver), [0, 0.7, 0.24], [0.025, 0.2, 0.025], [-0.9, 0, 0]);
+        P(T, M(dark), [0, 0.78, 0.17], [0.13, 0.13, 0.11], [-0.75, 0, 0]);
+        // Sides: chequered panels behind the front wheels, red pods by the rear wheels.
+        const checks = M(0xffffff, { map: this.checkerTexture() });
+        for (const sx of [-1, 1]) {
+          P(B, checks, [sx * 0.36, 0.33, 0.12], [0.05, 0.2, 0.42]);
+          P(S, M(red), [sx * 0.4, 0.36, -0.5], [0.2, 0.17, 0.32]);
+        }
+        // Seat with the silver roll bar behind it.
+        P(B, M(dark), [0, 0.36, -0.22], [0.42, 0.08, 0.36]);
+        P(B, M(dark), [0, 0.6, -0.42], [0.42, 0.42, 0.08], [0.25, 0, 0]);
+        for (const sx of [-1, 1]) P(C, M(silver), [sx * 0.24, 0.62, -0.5], [0.03, 0.62, 0.03], [0.25, 0, 0]);
+        P(C, M(silver), [0, 0.9, -0.57], [0.03, 0.5, 0.03], [0, 0, Math.PI / 2]);
+        // Rear: engine block, four exhaust pipes pointing up and back, bumper with the "M" plate.
+        P(B, M(silver), [0, 0.45, -0.78], [0.5, 0.3, 0.32]);
+        for (const [x, lift] of [[-0.3, 0.06], [-0.12, 0], [0.12, 0], [0.3, 0.06]]) {
+          const y = 0.64 + lift;
+          P(C, M(0x4b5058, { metalness: 0.5, roughness: 0.4 }), [x, y, -0.92], [0.095, 0.46, 0.095], [Math.PI / 2 - 0.4, 0, Math.sign(x) * -0.15]);
+          P(T, M(0xc9ced6, { metalness: 0.6, roughness: 0.3 }), [x * 1.04, y + 0.09, -1.13], [0.09, 0.09, 0.09], [-0.4, 0, 0]);
+          P(C, M(0x0b0b0b), [x * 1.04, y + 0.09, -1.13], [0.07, 0.02, 0.07], [Math.PI / 2 - 0.4, 0, 0]);
+        }
+        P(B, M(steel), [0, 0.28, -1.0], [0.75, 0.1, 0.08]);
+        P(plane, badge, [0, 0.29, -1.045], [0.13, 0.13, 1], [0, Math.PI, 0]);
+        // Wheels: small at the front (under the cowl), big ones at the back; grey hubs.
+        for (const [z, r, w, x] of [[0.66, 0.17, 0.14, 0.56], [-0.6, 0.29, 0.26, 0.62]]) for (const sx of [-1, 1]) {
+          wheel(sx * x, r, z, r, w);
+          P(C, M(silver), [sx * (x + 0.01), r, z], [r * 0.5, w + 0.01, r * 0.5], [0, 0, Math.PI / 2]);
+          P(C, M(steel), [sx * (x + 0.015), r, z], [r * 0.18, w + 0.02, r * 0.18], [0, 0, Math.PI / 2]);
+        }
+        // Mario: brown shoes on the pedals, blue overalls with yellow buttons, red shirt, white gloves.
+        for (const sx of [-1, 1]) {
+          P(S, M(brown), [sx * 0.1, 0.33, 0.42], [0.08, 0.07, 0.12]);
+          P(C, M(blue), [sx * 0.1, 0.42, 0.18], [0.075, 0.42, 0.075], [Math.PI / 2 - 0.25, 0, 0]);
+        }
+        P(S, M(blue), [0, 0.5, -0.18], [0.24, 0.15, 0.22]);
+        P(C, M(blue), [0, 0.68, -0.22], [0.22, 0.3, 0.19]);
+        P(S, M(cap), [0, 0.86, -0.22], [0.27, 0.17, 0.22]);
+        for (const sx of [-1, 1]) {
+          P(B, M(blue), [sx * 0.11, 0.82, -0.06], [0.055, 0.16, 0.03]);
+          P(S, M(0xffd400), [sx * 0.11, 0.76, -0.04], 0.035);
+          P(C, M(cap), [sx * 0.22, 0.82, -0.05], [0.07, 0.32, 0.07], [1.2, 0, sx * -0.45]);
+          P(S, M(white), [sx * 0.12, 0.78, 0.15], [0.085, 0.08, 0.09]);
+        }
+        // Head (big, as on the game's Mario): round nose, black moustache, blue eyes, eyebrows,
+        // ears, sideburns and brown hair at the back.
+        P(S, M(skin), [0, 1.13, -0.17], [0.25, 0.25, 0.24]);
+        P(S, M(skin), [0, 1.08, 0.1], [0.09, 0.08, 0.08]);
+        for (const sx of [-1, 1]) {
+          P(S, M(0x121212), [sx * 0.08, 1.0, 0.06], [0.1, 0.045, 0.06], [0, sx * 0.35, sx * 0.25]);
+          P(S, M(white), [sx * 0.075, 1.18, 0.05], [0.045, 0.07, 0.025]);
+          P(S, M(0x2563eb), [sx * 0.07, 1.17, 0.068], [0.026, 0.042, 0.012]);
+          P(S, M(0x080808), [sx * 0.07, 1.17, 0.075], [0.012, 0.02, 0.008]);
+          P(B, M(0x2a1a0c), [sx * 0.08, 1.27, 0.05], [0.07, 0.018, 0.018], [0, 0, sx * -0.2]);
+          P(S, M(skin), [sx * 0.245, 1.12, -0.19], [0.05, 0.075, 0.04]);
+          P(S, M(brown), [sx * 0.19, 1.06, -0.25], [0.07, 0.11, 0.09]);
+        }
+        P(S, M(brown), [0, 1.04, -0.36], [0.2, 0.12, 0.09]);
+        // Cap: red dome, brim to the front, white badge with the "M".
+        P(this.hemi(), M(cap), [0, 1.2, -0.17], [0.265, 0.2, 0.27]);
+        P(C, M(cap), [0, 1.205, 0.07], [0.19, 0.026, 0.12]);
+        P(plane, badge, [0, 1.31, 0.065], [0.15, 0.15, 1], [-0.5, 0, 0]);
         break;
       }
       case 'shell': // item route point
@@ -215,13 +297,39 @@ export class ModelLibrary {
         P(B, M(0x555555), [0, -0.45, 0], [0.12, 0.4, 0.12]);
         break;
       }
-      case 'lakitu': { // respawn point
-        for (const [x, y, z, r] of [[0, 0.55, 0, 0.42], [0.38, 0.5, 0.05, 0.3], [-0.38, 0.5, 0.05, 0.3], [0, 0.5, 0.35, 0.3], [0, 0.5, -0.35, 0.3]]) P(S, M(0xffffff), [x, y, z], r);
-        eyes(0.72, 0.36, 0.13, 0.08, 0.05);
-        P(S, M(0xffd23f), [0, 1.0, 0], 0.22);
-        P(S, M(0x3a7a2a), [0, 1.15, 0], [0.24, 0.1, 0.24]);
-        P(K, M(0x60a5fa, { emissive: 0x1d4ed8 }), [0, 0.05, 0.8], [0.18, 0.5, 0.18], [Math.PI / 2, 0, 0]);
-        P(C, M(0x60a5fa, { transparent: true, opacity: 0.5 }), [0, 0.01, 0], [0.7, 0.02, 0.7]);
+      case 'lakitu': { // respawn point: Lakitu sitting in his cloud (front is +z)
+        const yellow = 0xf5c518, green = 0x2e9b3a, deep = 0x145a1c, black = 0x111111;
+        const ring = this.geo('thin-ring', () => new THREE.TorusGeometry(1, 0.08, 8, 28));
+        const frame = this.geo('goggle-frame', () => new THREE.TorusGeometry(1, 0.22, 8, 24));
+        const smile = this.geo('smile', () => new THREE.TorusGeometry(1, 0.12, 6, 16, Math.PI));
+        // Cloud: one smooth puffy shape, a little flat underneath, with its small face at the front.
+        P(S, M(0xffffff), [0, 0.45, 0], [0.5, 0.4, 0.46]);
+        for (const [x, y, z, r] of [[0.3, 0.42, 0.12, 0.26], [-0.3, 0.42, 0.12, 0.26], [0.28, 0.45, -0.18, 0.26], [-0.28, 0.45, -0.18, 0.26], [0, 0.55, -0.28, 0.28]]) P(S, M(0xffffff), [x, y, z], r);
+        P(S, M(0xe3e6ea), [0, 0.2, 0], [0.42, 0.14, 0.4]);
+        for (const sx of [-1, 1]) P(S, M(black), [sx * 0.09, 0.42, 0.45], [0.028, 0.05, 0.02]);
+        P(smile, M(black), [0, 0.39, 0.455], [0.06, 0.045, 0.3], [0, 0, Math.PI]);
+        // Shell on his back: green dome with darker bands and a white rim.
+        P(this.hemi(), M(green), [0, 1.02, -0.22], [0.32, 0.34, 0.32], [-1.25, 0, 0]);
+        for (const [k, r] of [[0.1, 0.3], [0.2, 0.24], [0.28, 0.15]]) P(ring, M(deep), [0, 1.02 + k * 0.32, -0.22 - k], [r, r, 0.5], [-1.25 + Math.PI / 2, 0, 0]);
+        P(this.geo('shell-rim', () => new THREE.TorusGeometry(1, 0.12, 8, 28)), M(0xf4f1e6), [0, 1.02, -0.22], [0.32, 0.32, 0.4], [-1.25 + Math.PI / 2, 0, 0]);
+        // Yellow body leaning forward, arms folded with a hand under the chin.
+        P(S, M(yellow), [0, 0.98, 0.02], [0.22, 0.27, 0.19], [0.25, 0, 0]);
+        for (const sx of [-1, 1]) P(C, M(yellow), [sx * 0.12, 1.08, 0.2], [0.055, 0.28, 0.055], [1.1, 0, sx * 0.95]);
+        P(S, M(yellow), [0.03, 1.16, 0.3], [0.075, 0.065, 0.065]);
+        // Big round head with the snout and mouth.
+        P(S, M(yellow), [0, 1.42, 0.06], [0.24, 0.26, 0.23]);
+        P(S, M(yellow), [0, 1.3, 0.25], [0.12, 0.1, 0.1]);
+        P(smile, M(0x9a6b00), [0, 1.28, 0.33], [0.06, 0.04, 0.2], [0, 0, Math.PI]);
+        // Goggles over the eyes: thick black frames, amber lenses, a thin white strap.
+        for (const sx of [-1, 1]) {
+          P(frame, M(black), [sx * 0.105, 1.46, 0.26], [0.1, 0.1, 0.12], [-0.15, sx * 0.25, 0]);
+          P(C, M(0xf6cf4f, { emissive: 0x4a3200 }), [sx * 0.105, 1.46, 0.255], [0.085, 0.01, 0.085], [Math.PI / 2 - 0.15, 0, sx * -0.25]);
+          P(S, M(black), [sx * 0.09, 1.45, 0.24], [0.03, 0.045, 0.015]);
+        }
+        P(ring, M(0xf2f2f2), [0, 1.46, 0.06], [0.245, 0.245, 0.3], [Math.PI / 2 + 0.1, 0, 0]);
+        // Editor marks: the spot where the kart is put back and the direction it faces.
+        P(C, M(0x60a5fa, { transparent: true, opacity: 0.5 }), [0, 0.01, 0], [0.6, 0.02, 0.6]);
+        P(K, M(0x60a5fa, { emissive: 0x1d4ed8 }), [0, 0.05, 0.75], [0.14, 0.4, 0.14], [Math.PI / 2, 0, 0]);
         break;
       }
       case 'cannon': {

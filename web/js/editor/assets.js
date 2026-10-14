@@ -28,14 +28,15 @@ export class GameAssets {
   }
 
   // Start position model: Mario on the Standard Kart M, built from the game's own files
-  // (Race/Kart/ma_kart-mr.szs, wheel positions and ride height from Common.szs bsp/ma_kart.bsp).
-  async loadKart(readFile, raceDir, kartFile = 'mdf_kart-mr.szs') {
-    if (!raceDir || this.kartDir === raceDir + kartFile) return;
+  // (Race/Kart/mdf_kart-mr.szs, wheel positions and ride height from Common.szs bsp/mdf_kart.bsp).
+  // Without them the editor draws its own Mario on the kart (models.js).
+  async loadKart(readFile, raceDir, kartFile = 'mdf_kart-mr.szs', force = false) {
+    if (!raceDir || (!force && this.kartDir === raceDir + kartFile)) return;
     this.kartDir = raceDir + kartFile;
     try {
       let bytes = await readFile(`${raceDir}\\Kart\\${kartFile}`);
       if (isYaz0(bytes)) bytes = yaz0Decompress(bytes);
-      if (!isU8(bytes)) throw new Error('ma_kart-mr.szs is not an SZS archive');
+      if (!isU8(bytes)) throw new Error(`${kartFile} is not an SZS archive`);
       const tree = parseU8(bytes);
       const stem = kartFile.replace(/-.*$/, '');
       const bsp = this.common && findFile(this.common, `bsp/${stem}.bsp`);
@@ -49,26 +50,13 @@ export class GameAssets {
   }
 
   // Respawn point model: Lakitu (jugemu.brres in Common.szs) with its hair tuft, playing "wait".
+  // Without Common.szs the editor draws its own Lakitu (models.js).
   lakitu() {
+    if (!this.common) return null; // asked again once Common.szs is loaded
     if (this.lakituModel !== undefined) return this.lakituModel;
-    const b = this.common && this.brres(this.common, 'jugemu.brres');
-    const model = b?.models.find((m) => m.name === 'jugemu');
-    if (!model) return null; // Common.szs not loaded yet: asked again later
+    const b = this.brres(this.common, 'jugemu.brres');
     try {
-      const chr = b.chr.get('wait') || [...b.chr.values()][0] || null;
-      const builder = new BrresModelBuilder(b);
-      const group = builder.build(model, { skinned: !!chr, lit: null });
-      const hairModel = b.models.find((m) => m.name === 'jugemu_hair');
-      let head = null;
-      group.traverse((o) => { if (o.isBone && o.name === 'ef_head') head = o; });
-      if (hairModel && head) {
-        const hair = builder.build(hairModel, { lit: null });
-        // ef_head marks the top of the head; the tuft model starts at its own origin.
-        hair.position.set(0, -8, -6);
-        head.add(hair);
-        group.userData.materials = [...(group.userData.materials || []), ...(hair.userData.materials || [])];
-      }
-      this.lakituModel = { template: group, chr };
+      this.lakituModel = b ? buildLakitu(b) : null;
     } catch (e) {
       console.warn('Lakitu model not built:', e);
       this.lakituModel = null;
@@ -179,7 +167,7 @@ export class GameAssets {
 
   collectTrackSRT() {
     const { course, sky } = this.built;
-    this.srt = [course?.srt, sky?.srt, ...(course?.extra || []), ...(sky?.extra || [])].filter(Boolean);
+    this.srt = [...(course?.srts || []), ...(sky?.srts || []), ...(course?.extra || []), ...(sky?.extra || [])];
     this.refreshSRT();
   }
 
@@ -224,7 +212,7 @@ export class GameAssets {
   }
 
   refreshSRT() {
-    const objectSRT = [...this.objects.values()].filter(Boolean).flatMap((o) => [o.srt, ...(o.extra || [])]).filter(Boolean);
+    const objectSRT = [...this.objects.values()].filter(Boolean).flatMap((o) => [...(o.srts || []), ...(o.extra || [])]);
     this.viewport.setSRTBindings([...this.srt, ...objectSRT]);
   }
 
@@ -252,13 +240,15 @@ export class GameAssets {
       const builder = new BrresModelBuilder(b);
       const group = builder.build(model, { skinned: !!chr && opts.skinned !== false, lit: opts.lit });
       group.userData.chrBindings = [...b.chr.values()].map((animation) => bindCHR(animation, group)).filter(Boolean);
-      const srtAnim = b.srt.get(model.name) || b.srt.get(preferred) || [...b.srt.values()][0];
-      // Texture swaps and colour animations: all of them ("course", "course2"… animate different
-      // materials); when two animate the same material the one named after the model wins.
+      // A BRRES can have several SRT0 groups ("course", "course2"…), each animating different
+      // materials. Bind all of them; prefer the model's own group if a slot appears twice.
       const ordered = (map) => [...map.values()].sort((x, y) => Number(y.name === model.name || y.name === preferred) - Number(x.name === model.name || x.name === preferred));
+      const srtClaimed = new Set();
+      const srts = ordered(b.srt).map((animation) => bindSRT(animation, group, srtClaimed)).filter(Boolean);
+      // Texture swaps and colour animations follow the same model-name priority.
       const patClaimed = new Set(), clrClaimed = new Set();
       const extra = [...ordered(b.pat).map((a) => bindPAT(a, group, builder, patClaimed)), ...ordered(b.clr).map((a) => bindCLR(a, group, clrClaimed))].filter(Boolean);
-      return { group, chr, srt: srtAnim ? bindSRT(srtAnim, group) : null, extra, brres: b, model };
+      return { group, chr, srts, extra, brres: b, model };
     } catch (e) {
       console.warn(`Could not build ${file}:`, e);
       return null;
@@ -281,7 +271,7 @@ export class GameAssets {
           // One-shot texture swaps and colour changes (a Thwomp's face when it lands) play on game
           // events: at rest the object shows their first frame, which is also the texture people paint.
           for (const b of built.extra) if (!b.loop) b.rest = true;
-          found = { template: built.group, chr: built.chr, srt: built.srt, extra: built.extra, source: n,
+          found = { template: built.group, chr: built.chr, srts: built.srts, extra: built.extra, source: n,
             from: tree === this.track ? 'track' : tree === this.common ? 'common' : 'library' };
           break;
         }
@@ -295,7 +285,7 @@ export class GameAssets {
       if (entry) return null;
     }
     this.objects.set(objectId, found);
-    if (found?.srt || found?.extra?.length) this.refreshSRT();
+    if (found?.srts?.length || found?.extra?.length) this.refreshSRT();
     return found;
   }
 
@@ -306,6 +296,24 @@ export class GameAssets {
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
+
+function buildLakitu(brres) {
+  const model = brres.models.find((m) => m.name === 'jugemu');
+  if (!model) throw new Error('jugemu model missing');
+  const chr = brres.chr.get('wait') || [...brres.chr.values()][0] || null;
+  const builder = new BrresModelBuilder(brres);
+  const group = builder.build(model, { skinned: !!chr, lit: null });
+  const hairModel = brres.models.find((m) => m.name === 'jugemu_hair');
+  let head = null;
+  group.traverse((o) => { if (o.isBone && o.name === 'ef_head') head = o; });
+  if (hairModel && head) {
+    const hair = builder.build(hairModel, { lit: null });
+    hair.position.set(0, -8, -6);
+    head.add(hair);
+    group.userData.materials = [...(group.userData.materials || []), ...(hair.userData.materials || [])];
+  }
+  return { template: group, chr };
+}
 
 // Kart + driver assembled like the game: body at the ride height, four wheels from the BSP
 // (the game mirrors the two right wheels), suspension arms at the wheels, driver playing "drive".

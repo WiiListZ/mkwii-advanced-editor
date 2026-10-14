@@ -122,7 +122,13 @@ export function makeFrameless(hwnd: Pointer): WindowControl | null {
   return (action: string, arg?: string) => {
     switch (action) {
       case "cursor-save": savedCursor = user32.GetCursorPos(ptr(point)) ? [point[0], point[1]] : null; return { ok: !!savedCursor };
-      case "cursor-recenter": if (savedCursor) user32.SetCursorPos(savedCursor[0], savedCursor[1]); return { ok: !!savedCursor };
+      // arg: "dx,dy", the offset in screen pixels from the saved position (the 3D view's centre).
+      case "cursor-recenter": {
+        if (!savedCursor) return { ok: false };
+        const [dx, dy] = (arg || "0,0").split(",").map((v) => Math.round(Number(v)) || 0);
+        user32.SetCursorPos(savedCursor[0] + dx, savedCursor[1] + dy);
+        return { ok: true };
+      }
       case "cursor-restore": if (savedCursor) user32.SetCursorPos(savedCursor[0], savedCursor[1]); savedCursor = null; return { ok: true };
       case "minimize": user32.ShowWindow(hwnd, SW_MINIMIZE); break;
       case "maximize": user32.ShowWindow(hwnd, SW_MAXIMIZE); break;

@@ -41,6 +41,7 @@ import { ObjectDocumentationView } from "../panels/ObjectDocumentationView";
 import { ObjectAppearanceDialog, ObjectTextureEditorDialog } from "../panels/ObjectAppearance";
 import { SkyDialog } from "./SkyDialog";
 import { ArchiveDialog } from "./ArchiveDialog";
+import { MenuResourceDialog } from "./MenuResourceDialog";
 import { EffectsDialog } from "./EffectsDialog";
 import { ParamsDialog } from "./ParamsDialog";
 import { SkeletonEditorDialog } from "./SkeletonEditorDialog";
@@ -75,7 +76,7 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
     );
   }
   const sizes: Record<string, string> = {
-    generator: "max-w-[1100px]", help: "max-w-[920px]", preferences: "max-w-[760px]", szs: "max-w-[760px]", modelParts: "max-w-[1180px]", settings: "max-w-[620px] p-0 gap-0", trackSettings: "max-w-[520px]", importDrop: "max-w-[480px]", gameText: "flex h-[min(1100px,95vh)] max-w-[min(1640px,97vw)] flex-col overflow-hidden", riivolution: "flex h-[min(1000px,94vh)] max-w-[min(1400px,96vw)] flex-col overflow-hidden", audio: "flex h-[min(900px,92vh)] max-w-[min(1100px,95vw)] flex-col overflow-hidden", assetEditor: "flex h-[min(1100px,95vh)] max-w-[min(1640px,97vw)] flex-col overflow-hidden", assetTextureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", workspace: "max-w-[560px]", textureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", objectTextureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", objectAppearance: "max-w-[860px]", archive: "flex h-[min(820px,90vh)] max-w-[min(1000px,94vw)] flex-col overflow-hidden", effects: "flex h-[min(900px,92vh)] max-w-[min(1300px,96vw)] flex-col overflow-hidden", params: "flex h-[min(900px,92vh)] max-w-[min(1300px,96vw)] flex-col overflow-hidden", skeletonEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", sky: "flex h-[min(900px,92vh)] max-w-[min(1300px,95vw)] flex-col overflow-hidden", animationChoice: "max-w-[480px]", importObj: "max-w-[680px]", objectPicker: "max-w-[820px] p-0 gap-0",
+    generator: "max-w-[1100px]", help: "max-w-[920px]", preferences: "max-w-[760px]", szs: "max-w-[760px]", modelParts: "max-w-[1180px]", settings: "max-w-[620px] p-0 gap-0", trackSettings: "max-w-[520px]", importDrop: "max-w-[480px]", gameText: "flex h-[min(1100px,95vh)] max-w-[min(1640px,97vw)] flex-col overflow-hidden", riivolution: "flex h-[min(1000px,94vh)] max-w-[min(1400px,96vw)] flex-col overflow-hidden", audio: "flex h-[min(900px,92vh)] max-w-[min(1100px,95vw)] flex-col overflow-hidden", assetEditor: "flex h-[min(1100px,95vh)] max-w-[min(1640px,97vw)] flex-col overflow-hidden", assetTextureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", workspace: "max-w-[560px]", textureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", objectTextureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", objectAppearance: "max-w-[860px]", archive: "flex h-[min(820px,90vh)] max-w-[min(1000px,94vw)] flex-col overflow-hidden", menuResource: "flex h-[min(800px,92vh)] max-w-[min(1150px,96vw)] flex-col overflow-hidden", effects: "flex h-[min(900px,92vh)] max-w-[min(1300px,96vw)] flex-col overflow-hidden", params: "flex h-[min(900px,92vh)] max-w-[min(1300px,96vw)] flex-col overflow-hidden", skeletonEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", sky: "flex h-[min(900px,92vh)] max-w-[min(1300px,95vw)] flex-col overflow-hidden", animationChoice: "max-w-[480px]", importObj: "max-w-[680px]", objectPicker: "max-w-[820px] p-0 gap-0",
   };
   const body = (() => {
     switch (entry.kind) {
@@ -89,7 +90,7 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
       case "szs": return <SzsDialog close={close} />;
       case "modelParts": return <ModelPartsDialog close={close} />;
       case "gameText": return <GameTextDialog search={p.search} folder={p.folder} language={p.language} file={p.file} loose={p.loose} close={close} />;
-      case "audio": return <AudioDialog file={p.file} close={close} />;
+      case "audio": return <AudioDialog file={p.file} loose={p.loose} close={close} />;
       case "riivolution": return <RiivolutionDialog initialFile={p.initialFile} close={close} />;
       case "assetEditor": return <AssetEditorDialog {...p} close={close} />;
       case "assetTextureEditor": return <AssetTextureEditorDialog {...p} close={close} />;
@@ -108,6 +109,7 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
       case "objectAppearance": return <ObjectAppearanceDialog objectId={p.objectId} close={close} />;
       case "sky": return <SkyDialog close={close} />;
       case "archive": return <ArchiveDialog {...p} close={close} />;
+      case "menuResource": return <MenuResourceDialog {...p} close={close} />;
       case "effects": return <EffectsDialog {...p} close={close} />;
       case "params": return <ParamsDialog {...p} close={close} />;
       case "skeletonEditor": return <SkeletonEditorDialog {...p} close={close} />;
@@ -130,7 +132,7 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
   })();
   return (
     <Dialog open={!entry.closing} onOpenChange={(o) => !o && !GUARDED.includes(entry.kind) && close(null)}>
-      <DialogContent className={sizes[entry.kind]} onEscapeKeyDown={GUARDED.includes(entry.kind) ? (e) => e.preventDefault() : undefined} onPointerDownOutside={GUARDED.includes(entry.kind) ? (e) => e.preventDefault() : undefined} hideClose={["objectPicker", "textureEditor", "objectTextureEditor", "archive", "skeletonEditor", "sky", "effects", "params", "gameText", "audio", "assetEditor", "assetTextureEditor", "riivolution"].includes(entry.kind)}>{body}</DialogContent>
+      <DialogContent className={sizes[entry.kind]} onEscapeKeyDown={GUARDED.includes(entry.kind) ? (e) => e.preventDefault() : undefined} onPointerDownOutside={GUARDED.includes(entry.kind) ? (e) => e.preventDefault() : undefined} hideClose={["objectPicker", "textureEditor", "objectTextureEditor", "archive", "menuResource", "skeletonEditor", "sky", "effects", "params", "gameText", "audio", "assetEditor", "assetTextureEditor", "riivolution"].includes(entry.kind)}>{body}</DialogContent>
     </Dialog>
   );
 }
@@ -408,10 +410,11 @@ function AboutDialog() {
       <p className="m-0 text-[13px] text-muted-foreground">Reads and writes SZS (Yaz0 + U8), KMP, KCL and BRRES models natively. Built with Bun, React, shadcn/ui, Three.js and WebView2.</p>
       <p className="m-0 text-[13px]"><span className="font-semibold">Credits</span> · WiiListZ</p>
       <div className="space-y-2 rounded-md border p-3 text-xs">
-        <div className="flex items-center justify-between gap-2"><span className="font-semibold">Updates from GitHub Releases</span><Button size="sm" variant="secondary" onClick={() => updates.check()} disabled={updates.phase === "checking" || updates.phase === "downloading"}>Check now</Button></div>
+        <div className="flex items-center justify-between gap-2"><span className="font-semibold">Updates from GitHub Releases</span><Button size="sm" variant="secondary" onClick={() => updates.check()} disabled={updates.phase === "checking" || updates.phase === "downloading" || updates.phase === "installing"}>Check now</Button></div>
         {updates.phase === "checking" ? <p className="m-0 text-muted-foreground">Checking for updates…</p>
           : updates.phase === "downloading" ? <p className="m-0 text-muted-foreground">Downloading update {updates.status?.version}… {Math.floor(updates.progress * 100)}%</p>
-          : updates.status?.available ? <><p className="m-0">Version {updates.status.version} {updates.phase === "ready" ? "is ready to install." : "is available."}</p><p className="m-0 max-h-40 overflow-auto whitespace-pre-wrap text-muted-foreground">{updates.status.notes}</p>{updates.phase === "error" && <p className="m-0 text-destructive">Download failed: {updates.error}</p>}<Button size="sm" disabled={updates.phase !== "ready"} onClick={updates.restart}>Restart & update</Button></>
+          : updates.phase === "installing" ? <p className="m-0 text-muted-foreground">Installing update {updates.status?.version}…</p>
+          : updates.status?.available ? <><p className="m-0">Version {updates.status.version} {updates.phase === "ready" ? "is ready to install." : "is available."}</p><p className="m-0 max-h-40 overflow-auto whitespace-pre-wrap text-muted-foreground">{updates.status.notes}</p>{updates.phase === "error" && <p className="m-0 text-destructive">Download failed: {updates.error}</p>}<Button size="sm" onClick={() => void (updates.phase === "ready" ? updates.restart() : updates.accept())}>{updates.phase === "ready" ? "Restart & update" : updates.phase === "error" ? "Retry update" : "Update now"}</Button></>
           : updates.phase === "error" ? <p className="m-0 text-muted-foreground">Could not check: {updates.error}</p>
           : <p className="m-0 text-muted-foreground">{updates.status?.supported ? "You have the latest release." : "Updates are available in the built Windows executable."}</p>}
       </div>

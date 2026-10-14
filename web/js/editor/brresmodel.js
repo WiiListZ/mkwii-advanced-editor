@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { decodeTexture, evalTrack, formatHasAlpha } from '../formats/brres.js';
-import { canUseTEV, makeTEVMaterial } from './tevmaterial.js';
+import { canUseTEV, makeTEVMaterial, setTexMatrix } from './tevmaterial.js';
 
 const DEG = Math.PI / 180;
 const EULER = 'ZYX'; // verified against the bind matrices stored in the game's models
@@ -76,7 +76,7 @@ export class BrresModelBuilder {
     if (map) {
       map = map.clone(); // per-material transform (SRT), shared image
       const s = mat.srt[layerIndex];
-      if (s) applySRT(map, s.scale, s.rot, s.trans);
+      if (s) applySRT(map, s.scale, s.rot, s.trans, mat.texMtxMode);
       map.userData.layerIndex = layerIndex;
     }
     const side = mat.cull === 0 ? THREE.DoubleSide : mat.cull === 1 ? THREE.BackSide : THREE.FrontSide;
@@ -206,7 +206,7 @@ export class BrresModelBuilder {
         mesh.userData.partIndex = oi;
         mesh.userData.modelName = model.name;
         mesh.userData.modelPart = obj;
-        mesh.renderOrder = d.xlu || mat.xlu ? 2 : 0;
+        mesh.renderOrder = d.xlu || mat.xlu ? 2 : material.userData?.opaqueBlend ? 1 : 0;
         mesh.userData.materialName = mat.name;
         mesh.frustumCulled = !skeleton;
         group.add(mesh);
@@ -217,13 +217,9 @@ export class BrresModelBuilder {
   }
 }
 
-// GX "Maya" texture SRT approximated with Three.js uv transform.
-function applySRT(tex, scale, rot, trans) {
-  tex.matrixAutoUpdate = true;
-  tex.center.set(0, 0);
-  tex.repeat.set(scale[0] || 1, scale[1] || 1);
-  tex.rotation = (rot || 0) * DEG;
-  tex.offset.set(-(trans[0] || 0), -(trans[1] || 0));
+function applySRT(tex, scale, rot, trans, mode) {
+  tex.matrixAutoUpdate = false;
+  setTexMatrix(tex.matrix, scale, rot, trans, mode);
 }
 
 // ---- Animation -------------------------------------------------------------------------
@@ -285,35 +281,32 @@ export function bindCLR(clr, group, claimed = new Set()) {
 }
 
 // Texture SRT animation bound to the materials of a built model.
-export function bindSRT(srt, group) {
+export function bindSRT(srt, group, claimed = new Set()) {
   const targets = [];
   for (const mat of group.userData.materials || []) {
     const texAnims = srt.materials.get(mat.name);
     if (texAnims && mat.userData.tev) {
       for (const anim of texAnims) {
-        const mtx = mat.userData.texMtx[anim.index], base = mat.userData.srt[anim.index];
-        if (mtx && base) targets.push({ mtx, anim, base: { repeat: new THREE.Vector2(...base.scale), rotation: base.rot * DEG, offset: new THREE.Vector2(-base.trans[0], -base.trans[1]) } });
+        const mtx = mat.userData.texMtx[anim.index];
+        if (mtx && !claimed.has(mtx)) { targets.push({ mtx, anim, mode: srt.texMtxMode }); claimed.add(mtx); }
       }
       continue;
     }
     if (!texAnims || !mat.map) continue;
-    const anim = texAnims.find((t) => t.index === mat.map.userData.layerIndex) || texAnims[0];
-    targets.push({ map: mat.map, anim, base: { repeat: mat.map.repeat.clone(), rotation: mat.map.rotation, offset: mat.map.offset.clone() } });
+    const anim = texAnims.find((t) => t.index === mat.map.userData.layerIndex);
+    if (anim && !claimed.has(mat.map)) { targets.push({ map: mat.map, anim, mode: srt.texMtxMode }); claimed.add(mat.map); }
   }
   return targets.length ? { frames: Math.max(1, srt.frames), loop: srt.loop, targets } : null;
 }
 
 export function applySRTFrame(binding, frame) {
-  for (const { map, mtx, anim, base } of binding.targets) {
-    const sx = anim.scale ? evalTrack(anim.scale[0], frame) : base.repeat.x;
-    const sy = anim.scale ? evalTrack(anim.scale[1], frame) : base.repeat.y;
-    const r = anim.rot ? evalTrack(anim.rot, frame) * DEG : base.rotation;
-    const tx = anim.trans ? -evalTrack(anim.trans[0], frame) : base.offset.x;
-    const ty = anim.trans ? -evalTrack(anim.trans[1], frame) : base.offset.y;
-    if (mtx) { mtx.setUvTransform(tx, ty, sx, sy, r, 0, 0); continue; }
-    map.repeat.set(sx, sy);
-    map.rotation = r;
-    map.offset.set(tx, ty);
+  for (const { map, mtx, anim, mode } of binding.targets) {
+    const sx = anim.scale ? evalTrack(anim.scale[0], frame) : 1;
+    const sy = anim.scale ? evalTrack(anim.scale[1], frame) : 1;
+    const r = anim.rot ? evalTrack(anim.rot, frame) : 0;
+    const tx = anim.trans ? evalTrack(anim.trans[0], frame) : 0;
+    const ty = anim.trans ? evalTrack(anim.trans[1], frame) : 0;
+    setTexMatrix(mtx || map.matrix, [sx, sy], r, [tx, ty], mode);
   }
 }
 

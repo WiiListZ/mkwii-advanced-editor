@@ -14,8 +14,9 @@ import { isBRRES } from "../../../js/formats/brres.js";
 import { editor } from "../editor";
 import { isParamFile } from "./ParamsDialog";
 import { dialogs } from "../dialogs-store";
+import type { MenuResourceFormat } from "./MenuResourceDialog";
 
-type Kind = { label: string; icon: LucideIcon; tool?: "model" | "text" | "track" | "archive" | "effect" | "params" };
+type Kind = { label: string; icon: LucideIcon; tool?: "model" | "text" | "track" | "archive" | "effect" | "params" | "menu"; format?: MenuResourceFormat };
 
 const magic = (data: Uint8Array) => String.fromCharCode(...data.subarray(0, 8));
 function kindOf(path: string, data: Uint8Array): Kind {
@@ -25,14 +26,16 @@ function kindOf(path: string, data: Uint8Array): Kind {
   if (m.startsWith("RKMD")) return { label: "Course data (KMP)", icon: Route, tool: "track" };
   if (/\.kcl$/i.test(path)) return { label: "Collision (KCL)", icon: BrickWall, tool: "track" };
   if (isU8(data) || (isYaz0(data) && /\.(szs|arc|carc)$/i.test(path))) return { label: "Archive", icon: Archive, tool: "archive" };
-  if (m.startsWith("RLYT")) return { label: "Menu layout (BRLYT)", icon: LayoutTemplate };
-  if (m.startsWith("RLAN")) return { label: "Menu animation (BRLAN)", icon: Film };
+  if (m.startsWith("RLYT")) return { label: "Menu layout (BRLYT)", icon: LayoutTemplate, tool: "menu", format: "brlyt" };
+  if (m.startsWith("RLAN")) return { label: "Menu animation (BRLAN)", icon: Film, tool: "menu", format: "brlan" };
   if (m.startsWith("REFF")) return { label: "Effect (BREFF)", icon: Sparkles, tool: "effect" };
   if (m.startsWith("REFT")) return { label: "Effect textures (BREFT)", icon: Sparkles, tool: "effect" };
   if (m.startsWith("RSTM")) return { label: "Music (BRSTM)", icon: Music };
   if (m.startsWith("RSAR") || m.startsWith("RWSD") || m.startsWith("RBNK")) return { label: "Sound", icon: AudioLines };
-  if (m.startsWith("RFNT") || m.startsWith("RFNA")) return { label: "Font", icon: Type };
-  if ((data[0] === 0x00 && data[1] === 0x20 && data[2] === 0xaf && data[3] === 0x30) || /[.](tpl|tex0|png)$/i.test(path)) return { label: "Texture", icon: ImageIcon };
+  if (m.startsWith("RFNT")) return { label: "Font (BRFNT)", icon: Type, tool: "menu", format: "brfnt" };
+  if (m.startsWith("RFNA")) return { label: "Font", icon: Type };
+  if (data[0] === 0x00 && data[1] === 0x20 && data[2] === 0xaf && data[3] === 0x30) return { label: "Texture (TPL)", icon: ImageIcon, tool: "menu", format: "tpl" };
+  if (/[.](tpl|tex0|png)$/i.test(path)) return { label: "Texture", icon: ImageIcon };
   if (/[.]bsp$/i.test(path)) return { label: "Vehicle physics (BSP)", icon: Gauge };
   if (isParamFile(path, data)) return { label: /kartParam/i.test(path) ? "Vehicle stats" : /driverParam/i.test(path) ? "Character stats" : "Item chances", icon: SlidersHorizontal, tool: "params" };
   if (/[.]bin$/i.test(path)) return { label: "Game parameters (BIN)", icon: SlidersHorizontal };
@@ -119,9 +122,11 @@ export function ArchiveDialog({ path, name, tree: initialTree, compressed = true
         await dialogs.open("archive", { path: null, name: `${name} › ${file.path}`, tree: inner, compressed: yaz0,
           onCommit: (data: Uint8Array) => { file.node.data = data; changed(); } });
       } catch (e: any) { toast.error(`Could not open ${fileName}`, { description: e.message }); }
+    } else if (kind.tool === "menu") {
+      await dialogs.open("menuResource", { tree, filePath: file.path, format: kind.format });
     }
   };
-  const toolLabel = (kind: Kind) => kind.tool === "model" ? "Characters and models" : kind.tool === "text" ? "Game text" : kind.tool === "track" ? "the track editor" : kind.tool === "effect" ? "the effects editor" : kind.tool === "params" ? "the parameters editor" : "a new window";
+  const toolLabel = (kind: Kind) => kind.tool === "model" ? "Characters and models" : kind.tool === "text" ? "Game text" : kind.tool === "track" ? "the track editor" : kind.tool === "effect" ? "the effects editor" : kind.tool === "params" ? "the parameters editor" : kind.tool === "menu" ? "the menu resource preview" : "a new window";
   const toolAvailable = (kind: Kind) => kind.tool === "model" || kind.tool === "text" ? !!path && !onCommit && hasBackend : !!kind.tool;
 
   React.useEffect(() => {
@@ -146,6 +151,16 @@ export function ArchiveDialog({ path, name, tree: initialTree, compressed = true
         </DialogDescription>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto rounded-md border">
+        <div className="sticky top-0 z-10 flex items-center gap-2 border-b bg-background px-2 py-2 text-[11px] font-medium text-muted-foreground">
+          <span className="size-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0 flex-1">Name</span>
+          <span className="hidden w-36 sm:block">File type</span>
+          <span className="w-20 text-right">Size</span>
+          <span className="w-20">Actions</span>
+          <span className="size-7" aria-hidden />
+          <span className="size-7" aria-hidden />
+          <span className="size-7" aria-hidden />
+        </div>
         {!files.length && <p className="p-3 text-xs text-muted-foreground">The archive is empty.</p>}
         {files.map((f: any) => {
           const kind = kindOf(f.path, f.node.data);

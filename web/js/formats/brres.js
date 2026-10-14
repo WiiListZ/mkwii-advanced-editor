@@ -246,6 +246,7 @@ function parseMaterial(r, o, name, version) {
   }
   // Texture SRT block (version 10/11 layout): flags, matrix mode, 8 x SRT, 8 x effect matrices.
   const srtBase = o + (version >= 10 ? 0x1A8 : 0x1A0);
+  const texMtxMode = r.u32(srtBase + 4);
   const srt = [];
   for (let i = 0; i < 8; i++) {
     const s = srtBase + 8 + i * 20;
@@ -266,6 +267,7 @@ function parseMaterial(r, o, name, version) {
     alphaTest: r.u8(o + 0x1C) !== 0,
     layers,
     srt,
+    texMtxMode,
   };
 }
 
@@ -972,8 +974,11 @@ function parseCLR0(r, o, name) {
 }
 
 function parseSRT0(r, o, name) {
-  const frames = r.u16(o + 0x20);
-  const loop = r.u32(o + 0x28) !== 0;
+  const version = r.u32(o + 8);
+  const header = version >= 5 ? 0x20 : 0x1C;
+  const frames = r.u16(o + header);
+  const texMtxMode = r.u32(o + header + 4);
+  const loop = r.u32(o + header + 8) !== 0;
   const materials = new Map();
   for (const e of r.group(o + r.s32(o + 0x10))) {
     const at = e.offset;
@@ -1003,6 +1008,6 @@ function parseSRT0(r, o, name) {
     }
     materials.set(e.name, textures);
   }
-  return { name, frames, loop, materials };
+  return { name, frames, loop, texMtxMode, materials };
 }
 

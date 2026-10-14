@@ -116,13 +116,37 @@ export function trackLabel(fileName) {
   return known ? `${known}${base !== stem ? ' (multiplayer)' : ''}` : stem;
 }
 
+const BATTLE_TRACK_STEMS = new Set([
+  'block_battle', 'venice_battle', 'skate_battle', 'casino_battle', 'sand_battle',
+  'old_battle4_sfc', 'old_battle3_gba', 'old_matenro_64', 'old_CookieLand_gc',
+  'old_House_ds', 'ring_mission',
+]);
+const DEMO_TRACK_STEMS = new Set(['winningrun_demo', 'loser_demo', 'draw_demo', 'ending_demo']);
+
+// Unknown/custom archives remain available under Both; a filename alone cannot always reveal
+// whether a custom course is a race or a battle arena.
+export function trackKind(fileName) {
+  const stem = fileName.split(/[\\/]/).pop().replace(/\.[^.]+$/, '').replace(/_d$/i, '');
+  if (BATTLE_TRACK_STEMS.has(stem) || /battle|arena/i.test(stem)) return 'battle';
+  if (DEMO_TRACK_STEMS.has(stem) || /demo/i.test(stem)) return 'other';
+  if (TRACK_NAMES[stem] || /^old_mario_gc_/i.test(stem) || /course|circuit|race|track/i.test(stem)) return 'race';
+  return 'other';
+}
+
 // Objects the game draws away from their KMP point (game units, same values as noclip.website):
 // item boxes and coins float above the road where they are placed. ground: the model's origin is
 // its centre (the Chain Chomp's ball), so it is lifted until its lowest point touches the KMP point.
 export const OBJECT_DISPLAY = {
   itembox: { y: 200 }, coin: { y: 150 }, poihana: { y: 250 }, Twanwan: { y: 1500 }, Hwanwan: { y: 1250, scale: 4 },
   wanwan: { ground: true },
+  // Sand piles under the Dry Dry Ruins sandfalls: the KMP point is the sunk pile, its tip at floor
+  // level, and the game raises it by setting 2. Drawn sunk, the hole in the floor it fills shows
+  // the empty space under the track (black).
+  dc_sandcone: { ySetting: 1 },
 };
+
+// Height the editor adds to an object's KMP position to draw it where the game shows it.
+export const objectDisplayY = (display, e) => (display?.y || 0) + (display?.ySetting !== undefined ? e.settings?.[display.ySetting] || 0 : 0);
 
 // IDs known for certain (used until ObjFlow.bin is loaded).
 export const BUILTIN_OBJECTS = { 0x0065: 'itembox' };

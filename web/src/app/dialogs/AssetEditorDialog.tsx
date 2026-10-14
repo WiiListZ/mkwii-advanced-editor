@@ -272,6 +272,7 @@ export function AssetEditorDialog({ close, initialCategory, initialArchive, init
         await writeResources(copy.path, copy.changes);
       }
       if (category === "objects") await ed.loadCommonFrom(archivePath, true);
+      if (category === "characters" && filename(archivePath).toLowerCase() === "mdf_kart-mr.szs") await ed.loadKartModel(true);
       const extra = chosen.length ? ` ${chosen.length} other cop${chosen.length === 1 ? "y was" : "ies were"} updated too.` : "";
       if (result === "loose") { /* writeLoose already said where */ }
       else if (result === "memory") toast.success("Resources added to the open track", { description: "Save the track to write its SZS file." + extra });

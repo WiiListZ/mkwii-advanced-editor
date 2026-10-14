@@ -11,9 +11,30 @@ const DEPTH = [THREE.NeverDepth, THREE.LessDepth, THREE.EqualDepth, THREE.LessEq
 const KONST_FRACTION = [1, 7 / 8, 3 / 4, 5 / 8, 1 / 2, 3 / 8, 1 / 4, 1 / 8];
 const f = (v) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
 
-// Sets a texture matrix the same way the non-TEV materials map an SRT (Maya mode approximation).
-export function setTexMatrix(m, scale, rot, trans) {
-  m.setUvTransform(-(trans[0] || 0), -(trans[1] || 0), scale[0] || 1, scale[1] || 1, (rot || 0) * DEG, 0, 0);
+// BRRES stores the convention used to build each texture matrix: Maya (0), XSI (1), or Max (2).
+// The two translation axes and the rotation have different signs in these conventions.
+export function setTexMatrix(m, scale, rot, trans, mode = 0) {
+  const sx = scale?.[0] ?? 1, sy = scale?.[1] ?? 1;
+  const tx = trans?.[0] ?? 0, ty = trans?.[1] ?? 0;
+  const angle = (rot ?? 0) * DEG, c = Math.cos(angle), s = Math.sin(angle);
+  let a, b, x, d, e, y;
+  if (mode === 1) { // XSI
+    a = sx * c; b = -sx * s;
+    x = sx * s - sx * c * tx - sx * s * ty;
+    d = sy * s; e = sy * c;
+    y = -sy * c - sy * s * tx + sy * c * ty + 1;
+  } else if (mode === 2) { // 3ds Max
+    a = sx * c; b = sx * s;
+    x = sx * (-c * (tx + 0.5) + s * (ty - 0.5)) + 0.5;
+    d = -sy * s; e = sy * c;
+    y = sy * (s * (tx + 0.5) + c * (ty - 0.5)) + 0.5;
+  } else { // Maya, the mode used by most MKWii materials
+    a = sx * c; b = sx * s;
+    x = sx * (-0.5 * c - (0.5 * s - 0.5) - tx);
+    d = -sy * s; e = sy * c;
+    y = sy * (-0.5 * c + (0.5 * s - 0.5) + ty) + 1;
+  }
+  m.set(a, b, x, d, e, y, 0, 0, 1);
   return m;
 }
 
@@ -89,7 +110,7 @@ export function canUseTEV(mat) {
 export function makeTEVMaterial(mat, { textures, uvSets, hasColor, lightSets = null }) {
   const gx = mat.gx;
   const lightSet = gx.lightSet >= 0 ? lightSets?.[gx.lightSet] || null : null;
-  const texMtx = Array.from({ length: 8 }, (_, i) => setTexMatrix(new THREE.Matrix3(), mat.srt[i]?.scale || [1, 1], mat.srt[i]?.rot || 0, mat.srt[i]?.trans || [0, 0]));
+  const texMtx = Array.from({ length: 8 }, (_, i) => setTexMatrix(new THREE.Matrix3(), mat.srt[i]?.scale, mat.srt[i]?.rot, mat.srt[i]?.trans, mat.texMtxMode));
   const used = new Map(); // texMap id -> uniform name
   for (const s of gx.stages) if (s.texEnabled && !used.has(s.texMap) && textures(s.texMap)) used.set(s.texMap, `uTex${s.texMap}`);
   const coords = gx.texGens.length;
@@ -166,11 +187,16 @@ export function makeTEVMaterial(mat, { textures, uvSets, hasColor, lightSets = n
   if (b.enabled && !b.logic) {
     const src = b.src === 2 ? THREE.DstColorFactor : b.src === 3 ? THREE.OneMinusDstColorFactor : GX_BLEND[b.src];
     const dst = b.dst === 2 ? THREE.SrcColorFactor : b.dst === 3 ? THREE.OneMinusSrcColorFactor : GX_BLEND[b.dst];
-    m.transparent = true;
+    // Blended materials in the opaque draw list (Dry Dry Ruins' sand) stay in the opaque pass and
+    // write depth like in the game, drawn after the other opaque meshes (renderOrder in
+    // brresmodel.js). The sand has a half-transparent layer over an opaque one: it only looks
+    // smooth when its triangles are drawn in the file's order (see computeBoundsTree in viewport.js).
+    m.transparent = !!mat.xlu;
     m.blending = THREE.CustomBlending;
     m.blendSrc = src ?? THREE.SrcAlphaFactor;
     m.blendDst = dst ?? THREE.OneMinusSrcAlphaFactor;
     m.blendEquation = b.subtract ? THREE.ReverseSubtractEquation : THREE.AddEquation;
+    m.userData.opaqueBlend = !mat.xlu;
   } else m.transparent = !!mat.xlu;
   m.depthTest = gx.zmode.test;
   m.depthWrite = gx.zmode.write;

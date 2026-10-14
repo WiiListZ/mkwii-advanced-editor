@@ -105,13 +105,6 @@ export function Toolbar() {
         </DropdownMenu>
       </Cluster>}
 
-      <div className="flex shrink-0 items-center rounded-lg border bg-muted/40 p-0.5" role="group" aria-label="Editor view" data-group="editor-view">
-        <Button variant={ed.map2D ? "ghost" : "secondary"} size="sm" className="h-7 gap-1.5 px-2.5 text-xs" aria-label="3D view" aria-pressed={!ed.map2D}
-          onClick={() => ed.setMap2D(false)}><Box className="size-3.5" /> 3D</Button>
-        <Button variant={ed.map2D ? "secondary" : "ghost"} size="sm" className="h-7 gap-1.5 px-2.5 text-xs" aria-label="2D editor" aria-pressed={ed.map2D}
-          onClick={() => ed.setMap2D(true)}><Map className="size-3.5" /> 2D</Button>
-      </div>
-
       {/* Create */}
       <div className="flex items-center gap-1" data-group="create">
         <DropdownMenu>
@@ -131,6 +124,12 @@ export function Toolbar() {
       <div className="flex-1" />
 
       {/* View */}
+      <div className="flex shrink-0 items-center rounded-lg border bg-muted/40 p-0.5" role="group" aria-label="Editor view" data-group="editor-view">
+        <Button variant={ed.map2D ? "ghost" : "secondary"} size="sm" className="h-7 gap-1.5 px-2.5 text-xs" aria-label="3D view" aria-pressed={!ed.map2D}
+          onClick={() => ed.setMap2D(false)}><Box className="size-3.5" /> 3D</Button>
+        <Button variant={ed.map2D ? "secondary" : "ghost"} size="sm" className="h-7 gap-1.5 px-2.5 text-xs" aria-label="2D editor" aria-pressed={ed.map2D}
+          onClick={() => ed.setMap2D(true)}><Map className="size-3.5" /> 2D</Button>
+      </div>
       {!ed.map2D && <Cluster id="view">
         <Hint wrap {...tip("display")}>
           <ToggleGroup type="single" value={s.displayMode} onValueChange={(v: any) => v && ed.setSetting("displayMode", v)} className="gap-0.5 bg-transparent p-0">

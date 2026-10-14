@@ -20,7 +20,7 @@ import { parseKCL, buildKCL, patchKCLFlags } from "../../js/formats/kcl.js";
 import { parseOBJ, kclToOBJ, modelToOBJ } from "../../js/formats/obj.js";
 import { clearBRRESPolygon, isBRRES, parseBRRES, polygonPieces, resetPieceMemory, replaceBRRESTexture, setCHR0Loop, transformBRRESPart, translateBRRESPart } from "../../js/formats/brres.js";
 import { BrresModelBuilder, mainModel } from "../../js/editor/brresmodel.js";
-import { BUILTIN_OBJECTS, KCL_TYPES, OBJECT_DISPLAY, OBJECT_INFO, makeFlag, parseObjFlow, trackLabel } from "../../js/data/defs.js";
+import { BUILTIN_OBJECTS, KCL_TYPES, OBJECT_DISPLAY, OBJECT_INFO, makeFlag, objectDisplayY, parseObjFlow, trackLabel } from "../../js/data/defs.js";
 import { objectDocumentation, parseObjectDocumentation } from "../../js/data/object-documentation.js";
 import { externalPath, parseRiivolution } from "../../js/formats/riivolution.js";
 import { findRiivolutionWorkspace, findWorkspaceRoot, resolveRiivolutionPath } from "../../js/editor/workspace.js";
@@ -509,8 +509,7 @@ export class Editor {
       case "text": return dialogs.open("gameText", { loose: file });
       case "riivolution": return dialogs.open("riivolution", { initialFile: file });
       case "music": case "sounds":
-        if (!file.path) return toast.info(`Open ${file.name} with File › Open`, { description: "Music is played and saved from its file on disk." });
-        return dialogs.open("audio", { file: file.path });
+        return dialogs.open("audio", file.path ? { file: file.path } : { loose: file });
       case "effect": case "params": {
         // A one-file archive in memory, so the archive editors work on it unchanged. An effect
         // also gets its other half (.breff with .breft) when it sits next to it.
@@ -1014,10 +1013,10 @@ export class Editor {
   }
 
   // Mario's kart for start positions, from the game folder next to Common.szs (Race/Kart).
-  loadKartModel() {
+  loadKartModel(force = false) {
     const race = this.commonPath?.replace(/[\\/][^\\/]+$/, "") || this.settings.partsFolder?.replace(/[\\/][^\\/]+$/, "");
-    if (!race || !hasBackend) return;
-    this.assets?.loadKart(async (p: string) => api.decodeArchiveBytes((await api.readPath(p)).data, p, this.commonPath || ""), race).then(() => this.bump("doc"));
+    if (!race || !hasBackend) return Promise.resolve();
+    return this.assets?.loadKart(async (p: string) => api.decodeArchiveBytes((await api.readPath(p)).data, p, this.commonPath || ""), race, 'mdf_kart-mr.szs', force).then(() => this.bump("doc"));
   }
 
   // ---- Workspace: the extracted game's "files" folder ---------------------------------------------
@@ -1454,7 +1453,7 @@ export class Editor {
     const display = OBJECT_DISPLAY[this.objectNames[object.objectId]] || (object.objectId === 0x65 ? OBJECT_DISPLAY.itembox : null);
     const pos = object.pos, rot = object.rot, scale = object.scale;
     return new THREE.Matrix4().compose(
-      new THREE.Vector3(pos[0], pos[1] + (display?.y || 0), pos[2]),
+      new THREE.Vector3(pos[0], pos[1] + objectDisplayY(display, object), pos[2]),
       new THREE.Quaternion().setFromEuler(new THREE.Euler(rot[0] * Math.PI / 180, rot[1] * Math.PI / 180, rot[2] * Math.PI / 180, "ZYX")),
       new THREE.Vector3(...scale.map((value: number) => (Math.abs(value) < .001 ? .001 : value) * (display?.scale || 1))),
     );
@@ -2078,7 +2077,7 @@ export class Editor {
       this.objectNames = { ...BUILTIN_OBJECTS, ...Object.fromEntries(Object.entries(names).map(([k, v]) => [Number(k), v as string])) };
       this.assets.setObjectInfo(Object.fromEntries(Object.entries(parsed).map(([k, v]) => [Number(k), v])));
       if (tree) this.assets.setCommon(tree);
-      if (tree && path) { this.commonPath = path; this.loadKartModel(); }
+      if (tree && path) { this.commonPath = path; void this.loadKartModel(true); }
       this.saveSettings({ objectNames: names, objectResources: resources, ...(tree && path ? { commonPath: path } : {}) });
       this.viewport.clearCache();
       this.bump("doc", "settings");

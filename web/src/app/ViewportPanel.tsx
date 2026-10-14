@@ -3,9 +3,10 @@ import { ArrowRight, AudioLines, Box, ChevronLeft, ChevronRight, CircleHelp, Fil
 import { WorkspaceCard } from "./panels/WorkspaceCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { KIND_HELP } from "../../js/data/help.js";
-import { CAMERA_TYPES, trackLabel } from "../../js/data/defs.js";
+import { CAMERA_TYPES, trackKind, trackLabel } from "../../js/data/defs.js";
 import { Input } from "@/components/ui/input";
 import { useEditor } from "./hooks";
 import { editor, hasBackend, PATH_KINDS } from "./editor";
@@ -217,16 +218,19 @@ function WelcomeTracks() {
   const t = ed.trackFiles!;
   const [query, setQuery] = React.useState("");
   const [mode, setMode] = React.useState<"solo" | "multi" | "all">("solo");
+  const [kind, setKind] = React.useState<"race" | "battle" | "both">("both");
   const [page, setPage] = React.useState(0);
   const q = query.trim().toLowerCase();
   const files = t.files.filter((f) =>
     (mode === "all" || (mode === "multi" ? /_d\.(szs|wlz|wbz|wu8)$/i.test(f) : !/_d\.(szs|wlz|wbz|wu8)$/i.test(f))) &&
+    (kind === "both" || trackKind(f) === kind) &&
     (!q || `${trackLabel(f)} ${f}`.toLowerCase().includes(q)));
   const pageSize = 48, pages = Math.max(1, Math.ceil(files.length / pageSize));
   const currentPage = Math.min(page, pages - 1);
   const shown = files.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
   const current = ed.currentTrackFile();
   const changeMode = (next: typeof mode) => { setMode(next); setPage(0); };
+  const changeKind = (next: typeof kind) => { setKind(next); setPage(0); };
   return (
     <Card className="w-full overflow-hidden">
       <CardHeader className="border-b bg-muted/20 p-3">
@@ -240,11 +244,25 @@ function WelcomeTracks() {
           <Search className="pointer-events-none absolute left-2.5 top-2 size-4 text-muted-foreground" />
           <Input value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} onKeyDown={(e) => e.stopPropagation()} placeholder="Search by name or file number…" aria-label="Search tracks" className="h-8 pl-8 text-xs" />
         </div>
-        <div className="flex items-center gap-1" role="group" aria-label="Track type">
-          {([ ["solo", "Single player"], ["multi", "Multiplayer"], ["all", "All files"] ] as const).map(([value, label]) => (
-            <button key={value} type="button" aria-pressed={mode === value} onClick={() => changeMode(value)}
-              className={`cursor-pointer rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${mode === value ? "bg-primary/15 text-primary" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}>{label}</button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] text-muted-foreground">Version</span>
+          <Select value={mode} onValueChange={(value) => changeMode(value as typeof mode)}>
+            <SelectTrigger aria-label="Track version" className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="solo">Single player</SelectItem>
+              <SelectItem value="multi">Multiplayer</SelectItem>
+              <SelectItem value="all">All files</SelectItem>
+            </SelectContent>
+          </Select>
+          <span className="ml-1 text-[11px] text-muted-foreground">Type</span>
+          <Select value={kind} onValueChange={(value) => changeKind(value as typeof kind)}>
+            <SelectTrigger aria-label="Track type" className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="race">Race tracks</SelectItem>
+              <SelectItem value="battle">Battle tracks</SelectItem>
+              <SelectItem value="both">Both</SelectItem>
+            </SelectContent>
+          </Select>
           <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{files.length.toLocaleString()} shown</span>
         </div>
         <div className="grid max-h-80 grid-cols-1 gap-1 overflow-y-auto sm:grid-cols-2">

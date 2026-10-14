@@ -429,7 +429,7 @@ for (const t of tracks) {
     const srts = vp.srtBindings.flatMap((b: any) => b.targets || []);
     const snap = () => ({
       q: bones.map((bone: any) => bone.quaternion.toArray().map((v: number) => v.toFixed(4)).join() + bone.position.toArray().map((v: number) => v.toFixed(2)).join()).join('|'),
-      o: srts.map((t: any) => t.mtx ? t.mtx.elements.map((v: number) => v.toFixed(4)).join() : t.map ? t.map.offset.toArray().join() + t.map.repeat.toArray().join() + t.map.rotation : '').join('|'),
+      o: srts.map((t: any) => (t.mtx || t.map?.matrix)?.elements.map((v: number) => v.toFixed(4)).join() || '').join('|'),
     });
     const a = snap();
     await new Promise((r) => setTimeout(r, 700));

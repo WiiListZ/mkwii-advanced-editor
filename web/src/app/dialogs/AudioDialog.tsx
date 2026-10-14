@@ -107,12 +107,13 @@ async function decodeFile(name: string, data: Uint8Array): Promise<{ rate: numbe
 const seconds = (n: number, rate: number) => `${(n / rate).toFixed(n / rate < 10 ? 2 : 1)} s`;
 const timestamp = (value: number) => `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
 
-// `file`: a .brstm or .brsar opened on its own (File › Open, Explorer) instead of the workspace's.
-export function AudioDialog({ file, close }: { file?: string; close: (v: any) => void }) {
+// `file`: a .brstm or .brsar opened from disk. `loose`: a browser-picked or dropped file.
+export function AudioDialog({ file, loose, close }: { file?: string; loose?: { name: string; data: Uint8Array }; close: (v: any) => void }) {
   useEditor("settings");
-  const looseMusic = file && /\.brstm$/i.test(file) ? file : "", looseArchive = file && /\.brsar$/i.test(file) ? file : "";
-  const root = editor.workspace() || (file ? "loose" : "");
-  const strm = looseArchive ? "" : editor.workspacePath("sound", "strm"), brsarPath = looseArchive || (looseMusic ? "" : editor.workspacePath("sound", "revo_kart.brsar"));
+  const selectedFile = file || loose?.name || "";
+  const looseMusic = /\.brstm$/i.test(selectedFile) ? selectedFile : "", looseArchive = /\.brsar$/i.test(selectedFile) ? selectedFile : "";
+  const root = editor.workspace() || (selectedFile ? "loose" : "");
+  const strm = selectedFile ? "" : editor.workspacePath("sound", "strm"), brsarPath = file && looseArchive ? file : selectedFile ? "" : editor.workspacePath("sound", "revo_kart.brsar");
   const [tab, setTab] = React.useState<Tab>(looseArchive ? "sounds" : "music");
   const [music, setMusic] = React.useState<string[] | null>(null);
   const [archive, setArchive] = React.useState<any>(null);
@@ -133,13 +134,19 @@ export function AudioDialog({ file, close }: { file?: string; close: (v: any) =>
   }, [strm]);
 
   React.useEffect(() => {
+    if (looseArchive && loose) {
+      if (archive) return;
+      try { const parsed = parseBRSAR(loose.data); setArchive(parsed); setWaves(listWaves(parsed)); }
+      catch (e: any) { toast.error("Could not read the sound archive", { description: e.message }); }
+      return;
+    }
     if (tab !== "sounds" || archive || !brsarPath) return;
     setLoading("Reading revo_kart.brsar…");
     api.readPath(brsarPath).then(async (f: any) => {
       const a = parseBRSAR(await api.decodeArchiveBytes(f.data, f.path));
       setArchive(a); setWaves(listWaves(a));
     }).catch((e: any) => toast.error("Could not read the sound archive", { description: e.message })).finally(() => setLoading(""));
-  }, [tab, archive, brsarPath]);
+  }, [tab, archive, brsarPath, loose]);
 
   const items: Item[] = React.useMemo(() => tab === "music"
     ? (music || []).map((f) => looseMusic ? { key: `m:${f}`, label: f.split(/[\\/]/).pop()!, detail: f, kind: "music" as const, path: f }
@@ -155,15 +162,19 @@ export function AudioDialog({ file, close }: { file?: string; close: (v: any) =>
     setSaving(true);
     try {
       for (const [path, bytes] of Object.entries(pendingMusic)) {
-        await api.writeFile(path, bytes, { backup: editor.settings.keepBackups, edited: true });
+        if (loose) {
+          if (!(await editor.writeLoose(null, loose.name, bytes))) { setSaving(false); return; }
+        } else await api.writeFile(path, bytes, { backup: editor.settings.keepBackups, edited: true });
         setPendingMusic((current) => { const next = { ...current }; if (next[path] === bytes) delete next[path]; return next; });
       }
       if (archiveChanged && archive) {
         setLoading("Saving revo_kart.brsar…");
-        await api.writeFile(brsarPath, archive.data, { backup: editor.settings.keepBackups, edited: true });
+        if (loose) {
+          if (!(await editor.writeLoose(null, loose.name, archive.data))) { setLoading(""); setSaving(false); return; }
+        } else await api.writeFile(brsarPath, archive.data, { backup: editor.settings.keepBackups, edited: true });
         setChangedWaves(new Set()); setArchiveChanged(false);
       }
-      toast.success(`${pendingCount} sound${pendingCount === 1 ? "" : "s"} saved`, { description: editor.settings.keepBackups ? "The first save keeps a .bak copy of each original file." : "Backups are off in Settings." });
+      toast.success(`${pendingCount} sound${pendingCount === 1 ? "" : "s"} saved`, { description: loose ? "The edited file was exported." : editor.settings.keepBackups ? "The first save keeps a .bak copy of each original file." : "Backups are off in Settings." });
     } catch (e: any) { toast.error("Could not save", { description: e.message }); }
     setLoading(""); setSaving(false);
   };
@@ -173,7 +184,7 @@ export function AudioDialog({ file, close }: { file?: string; close: (v: any) =>
       <div className="flex shrink-0 items-start justify-between gap-3">
         <div className="min-w-0">
           <DialogTitle className="text-sm">Sounds and music</DialogTitle>
-          {file ? <DialogDescription className="m-0 truncate text-xs" title={file}>{file}. Save writes this file.</DialogDescription>
+          {selectedFile ? <DialogDescription className="m-0 truncate text-xs" title={selectedFile}>{selectedFile}. {loose ? "Save exports the edited file." : "Save writes this file."}</DialogDescription>
             : <DialogDescription className="m-0 text-xs">Music streams (sound\strm) and sound effects and voices (sound\revo_kart.brsar) of the workspace.</DialogDescription>}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -187,7 +198,7 @@ export function AudioDialog({ file, close }: { file?: string; close: (v: any) =>
       {!root ? <WorkspaceCard /> : (
         <>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <div role="tablist" className={cn("flex max-w-full rounded-md border bg-muted/30 p-0.5", file && "hidden")}>
+            <div role="tablist" className={cn("flex max-w-full rounded-md border bg-muted/30 p-0.5", selectedFile && "hidden")}>
               {([["music", "Music"], ["sounds", "Sound effects and voices"]] as const).map(([id, label]) => (
                 <button key={id} role="tab" aria-selected={tab === id} onClick={() => { setTab(id); setSelected(null); }}
                   className={cn("cursor-pointer rounded px-2 py-1 text-xs sm:px-3", tab === id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{label}</button>
@@ -218,7 +229,7 @@ export function AudioDialog({ file, close }: { file?: string; close: (v: any) =>
             <div className="min-h-0 overflow-y-auto">
               {current ? (
                 <SoundPanel key={current.key + (pendingMusic[current.path || ""] ? ":p" : "") + (changedWaves.has(current.key) ? ":c" : "")} item={current} archive={archive}
-                  pending={current.path ? pendingMusic[current.path] : undefined} brsarPath={brsarPath}
+                  pending={current.path ? pendingMusic[current.path] : undefined} brsarPath={brsarPath} sourceBytes={looseMusic ? loose?.data : undefined}
                   onReplaceMusic={(bytes) => setPendingMusic((p) => { const next = { ...p }; if (bytes) next[current.path!] = bytes; else delete next[current.path!]; return next; })}
                   onReplaceWave={(next) => { setArchive(next); setArchiveChanged(true); setChangedWaves((s) => new Set(s).add(current.key)); }} />
               ) : <div className="grid h-full place-items-center text-xs text-muted-foreground">{loading ? <LoaderCircle className="size-5 animate-spin" /> : "Choose a sound on the left."}</div>}
@@ -233,8 +244,8 @@ export function AudioDialog({ file, close }: { file?: string; close: (v: any) =>
   );
 }
 
-function SoundPanel({ item, archive, pending, brsarPath, onReplaceMusic, onReplaceWave }: {
-  item: Item; archive: any; pending?: Uint8Array; brsarPath: string;
+function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceMusic, onReplaceWave }: {
+  item: Item; archive: any; pending?: Uint8Array; brsarPath: string; sourceBytes?: Uint8Array;
   onReplaceMusic: (bytes: Uint8Array | null) => void; onReplaceWave: (archive: any) => void;
 }) {
   const [clip, setClip] = React.useState<Clip | null>(null);
@@ -255,6 +266,7 @@ function SoundPanel({ item, archive, pending, brsarPath, onReplaceMusic, onRepla
   const buffers = React.useRef(new Map<number, AudioBuffer>());
   const scrubbing = React.useRef(false);
   const wave = React.useRef<HTMLCanvasElement>(null);
+  const musicBytes = async () => pending || sourceBytes || await api.decodeArchiveBytes((await api.readPath(item.path!)).data, item.path!);
 
   // Decode the sound (the replacement when there is one).
   React.useEffect(() => {
@@ -263,15 +275,15 @@ function SoundPanel({ item, archive, pending, brsarPath, onReplaceMusic, onRepla
     setElapsed(0); buffers.current.clear();
     (async () => {
       if (item.kind === "music") {
-        const data = pending || await api.decodeArchiveBytes((await api.readPath(item.path!)).data, item.path!);
+        const data = await musicBytes();
         const s = parseBRSTM(data);
         const c = { sampleRate: s.sampleRate, channels: decodeBRSTM(s), loop: s.loop, loopStart: s.loopStart, tracks: s.tracks, trackType: s.trackType };
         if (!cancelled) { setClip(c); setLoopEnabled(c.loop); setLoopStartText(String(c.loopStart / c.sampleRate)); }
-        setHasBackup(await api.exists(item.path + ".bak"));
+        setHasBackup(!sourceBytes && await api.exists(item.path + ".bak"));
       } else {
         const c = readWave(archive, item.wave);
         if (!cancelled) { setClip(c); setLoopEnabled(c.loop); setLoopStartText(String(c.loopStart / c.sampleRate)); }
-        setHasBackup(await api.exists(brsarPath + ".bak"));
+        setHasBackup(!!brsarPath && await api.exists(brsarPath + ".bak"));
       }
     })().catch((e) => !cancelled && setError(e.message));
     return () => { cancelled = true; stop(); };
@@ -350,7 +362,7 @@ function SoundPanel({ item, archive, pending, brsarPath, onReplaceMusic, onRepla
     }
     setBusy("Updating loop…");
     try {
-      const bytes = pending || await api.decodeArchiveBytes((await api.readPath(item.path!)).data, item.path!);
+      const bytes = await musicBytes();
       onReplaceMusic(setBRSTMLoop(bytes, loopEnabled, loopStartSample));
       toast.success("Loop updated", { description: "Save to write the BRSTM file." });
     } catch (e: any) { toast.error("Could not update the loop", { description: e.message }); }
@@ -364,7 +376,7 @@ function SoundPanel({ item, archive, pending, brsarPath, onReplaceMusic, onRepla
     try {
       let bytes: Uint8Array;
       if (format === "brstm") {
-        if (trackIndex === null && item.kind === "music" && !pending) bytes = await api.decodeArchiveBytes((await api.readPath(item.path!)).data, item.path!);
+        if (trackIndex === null && item.kind === "music" && !pending) bytes = await musicBytes();
         else {
           const part = trackIndex === null ? clip : isolateTrack(clip, trackIndex);
           bytes = trackIndex === null && pending ? pending : buildBRSTM({ channels: part.channels, sampleRate: part.sampleRate, loop: part.loop, loopStart: part.loopStart, tracks: part.tracks, trackType: part.trackType });

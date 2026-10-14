@@ -40,7 +40,11 @@ function reg(...args: string[]) {
 const regSet = (key: string, name: string | null, value: string) =>
   reg("add", key, ...(name === null ? ["/ve"] : ["/v", name]), "/t", "REG_SZ", "/d", value, "/f");
 
-const defaultValue = (key: string) => reg("query", key, "/ve").out.match(/REG_SZ\s+(.+)/)?.[1]?.trim();
+const defaultValue = (key: string) => {
+  const value = reg("query", key, "/ve").out.match(/REG_SZ\s+(.+)/)?.[1]?.trim();
+  // reg.exe prints a localized placeholder such as "(value not set)" / "(valore non impostato)".
+  return value && !/^\(.+\)$/.test(value) ? value : null;
+};
 
 // Tells Explorer to reload associations and icons.
 async function notifyShell() {
@@ -55,11 +59,14 @@ async function notifyShell() {
 export function associationStatus() {
   const exe = editorExe();
   if (!exe) return { available: false, registered: false, exe: null };
-  const command = reg("query", `HKCU\\Software\\Classes\\${progId(".szs")}\\shell\\open\\command`, "/ve");
-  return { available: true, registered: command.ok && command.out.toLowerCase().includes(exe.toLowerCase()), exe };
+  const registered = ASSOCIATED_EXTENSIONS.every((ext) => {
+    const command = reg("query", `HKCU\\Software\\Classes\\${progId(ext)}\\shell\\open\\command`, "/ve");
+    return command.ok && command.out.toLowerCase().includes(exe.toLowerCase());
+  });
+  return { available: true, registered, exe };
 }
 
-export async function registerAssociations() {
+export async function registerAssociations(claimDefaults = true) {
   const exe = editorExe();
   if (!exe) throw new Error("File association is available in the built MKWiiAdvancedEditor.exe only");
   const open = `"${exe}" "%1"`;
@@ -77,9 +84,13 @@ export async function registerAssociations() {
     reg("delete", `${key}\\OpenWithProgids`, "/v", LEGACY_PROG_ID, "/f");
     steps.push(regSet(`${key}\\OpenWithProgids`, progId(ext), ""));
     steps.push(regSet(`${APP_KEY}\\SupportedTypes`, ext, ""));
-    // Default app for the extension, unless another program already owns it here.
+    // The explicit Settings action claims the default where Windows permits it. Automatic
+    // migration only adds Open with entries and preserves an existing choice.
     const current = defaultValue(key);
-    if (!current || current === progId(ext) || current === LEGACY_PROG_ID) steps.push(regSet(key, null, progId(ext)));
+    if (claimDefaults || !current || current === progId(ext) || current === LEGACY_PROG_ID) {
+      if (current && current !== progId(ext) && current !== LEGACY_PROG_ID) steps.push(regSet(prog, "PreviousDefault", current));
+      steps.push(regSet(key, null, progId(ext)));
+    }
   }
   reg("delete", `HKCU\\Software\\Classes\\${LEGACY_PROG_ID}`, "/f");
   if (steps.some((s) => !s.ok)) throw new Error("Windows did not accept the file association");
@@ -91,11 +102,15 @@ export async function unregisterAssociations() {
   reg("delete", `HKCU\\Software\\Classes\\${LEGACY_PROG_ID}`, "/f");
   reg("delete", APP_KEY, "/f");
   for (const ext of ASSOCIATED_EXTENSIONS) {
+    const previous = reg("query", `HKCU\\Software\\Classes\\${progId(ext)}`, "/v", "PreviousDefault").out.match(/REG_SZ\s+(.+)/)?.[1]?.trim();
     reg("delete", `HKCU\\Software\\Classes\\${progId(ext)}`, "/f");
     const key = `HKCU\\Software\\Classes\\${ext}`;
     for (const id of [progId(ext), LEGACY_PROG_ID]) reg("delete", `${key}\\OpenWithProgids`, "/v", id, "/f");
     const current = defaultValue(key);
-    if (current === progId(ext) || current === LEGACY_PROG_ID) reg("delete", key, "/ve", "/f");
+    if (current === progId(ext) || current === LEGACY_PROG_ID) {
+      if (previous) regSet(key, null, previous);
+      else reg("delete", key, "/ve", "/f");
+    }
   }
   await notifyShell();
   return associationStatus();
@@ -106,8 +121,9 @@ export async function migrateLegacyAssociation() {
   const exe = editorExe();
   if (!exe) return;
   const legacy = reg("query", `HKCU\\Software\\Classes\\${LEGACY_PROG_ID}\\shell\\open\\command`, "/ve");
-  if (legacy.ok && legacy.out.toLowerCase().includes(exe.toLowerCase())) { await registerAssociations().catch(() => {}); return; }
+  if (legacy.ok && legacy.out.toLowerCase().includes(exe.toLowerCase())) { await registerAssociations(false).catch(() => {}); return; }
   // Registered by a version that knew fewer file types: add the new ones.
-  if (associationStatus().registered && !ASSOCIATED_EXTENSIONS.every((ext) => reg("query", `HKCU\\Software\\Classes\\${progId(ext)}\\shell\\open\\command`, "/ve").ok))
-    await registerAssociations().catch(() => {});
+  const szs = reg("query", `HKCU\\Software\\Classes\\${progId(".szs")}\\shell\\open\\command`, "/ve");
+  if (szs.ok && szs.out.toLowerCase().includes(exe.toLowerCase()) && !associationStatus().registered)
+    await registerAssociations(false).catch(() => {});
 }
