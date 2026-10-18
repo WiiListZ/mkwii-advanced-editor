@@ -12,6 +12,7 @@ import { useEditor } from "./hooks";
 import { editor, hasBackend, PATH_KINDS } from "./editor";
 import { contextActions } from "./context-actions";
 import { Map2DPanel } from "./Map2DPanel";
+import { IntroTimeline } from "./IntroTimeline";
 
 export function ViewportPanel() {
   const host = React.useRef<HTMLDivElement>(null);
@@ -39,39 +40,43 @@ export function ViewportPanel() {
     return () => { stop(); window.removeEventListener("drop", stop); window.removeEventListener("dragend", stop); window.removeEventListener("blur", stop); };
   }, []);
 
+  const timeline = ed.tab === "cameras" && !ed.homeVisible && !ed.isEmpty && !view2D;
   return (
-    <div
-      className="relative size-full overflow-hidden bg-[#1c1c1e]"
-      onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); keepDropping(); } }}
-      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) { clearTimeout(dropTimer.current); setDropping(false); } }}
-      onDrop={async (e) => {
-        clearTimeout(dropTimer.current);
-        setDropping(false);
-        const list = [...(e.dataTransfer.files || [])];
-        if (!list.length) return;
-        e.preventDefault();
-        const point = editor.viewport?.pickGround(e)?.point ?? null;
-        const files = await Promise.all(list.map(async (f) => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) })));
-        await editor.loadFiles(files, point);
-      }}
-    >
-      <div ref={host} className={`absolute inset-0 [&>canvas]:block [&>canvas]:size-full [&>canvas]:outline-none ${view2D ? "invisible" : ""}`} />
-      {!ed.homeVisible && !view2D && <CameraInsetFrame />}
-      {!ed.homeVisible && !view2D && <IntroPlayer />}
-      {(ed.homeVisible || ed.isEmpty) && <Welcome />}
-      {!ed.homeVisible && !ed.isEmpty && view2D && <Map2DPanel />}
-      {!ed.homeVisible && !view2D && <div className="pointer-events-none absolute bottom-2 left-3 flex items-center gap-1.5 text-[11px] text-white/50 [text-shadow:0_1px_3px_#000]">
-        <Mouse className="size-3.5" /> Right-drag: free look · Middle-drag: pan · Wheel: zoom · Click view + WASD/QE: fly
-      </div>}
-      {dropping && (
-        <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-white/50 bg-black/45 px-8">
-          <div className="max-w-md text-center">
-            <div className="text-base font-semibold text-white">Drop files to open or add them</div>
-            <p className="mt-1.5 text-xs leading-relaxed text-white/70">A track (.szs), loose track files (course_model.brres, course.kcl, course.kmp…) or 3D models to add to the track (.fbx .glb .gltf .dae .obj .stl .ply).</p>
+    <div className="flex size-full flex-col">
+      <div
+        className="relative min-h-0 flex-1 overflow-hidden bg-[#1c1c1e]"
+        onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); keepDropping(); } }}
+        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) { clearTimeout(dropTimer.current); setDropping(false); } }}
+        onDrop={async (e) => {
+          clearTimeout(dropTimer.current);
+          setDropping(false);
+          const list = [...(e.dataTransfer.files || [])];
+          if (!list.length) return;
+          e.preventDefault();
+          const point = editor.viewport?.pickGround(e)?.point ?? null;
+          const files = await Promise.all(list.map(async (f) => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) })));
+          await editor.loadFiles(files, point);
+        }}
+      >
+        <div ref={host} className={`absolute inset-0 [&>canvas]:block [&>canvas]:size-full [&>canvas]:outline-none ${view2D ? "invisible" : ""}`} />
+        {!ed.homeVisible && !view2D && <CameraInsetFrame />}
+        {!ed.homeVisible && !view2D && <IntroPlayer />}
+        {(ed.homeVisible || ed.isEmpty) && <Welcome />}
+        {!ed.homeVisible && !ed.isEmpty && view2D && <Map2DPanel />}
+        {!ed.homeVisible && !view2D && <div className="pointer-events-none absolute bottom-2 left-3 flex items-center gap-1.5 text-[11px] text-white/50 [text-shadow:0_1px_3px_#000]">
+          <Mouse className="size-3.5" /> Right-drag: free look · Middle-drag: pan · Wheel: zoom · Click view + WASD/QE: fly
+        </div>}
+        {dropping && (
+          <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-white/50 bg-black/45 px-8">
+            <div className="max-w-md text-center">
+              <div className="text-base font-semibold text-white">Drop files to open or add them</div>
+              <p className="mt-1.5 text-xs leading-relaxed text-white/70">A track (.szs), loose track files (course_model.brres, course.kcl, course.kmp…) or 3D models to add to the track (.fbx .glb .gltf .dae .obj .stl .ply).</p>
+            </div>
           </div>
-        </div>
-      )}
-      <ViewportContextMenu />
+        )}
+        <ViewportContextMenu />
+      </div>
+      {timeline && <IntroTimeline />}
     </div>
   );
 }
@@ -182,12 +187,18 @@ function CameraInsetFrame() {
 
 // Intro playback: the 3D view shows the game camera; this bar plays, pauses and seeks.
 function IntroPlayer() {
-  const ed = useEditor("intro", "doc");
+  const ed = useEditor("intro", "doc", "ui");
   if (!ed.intro) return null;
   const timeline = ed.introTimeline();
   const frame = ed.intro.frame;
   const shot = timeline.shots.find((s: any) => frame < s.start + s.frames) || timeline.shots[timeline.shots.length - 1];
   const n = shot ? timeline.shots.indexOf(shot) + 1 : 0;
+  // In the Cameras tab the keyframe timeline under the view is the player.
+  if (ed.tab === "cameras") return (
+    <div className="absolute inset-0 z-30 cursor-pointer" onClick={() => ed.finishIntro()} onContextMenu={(e) => e.preventDefault()}>
+      <div className="pointer-events-none absolute left-3 top-3 rounded bg-black/55 px-2 py-1 text-[11px] text-white/85">Intro · shot {n} of {timeline.shots.length} · click or Space to stop here</div>
+    </div>
+  );
   return (
     <div className="absolute inset-0 z-30 flex flex-col justify-end" onContextMenu={(e) => e.preventDefault()}>
       <div className="pointer-events-none absolute left-3 top-3 rounded bg-black/55 px-2 py-1 text-[11px] text-white/85">Intro preview · shot {n} of {timeline.shots.length} · camera {shot?.index}</div>

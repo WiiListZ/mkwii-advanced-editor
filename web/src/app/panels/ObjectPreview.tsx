@@ -6,11 +6,12 @@ import { cloneModel, bindCHR, applyCHRFrame, collectBillboards, applyBillboards 
 import { editor, hex } from "../editor";
 import { useEditor } from "../hooks";
 
-export function ObjectPreview({ objectId, className = "h-36" }: { objectId: number | null; className?: string }) {
+// `built`: a model taken from another archive ({ template, chr }) instead of the one the open track uses.
+export function ObjectPreview({ objectId, className = "h-36", built }: { objectId: number | null; className?: string; built?: { template: any; chr: any } | null }) {
   useEditor("doc"); // re-render when a model arrives from the tracks folder
   const host = React.useRef<HTMLDivElement>(null);
   const view = React.useRef<any>(null);
-  const model = objectId != null ? editor.assets?.objectModel(objectId) : null;
+  const model = built !== undefined ? built : objectId != null ? editor.assets?.objectModel(objectId) : null;
 
   React.useEffect(() => {
     const el = host.current!;

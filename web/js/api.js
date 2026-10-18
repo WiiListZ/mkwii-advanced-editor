@@ -232,9 +232,10 @@ export const api = {
     return call('import-model', { method: 'POST', query: { path, target: target.join(','), animation }, body: data, raw: true });
   },
 
-  async convertModelBRRES(path, animation = '') {
+  // name: the model's name inside the BRRES ('converted' when empty).
+  async convertModelBRRES(path, animation = '', name = '') {
     if (!hasBackend || !path) throw new Error('BRRES conversion requires the desktop app and a model file on disk');
-    return call('convert-model-brres', { method: 'POST', query: { path, animation }, raw: true });
+    return call('convert-model-brres', { method: 'POST', query: { path, animation, ...(name ? { name } : {}) }, raw: true });
   },
 
   // Converts a BRRES to .dae / .obj (chosen by the extension) with its textures, next to `path`.

@@ -3,6 +3,7 @@
 // (group links, checkpoint respawns, object/area/camera routes, camera links).
 
 import { make } from '../formats/kmp.js';
+import { findFile, setFilePath } from '../formats/u8.js';
 import { GROUPED, FLAT } from './document.js';
 import { turnYaw } from './heading.js';
 
@@ -89,6 +90,7 @@ export class Ops {
     const primary = doc.primary;
     const p = [...point];
     let newKey = null;
+    const files = doc.szs ? (extra.files || []).filter((f) => !findFile(doc.szs, f.path)) : [];
 
     doc.change(`Add ${kind}`, () => {
       switch (kind) {
@@ -123,6 +125,10 @@ export class Ops {
         }
         case 'GOBJ': {
           const o = make.GOBJ(extra.objectId ?? 0x65, p);
+          // Settings, scale and presence taken from an object of another track.
+          if (extra.settings) o.settings = [...extra.settings];
+          if (extra.scale) o.scale = [...extra.scale];
+          if (extra.presence !== undefined) o.presence = extra.presence;
           k.GOBJ.push(o);
           newKey = o.uid;
           break;
@@ -157,9 +163,11 @@ export class Ops {
           break;
         }
       }
+      // Model files that come with the element (an object from another track).
+      for (const f of files) setFilePath(doc.szs, f.path, f.data);
       doc.invalidate();
       if (newKey) doc.selection = new Set([String(newKey)]);
-    });
+    }, { archivePaths: files.map((f) => f.path) });
     doc.emit('selection');
     return newKey;
   }

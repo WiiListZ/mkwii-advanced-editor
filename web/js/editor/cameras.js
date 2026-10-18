@@ -3,15 +3,20 @@
 // The CAME section header holds two indices: the first camera of the intro fly-over (high byte)
 // and the camera of the course selection screen (low byte). Intro cameras are chained with "next".
 //
-// How the game moves an opening camera (values checked against the original tracks):
+// How the game moves an opening camera (values checked against the original tracks and the
+// timings wkmpt computes):
 // - with a route, the camera follows it; each route point's Setting 1 is the speed in units per
-//   frame from that point on (blended toward the next point). Without a route it stays at its position;
+//   frame from that point on (blended toward the next point). Without a route it stays at its position.
+//   At the last point a speed of 0 stops it (all of Nintendo's routes that end early do that);
+//   otherwise it goes on: back toward the start (route setting 2 = 1) or round to the first point (0);
+// - "smooth" routes need at least 3 points (the game freezes on a smooth route of 2);
 // - the look-at point goes from "look-at start" to "look-at end" at viewSpeed / 100 units per frame;
 // - the field of view goes from zoom start to zoom end at zoomSpeed / 100 degrees per frame;
 // - the camera is used for `time` frames (60 per second).
 // Replay and goal cameras follow the kart, so their preview uses the first start position.
 
-export const OPENING_TYPES = new Set([5, 6]);
+// Type 6 (OP_PathMoveAt) is not an intro camera: in the game it moves with the kart.
+export const OPENING_TYPES = new Set([5]);
 const KART_RELATIVE = new Set([0, 3, 4]); // goal, kart follow, kart path follow
 const NONE = 0xff;
 
@@ -85,32 +90,14 @@ export function simulateCamera(kmp, index) {
     return [{ position: toWorld(cam.viewStart), target: toWorld(cam.viewEnd), fov: cam.zoomStart || 45 }];
   }
   const route = cam.route !== NONE ? kmp.POTI?.[cam.route] : null;
-  const path = route && route.points.length >= 2 ? routePath(route) : null;
-  const useRouteSpeeds = path && path.speeds.some((s) => s > 0);
+  const moves = route && route.points.length >= 2 ? routeMotion(route, cam.pointSpeed / 100, frames) : null;
   const opening = OPENING_TYPES.has(cam.type);
-  let seg = 0, along = 0;
   let view = [...cam.viewStart], fov = cam.zoomStart || 45;
   const out = [];
   for (let f = 0; f < frames; f++) {
-    let position = cam.pos;
-    const segment = path ? path.from[seg] : -1;
-    if (path) {
-      const a = path.pts[seg], b = path.pts[Math.min(seg + 1, path.pts.length - 1)];
-      const segLen = len(sub(b, a)) || 1;
-      position = lerp3(a, b, Math.min(1, along / segLen));
-      // Advance along the route at this frame's speed.
-      const t = Math.min(1, along / segLen);
-      let speed = useRouteSpeeds ? path.speeds[seg] + (path.speeds[Math.min(seg + 1, path.speeds.length - 1)] - path.speeds[seg]) * t : cam.pointSpeed / 100;
-      speed = Math.max(speed, useRouteSpeeds ? 0.5 : 0);
-      along += speed;
-      while (seg < path.pts.length - 1 && along >= len(sub(path.pts[seg + 1], path.pts[seg]))) {
-        along -= len(sub(path.pts[seg + 1], path.pts[seg]));
-        seg++;
-      }
-      if (seg >= path.pts.length - 1) { seg = path.pts.length - 1; along = 0; }
-    }
+    const position = moves ? moves[f].position : cam.pos;
     const target = opening ? view : nearestRoadPoint(kmp, position);
-    out.push({ position: [...position], target: [...target], fov, segment });
+    out.push({ position: [...position], target: [...target], fov, segment: moves ? moves[f].segment : -1 });
     if (opening) {
       const toEnd = sub(cam.viewEnd, view), d = len(toEnd), step = cam.viewSpeed / 100;
       view = d <= step || d === 0 ? [...cam.viewEnd] : view.map((v, a) => v + (toEnd[a] / d) * step);
@@ -118,6 +105,47 @@ export function simulateCamera(kmp, index) {
     const dz = cam.zoomEnd - fov, zs = cam.zoomSpeed / 100;
     fov = Math.abs(dz) <= zs ? cam.zoomEnd : fov + Math.sign(dz) * zs;
   }
+  return out;
+}
+
+// Position on a route at every frame: { position, segment } (segment: the route point passed last).
+function routeMotion(route, fallbackSpeed, frames) {
+  const path = routePath(route), pts = path.pts, n = pts.length;
+  const useRouteSpeeds = path.speeds.some((s) => s > 0);
+  const cyclic = !route.loop && route.points.length > 2;
+  let k = 0, along = 0, dir = 1, stopped = false;
+  // The vertex the camera is heading to (-1: none).
+  const next = () => (dir > 0 ? (k + 1 < n ? k + 1 : cyclic ? 0 : -1) : k > 0 ? k - 1 : -1);
+  const out = [];
+  for (let f = 0; f < frames; f++) {
+    let j = next();
+    const edge = j >= 0 ? len(sub(pts[j], pts[k])) || 1 : 1;
+    const t = j >= 0 ? Math.min(1, along / edge) : 0;
+    out.push({ position: j >= 0 ? lerp3(pts[k], pts[j], t) : [...pts[k]], segment: path.from[k] });
+    if (stopped || j < 0) continue;
+    const speed = useRouteSpeeds ? Math.max(0.5, path.speeds[k] + (path.speeds[j] - path.speeds[k]) * t) : fallbackSpeed;
+    if (speed <= 0) continue;
+    along += speed;
+    for (let guard = 0; guard < 10000; guard++) {
+      j = next();
+      if (j < 0) { along = 0; break; }
+      const length = len(sub(pts[j], pts[k]));
+      if (along < length) break;
+      along -= length;
+      k = j;
+      const atEnd = dir > 0 ? k === n - 1 : k === 0;
+      if (!atEnd) continue;
+      if (useRouteSpeeds && path.speeds[k] <= 0) { stopped = true; along = 0; break; }
+      if (!(dir > 0 && cyclic)) dir = -dir;
+    }
+  }
+  return out;
+}
+
+// Length of each section of a route (point i to i + 1), along the curve the camera follows.
+export function routeSectionLengths(route) {
+  const path = routePath(route), out = new Array(Math.max(0, route.points.length - 1)).fill(0);
+  for (let v = 0; v < path.pts.length - 1; v++) out[path.from[v]] += len(sub(path.pts[v + 1], path.pts[v]));
   return out;
 }
 

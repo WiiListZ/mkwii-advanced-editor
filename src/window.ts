@@ -50,6 +50,8 @@ export function makeFrameless(hwnd: Pointer): WindowControl | null {
     GetSystemMetrics: { args: [FFIType.i32], returns: FFIType.i32 },
     GetCursorPos: { args: [FFIType.ptr], returns: FFIType.i32 },
     SetCursorPos: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+    GetClientRect: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+    ClientToScreen: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
     // The resource name is MAKEINTRESOURCE(id): an integer, so it is not passed as a pointer.
     LoadImageW: { args: [FFIType.ptr, FFIType.u64, FFIType.u32, FFIType.i32, FFIType.i32, FFIType.u32], returns: FFIType.u64 },
   }));
@@ -122,11 +124,13 @@ export function makeFrameless(hwnd: Pointer): WindowControl | null {
   return (action: string, arg?: string) => {
     switch (action) {
       case "cursor-save": savedCursor = user32.GetCursorPos(ptr(point)) ? [point[0], point[1]] : null; return { ok: !!savedCursor };
-      // arg: "dx,dy", the offset in screen pixels from the saved position (the 3D view's centre).
+      // arg: "fx,fy", the point as a fraction of the window's client area (the 3D view's centre).
+      // Fractions do not depend on the display scaling or on where the cursor was saved.
       case "cursor-recenter": {
-        if (!savedCursor) return { ok: false };
-        const [dx, dy] = (arg || "0,0").split(",").map((v) => Math.round(Number(v)) || 0);
-        user32.SetCursorPos(savedCursor[0] + dx, savedCursor[1] + dy);
+        const [fx, fy] = (arg || "0.5,0.5").split(",").map((v) => Math.min(1, Math.max(0, Number(v) || 0)));
+        const rect = new Int32Array(4), corner = new Int32Array(2);
+        if (!user32.GetClientRect(hwnd, ptr(rect)) || !user32.ClientToScreen(hwnd, ptr(corner))) return { ok: false };
+        user32.SetCursorPos(corner[0] + Math.round((rect[2] - rect[0]) * fx), corner[1] + Math.round((rect[3] - rect[1]) * fy));
         return { ok: true };
       }
       case "cursor-restore": if (savedCursor) user32.SetCursorPos(savedCursor[0], savedCursor[1]); savedCursor = null; return { ok: true };

@@ -29,6 +29,7 @@ import { editor, hex, DEFAULT_SETTINGS } from "../editor";
 import { KIND_ICON, SectionTitle } from "../common";
 import { TrackGeneratorDialog } from "./TrackGeneratorDialog";
 import { ModelPartsDialog } from "./ModelPartsDialog";
+import { GameObjectsDialog } from "./GameObjectsDialog";
 import { GameTextDialog } from "./GameTextDialog";
 import { AudioDialog } from "./AudioDialog";
 import { AssetEditorDialog, AssetTextureEditorDialog } from "./AssetEditorDialog";
@@ -76,7 +77,7 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
     );
   }
   const sizes: Record<string, string> = {
-    generator: "max-w-[1100px]", help: "max-w-[920px]", preferences: "max-w-[760px]", szs: "max-w-[760px]", modelParts: "max-w-[1180px]", settings: "max-w-[620px] p-0 gap-0", trackSettings: "max-w-[520px]", importDrop: "max-w-[480px]", gameText: "flex h-[min(1100px,95vh)] max-w-[min(1640px,97vw)] flex-col overflow-hidden", riivolution: "flex h-[min(1000px,94vh)] max-w-[min(1400px,96vw)] flex-col overflow-hidden", audio: "flex h-[min(900px,92vh)] max-w-[min(1100px,95vw)] flex-col overflow-hidden", assetEditor: "flex h-[min(1100px,95vh)] max-w-[min(1640px,97vw)] flex-col overflow-hidden", assetTextureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", workspace: "max-w-[560px]", textureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", objectTextureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", objectAppearance: "max-w-[860px]", archive: "flex h-[min(820px,90vh)] max-w-[min(1000px,94vw)] flex-col overflow-hidden", menuResource: "flex h-[min(800px,92vh)] max-w-[min(1150px,96vw)] flex-col overflow-hidden", effects: "flex h-[min(900px,92vh)] max-w-[min(1300px,96vw)] flex-col overflow-hidden", params: "flex h-[min(900px,92vh)] max-w-[min(1300px,96vw)] flex-col overflow-hidden", skeletonEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", sky: "flex h-[min(900px,92vh)] max-w-[min(1300px,95vw)] flex-col overflow-hidden", animationChoice: "max-w-[480px]", importObj: "max-w-[680px]", objectPicker: "max-w-[820px] p-0 gap-0",
+    generator: "max-w-[1100px]", help: "max-w-[920px]", preferences: "max-w-[760px]", szs: "max-w-[760px]", modelParts: "max-w-[1180px]", gameObjects: "max-w-[1180px]", settings: "max-w-[620px] p-0 gap-0", trackSettings: "max-w-[520px]", importDrop: "max-w-[480px]", gameText: "flex h-[min(1100px,95vh)] max-w-[min(1640px,97vw)] flex-col overflow-hidden", riivolution: "flex h-[min(1000px,94vh)] max-w-[min(1400px,96vw)] flex-col overflow-hidden", audio: "flex h-[min(900px,92vh)] max-w-[min(1100px,95vw)] flex-col overflow-hidden", assetEditor: "flex h-[min(1100px,95vh)] max-w-[min(1640px,97vw)] flex-col overflow-hidden", assetTextureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", workspace: "max-w-[560px]", textureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", objectTextureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", objectAppearance: "max-w-[860px]", archive: "flex h-[min(820px,90vh)] max-w-[min(1000px,94vw)] flex-col overflow-hidden", menuResource: "flex h-[min(800px,92vh)] max-w-[min(1150px,96vw)] flex-col overflow-hidden", effects: "flex h-[min(900px,92vh)] max-w-[min(1300px,96vw)] flex-col overflow-hidden", params: "flex h-[min(900px,92vh)] max-w-[min(1300px,96vw)] flex-col overflow-hidden", skeletonEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", sky: "flex h-[min(900px,92vh)] max-w-[min(1300px,95vw)] flex-col overflow-hidden", animationChoice: "max-w-[480px]", importObj: "max-w-[680px]", objectPicker: "max-w-[820px] p-0 gap-0",
   };
   const body = (() => {
     switch (entry.kind) {
@@ -89,6 +90,7 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
       case "importObj": return <ImportObjDialog groups={p.groups} close={close} />;
       case "szs": return <SzsDialog close={close} />;
       case "modelParts": return <ModelPartsDialog close={close} />;
+      case "gameObjects": return <GameObjectsDialog close={close} />;
       case "gameText": return <GameTextDialog search={p.search} folder={p.folder} language={p.language} file={p.file} loose={p.loose} close={close} />;
       case "audio": return <AudioDialog file={p.file} loose={p.loose} close={close} />;
       case "riivolution": return <RiivolutionDialog initialFile={p.initialFile} close={close} />;
@@ -307,6 +309,8 @@ const KEYS: [string, string][] = [
   ["Home", "Frame the whole track"], ["T", "Top view"], ["Ctrl+D", "Duplicate"], ["Ctrl+X / Del", "Delete"], ["Ctrl+A", "Select all of the same kind"],
   ["A", "Add a point after the selected one"], ["Esc", "Cancel tool / clear selection"], ["Ctrl+Z / Ctrl+Y", "Undo / Redo"],
   ["Ctrl+O / Ctrl+S / Ctrl+Shift+S", "Open / Save / Save as"], ["Ctrl+N", "Create a new track"], ["Ctrl+,", "Settings"], ["F1", "Help"],
+  ["K", "Cameras tab: add / update the intro keyframe at the playhead from the view"], ["Space", "Cameras tab: play / stop the intro"],
+  [", / .", "Cameras tab: previous / next keyframe"], ["← / →", "Cameras tab: move the playhead one frame (Shift: one second)"],
 ];
 
 // Help center › Tutorials: list on the left, the chosen tutorial's steps on the right.
@@ -484,6 +488,9 @@ function ObjectPicker({ current, purpose, close }: { current: number; purpose?: 
         <Button className="w-full shrink-0" onClick={add}>Add to track · {editor.objectLabel(selected)}</Button>
         {purpose === "change" && <Button variant="secondary" className="w-full" onClick={() => close(selected)}>Change selected object</Button>}
       </>}
+      {purpose === "add" && <Button variant="ghost" size="sm" className="mt-auto w-full shrink-0 text-muted-foreground" onClick={() => { close(null); editor.cmd("gameObjects"); }}>
+        From another track or my 3D model…
+      </Button>}
     </div>
     </div>
   );

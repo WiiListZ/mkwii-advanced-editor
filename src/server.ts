@@ -262,7 +262,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
 
     case "convert-model-brres": {
       if (req.method !== "POST" || !filePath) return json({ error: "POST with a model path required" }, 400);
-      const result = await convert3DToBRRES(filePath, url.searchParams.get("animation") || "");
+      const result = await convert3DToBRRES(filePath, url.searchParams.get("animation") || "", url.searchParams.get("name") || undefined);
       return new Response(result, { headers: { "content-type": "application/octet-stream" } });
     }
 

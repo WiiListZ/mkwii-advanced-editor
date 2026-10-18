@@ -94,6 +94,7 @@ export function ObjectsPanel() {
         <Button size="sm" className="w-full" onClick={() => ed.startPlacing("GOBJ", { objectId: previewId })}>Add to track · {ed.objectLabel(previewId)}</Button>
       </div>}
       {previewId !== null && <ObjectDocumentationView id={previewId} label={ed.objectLabel(previewId)} name={ed.objectNames[previewId] || "unknown"} documentation={documentation} />}
+      <Button size="sm" variant="secondary" className="self-start" onClick={() => ed.cmd("gameObjects")}><Package /> From another track or my 3D model…</Button>
       <p className="text-xs leading-relaxed text-muted-foreground">
         Game objects: item boxes, enemies, decorations, sounds and effects. Click one to preview it, then choose Add to track or drag the selected object into the 3D view.
         <Box className="mx-1 inline size-3.5 text-success" /> means the real game model is shown.

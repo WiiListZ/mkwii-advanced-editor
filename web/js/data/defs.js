@@ -53,7 +53,7 @@ export const AREA_SHAPES = ['Box', 'Cylinder'];
 
 export const CAMERA_TYPES = [
   'Goal', 'Fixed Search', 'Path Search', 'Kart Follow', 'Kart Path Follow',
-  'Opening Fixed (OP_FixMoveAt)', 'Opening Path (OP_PathMoveAt)', 'Mini Game', 'Mission Success', 'Unknown',
+  'Opening (OP_FixMoveAt)', 'Replay path, follows the kart (OP_PathMoveAt)', 'Mini Game', 'Mission Success', 'Unknown',
 ];
 
 export const CHECKPOINT_TYPE_LABEL = (t) => (t === 0 ? 'Lap (finish line)' : t === 0xFF ? 'Normal' : `Key ${t}`);

@@ -695,9 +695,11 @@ export async function import3DModel(data: Uint8Array, modelPath: string, target:
 }
 
 // Converts a source model into a standalone BRRES; no existing game resource is patched.
-export async function convert3DToBRRES(modelPath: string, animation = "") {
+// `name` is the model's name inside the BRRES (an object's model must be named like its resource).
+export async function convert3DToBRRES(modelPath: string, animation = "", name = "converted") {
   const extension = extname(modelPath).toLowerCase();
   if (!MODEL_EXTENSIONS.has(extension) || !existsSync(modelPath)) throw new Error("Choose an existing supported 3D model file");
+  if (!/^[A-Za-z0-9_]{1,40}$/.test(name)) throw new Error("Invalid model name");
   const exe = abmattPath();
   if (!exe) throw new Error("ABMatt is unavailable. Check the included tools or set MKWII_ABMATT.");
   const dir = await mkdtemp(join(tmpdir(), "mkwii-brres-convert-"));
@@ -706,7 +708,8 @@ export async function convert3DToBRRES(modelPath: string, animation = "") {
     let skeletal: ImportedAnimation | null = null;
     const blender = await blenderPath();
     if (!blender) throw new Error("Blender is required to convert a standalone BRRES");
-    const script = join(dir, "convert.py"), obj = join(dir, "converted.obj");
+    // ABMatt names the model after the DAE file, up to its first dot.
+    const script = join(dir, "convert.py"), obj = join(dir, `${name}.obj`);
     await writeFile(script, BLENDER_IMPORT_SCRIPT);
     const child = Bun.spawn([blender, "--background", "--factory-startup", "--python", script, "--", resolve(modelPath), obj, "[0,0,0]", "Converted", animation], {
       cwd: dir, stdout: "pipe", stderr: "pipe", windowsHide: true,
@@ -836,11 +839,51 @@ export function parseTriangleRanges(text: string | null) {
   return out;
 }
 const distance2 = (a: number[], b: number[]) => a.reduce((sum, v, i) => sum + (v - b[i]) ** 2, 0);
-const xyzKey = (a: number[]) => a.map((v) => Math.round(v * 100)).join(",");
-const triKey = (points: number[][]) => points.map(xyzKey).sort().join("|");
+
+// Finds the chosen triangles again in ABMatt's Collada export. The export holds bind-pose world
+// positions written with float error (about 0.002), so vertices are compared with a tolerance:
+// rounding to a fixed grid splits values that sit on a grid boundary.
+const MATCH_TOLERANCE = 0.05;
+export function triangleMatcher(triangles: number[][][]) {
+  const cellOf = (points: number[][]) => [0, 1, 2].map((axis) => Math.floor((points[0][axis] + points[1][axis] + points[2][axis]) / 3));
+  const cells = new Map<string, number[][][]>();
+  let left = 0;
+  for (const points of triangles) {
+    const key = cellOf(points).join(",");
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key)!.push(points);
+    left++;
+  }
+  const near = (a: number[], b: number[]) => Math.abs(a[0] - b[0]) <= MATCH_TOLERANCE && Math.abs(a[1] - b[1]) <= MATCH_TOLERANCE && Math.abs(a[2] - b[2]) <= MATCH_TOLERANCE;
+  const same = (a: number[][], b: number[][]) => {
+    const used = [false, false, false];
+    return a.every((p) => {
+      const i = b.findIndex((q, k) => !used[k] && near(p, q));
+      if (i < 0) return false;
+      used[i] = true;
+      return true;
+    });
+  };
+  return {
+    // Consumes one wanted triangle equal to `points`; false when none is left.
+    take(points: number[][]) {
+      const [x, y, z] = cellOf(points);
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+        const list = cells.get(`${x + dx},${y + dy},${z + dz}`);
+        const i = list?.findIndex((candidate) => same(points, candidate)) ?? -1;
+        if (i >= 0) { list!.splice(i, 1); left--; return true; }
+      }
+      return false;
+    },
+    get left() { return left; },
+  };
+}
+const trianglePoints = (positions: ArrayLike<number>, t: number) =>
+  Array.from({ length: 3 }, (_, k) => Array.from({ length: 3 }, (_, c) => positions[t * 9 + k * 3 + c]));
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-export function duplicateInDae(xml: string, name: string, part: any, selected: any, delta: number[]) {
+// `positions` are the polygon's bind-pose world positions (see worldPositions).
+export function duplicateInDae(xml: string, name: string, positions: ArrayLike<number>, selected: any, delta: number[]) {
   const geo = new RegExp(`<geometry\\b[^>]*name="${escapeRe(name)}"[\\s\\S]*?<\\/geometry>`);
   const found = xml.match(geo);
   if (!found) throw new Error(`ABMatt did not export polygon ${name}`);
@@ -866,20 +909,15 @@ export function duplicateInDae(xml: string, name: string, part: any, selected: a
   if (!pMatch) throw new Error("DAE polygon index list missing");
   const indices = pMatch[2].trim().split(/\s+/).map(Number);
   if (indices.length % (stride * 3)) throw new Error("Invalid DAE polygon indices");
-  const wanted = new Map<string, number>();
-  for (const t of selected.triangles) {
-    const points = Array.from({ length: 3 }, (_, k) => Array.from(part.positions.slice(t * 9 + k * 3, t * 9 + k * 3 + 3)) as number[]);
-    const key = triKey(points); wanted.set(key, (wanted.get(key) || 0) + 1);
-  }
+  const wanted = triangleMatcher(selected.triangles.map((t: number) => trianglePoints(positions, t)));
   const chosen: number[][] = [];
-  for (let t = 0; t < indices.length / (stride * 3); t++) {
+  for (let t = 0; t < indices.length / (stride * 3) && wanted.left; t++) {
     const tuple = indices.slice(t * stride * 3, (t + 1) * stride * 3);
     const points = Array.from({ length: 3 }, (_, k) => {
       const i = tuple[k * stride + vertexOffset] * 3;
       return coords.slice(i, i + 3);
     });
-    const key = triKey(points), remaining = wanted.get(key) || 0;
-    if (remaining) { wanted.set(key, remaining - 1); chosen.push(tuple); }
+    if (wanted.take(points)) chosen.push(tuple);
   }
   if (chosen.length !== selected.triangles.length) throw new Error(`Could not match all selected triangles (${chosen.length}/${selected.triangles.length})`);
   const newIndices = new Map<number, number>(), appended: number[] = [];
@@ -905,7 +943,7 @@ export function duplicateInDae(xml: string, name: string, part: any, selected: a
   return xml.replace(found[0], body);
 }
 
-export function deleteFromDae(xml: string, name: string, part: any, selected: any) {
+export function deleteFromDae(xml: string, name: string, positions: ArrayLike<number>, selected: any) {
   const geo = new RegExp(`<geometry\\b[^>]*name="${escapeRe(name)}"[\\s\\S]*?<\\/geometry>`);
   const found = xml.match(geo);
   if (!found) throw new Error(`ABMatt did not export polygon ${name}`);
@@ -920,18 +958,13 @@ export function deleteFromDae(xml: string, name: string, part: any, selected: an
   if (!vertex || !pMatch) throw new Error("DAE triangle indices missing");
   const stride = Math.max(...inputs.map((m) => Number(m[2]))) + 1, vertexOffset = Number(vertex[2]);
   const indices = pMatch[2].trim().split(/\s+/).map(Number);
-  const wanted = new Map<string, number>();
-  for (const t of selected.triangles) {
-    const points = Array.from({ length: 3 }, (_, k) => Array.from(part.positions.slice(t * 9 + k * 3, t * 9 + k * 3 + 3)) as number[]);
-    const key = triKey(points); wanted.set(key, (wanted.get(key) || 0) + 1);
-  }
+  const wanted = triangleMatcher(selected.triangles.map((t: number) => trianglePoints(positions, t)));
   const keep: number[] = [];
   let removed = 0;
   for (let t = 0; t < indices.length / (stride * 3); t++) {
     const tuple = indices.slice(t * stride * 3, (t + 1) * stride * 3);
     const points = Array.from({ length: 3 }, (_, k) => coords.slice(tuple[k * stride + vertexOffset] * 3, tuple[k * stride + vertexOffset] * 3 + 3));
-    const key = triKey(points), remaining = wanted.get(key) || 0;
-    if (remaining) { wanted.set(key, remaining - 1); removed++; }
+    if (wanted.left && wanted.take(points)) removed++;
     else keep.push(...tuple);
   }
   if (removed !== selected.triangles.length) throw new Error(`Could not match all selected triangles (${removed}/${selected.triangles.length})`);
@@ -966,7 +999,7 @@ const attrRe = (name: string) => new RegExp(`(["#>\\s\\\\/])${escapeRe(name)}(?=
 // triangles are kept and the positions are moved by `delta`.
 export function foreignPartDae(xml: string, materials: Record<string, any>, opts: {
   polygon: string; name: string; materialNames: Record<string, string>; textureNames: Record<string, string>;
-  wanted?: Map<string, number> | null; delta: number[];
+  wanted?: number[][][] | null; delta: number[];
 }) {
   const geometry = xml.match(new RegExp(`<geometry\\b[^>]*name="${escapeRe(opts.polygon)}"[\\s\\S]*?<\\/geometry>`))?.[0];
   if (!geometry) throw new Error(`ABMatt did not export polygon ${opts.polygon}`);
@@ -978,7 +1011,7 @@ export function foreignPartDae(xml: string, materials: Record<string, any>, opts
   if (coords.length !== Number(floats[2]) || coords.length % 3 || !coords.every(Number.isFinite)) throw new Error("Invalid DAE positions");
   let body = geometry.replace(floatRe, (_m, a, count, b, _values, end) =>
     `${a}${count}${b}${coords.map((v, i) => +(v + opts.delta[i % 3]).toFixed(6)).join(" ")}${end}`);
-  const wanted = opts.wanted ? new Map(opts.wanted) : null;
+  const wanted = opts.wanted ? triangleMatcher(opts.wanted) : null;
   let kept = 0;
   body = body.replace(/<triangles\b[^>]*>[\s\S]*?<\/triangles>/g, (tris) => {
     const inputs = [...tris.matchAll(/<input\b[^>]*semantic="([^"]+)"[^>]*offset="(\d+)"[^>]*\/>/g)];
@@ -988,12 +1021,7 @@ export function foreignPartDae(xml: string, materials: Record<string, any>, opts
     const indices = p[2].trim().split(/\s+/).map(Number), keep: number[] = [];
     for (let t = 0; t < indices.length / (stride * 3); t++) {
       const tuple = indices.slice(t * stride * 3, (t + 1) * stride * 3);
-      if (wanted) {
-        const key = triKey(Array.from({ length: 3 }, (_, k) => coords.slice(tuple[k * stride + vertexOffset] * 3, tuple[k * stride + vertexOffset] * 3 + 3)));
-        const remaining = wanted.get(key) || 0;
-        if (!remaining) continue;
-        wanted.set(key, remaining - 1);
-      }
+      if (wanted && !wanted.take(Array.from({ length: 3 }, (_, k) => coords.slice(tuple[k * stride + vertexOffset] * 3, tuple[k * stride + vertexOffset] * 3 + 3)))) continue;
       keep.push(...tuple);
     }
     if (!keep.length) return "";
@@ -1003,7 +1031,7 @@ export function foreignPartDae(xml: string, materials: Record<string, any>, opts
       .replace(p[0], `${p[1]}${keep.join(" ")}${p[3]}`);
   });
   if (!kept) throw new Error("No triangles of this part were found in the export");
-  if (wanted && [...wanted.values()].some(Boolean)) throw new Error("Could not match every triangle of the selected piece");
+  if (wanted?.left) throw new Error("Could not match every triangle of the selected piece");
   body = body.replace(attrRe(opts.polygon), (_m, before) => `${before}${opts.name}`);
 
   const used = Object.keys(opts.materialNames);
@@ -1092,16 +1120,12 @@ export async function importBRRESPart(data: Uint8Array, sourceData: Uint8Array, 
   if (!model) throw new Error("The track model contains no 3D model");
 
   const world = worldPositions(sourceModel, part);
-  let wanted: Map<string, number> | null = null, triangles = Array.from({ length: part.triangles }, (_, t) => t);
+  let wanted: number[][][] | null = null, triangles = Array.from({ length: part.triangles }, (_, t) => t);
   if (opts.pieceCenter || opts.triangles?.length) {
     const piece = selectPiece(part, opts.pieceCenter || [0, 0, 0], opts.triangles);
     if (piece.triangles.length < part.triangles) {
       triangles = piece.triangles;
-      wanted = new Map();
-      for (const t of triangles) {
-        const key = triKey(Array.from({ length: 3 }, (_, k) => Array.from(world.slice(t * 9 + k * 3, t * 9 + k * 3 + 3)) as number[]));
-        wanted.set(key, (wanted.get(key) || 0) + 1);
-      }
+      wanted = triangles.map((t) => trianglePoints(world, t));
     }
   }
   const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
@@ -1198,7 +1222,7 @@ export async function duplicateBRRESModel(data: Uint8Array, modelName: string, p
     await writeFile(join(dir, "course_model.brres"), data);
     await runAbmatt(exe, dir, `convert course_model.brres to scene.dae include ${partName}`, "course_model.brres");
     const xml = await readFile(join(dir, "scene.dae"), "utf8");
-    await writeFile(join(dir, "scene.dae"), duplicateInDae(xml, partName, part, selected, delta));
+    await writeFile(join(dir, "scene.dae"), duplicateInDae(xml, partName, worldPositions(model, part), selected, delta));
     await copyFile(join(dir, "course_model.brres"), join(dir, "course_model-edited.brres"));
     await runAbmatt(exe, dir, `convert scene.dae to course_model-edited.brres include ${partName} --patch`, "course_model-edited.brres");
     const result = new Uint8Array(await readFile(join(dir, "course_model-edited.brres")));
@@ -1234,7 +1258,7 @@ export async function deleteBRRESModel(data: Uint8Array, modelName: string, part
     await writeFile(join(dir, "course_model.brres"), data);
     await runAbmatt(exe, dir, `convert course_model.brres to scene.dae include ${partName}`, "course_model.brres");
     const xml = await readFile(join(dir, "scene.dae"), "utf8");
-    await writeFile(join(dir, "scene.dae"), deleteFromDae(xml, partName, part, selected));
+    await writeFile(join(dir, "scene.dae"), deleteFromDae(xml, partName, worldPositions(model, part), selected));
     await copyFile(join(dir, "course_model.brres"), join(dir, "course_model-edited.brres"));
     await runAbmatt(exe, dir, `convert scene.dae to course_model-edited.brres include ${partName} --patch`, "course_model-edited.brres");
     const result = new Uint8Array(await readFile(join(dir, "course_model-edited.brres")));

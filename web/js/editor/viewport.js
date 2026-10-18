@@ -201,7 +201,7 @@ export class Viewport extends EventTarget {
 
   renderNow() {
     this.needsRender = false;
-    if (this.cameraShot) { this.renderShot(this.cameraShot, null); return; }
+    if (this.cameraShot) { this.renderShot(this.cameraShot, this.gameRect()); return; }
     if (this.billboards.length) applyBillboards(this.billboards, this.camera);
     if (this.courseBillboards.length) applyBillboards(this.courseBillboards, this.camera);
     if (this.kclOverlay) this.renderOverlaid();
@@ -253,6 +253,12 @@ export class Viewport extends EventTarget {
     const w = Math.round(Math.min(this.container.clientWidth * 0.3, 420)), h = Math.round((w * 9) / 16);
     return { x: this.container.clientWidth - w - 12, y: 12, w, h };
   }
+  // The largest 16:9 area in the middle of the view: the game's picture, with black bars around it.
+  gameRect() {
+    const w = this.container.clientWidth, h = this.container.clientHeight;
+    const gw = Math.min(w, Math.round((h * 16) / 9)), gh = Math.round((gw * 9) / 16);
+    return { x: Math.round((w - gw) / 2), y: Math.round((h - gh) / 2), w: gw, h: gh, full: true };
+  }
   // Renders the scene as the game camera sees it: editor markers, gizmo and grid hidden.
   renderShot(pose, rect) {
     const cam = this.shotCamera;
@@ -267,6 +273,13 @@ export class Viewport extends EventTarget {
     for (const o of hidden) o.visible = false;
     if (this.billboards.length) applyBillboards(this.billboards, cam);
     if (this.courseBillboards.length) applyBillboards(this.courseBillboards, cam);
+    if (rect?.full) {
+      // Black bars outside the picture.
+      const r = this.renderer, color = r.getClearColor(new THREE.Color()), alpha = r.getClearAlpha();
+      r.setClearColor(0x000000, 1);
+      r.clear();
+      r.setClearColor(color, alpha);
+    }
     if (rect) {
       const r = this.renderer;
       r.setScissorTest(true);
@@ -1665,10 +1678,10 @@ export class Viewport extends EventTarget {
         // enough to be put back, and the view would stop turning).
         const r = c.getBoundingClientRect();
         const ax = r.left + r.width / 2, ay = r.top + r.height / 2;
-        rmb = { moved: 0, x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY, native, warpFrom: null, ax, ay,
+        rmb = { moved: 0, x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY, native, warpAt: 0, ax, ay,
           radius: Math.max(20, Math.min(RECENTER, Math.min(r.width, r.height) / 2 - 20)),
-          // Offset from the saved screen position to the centre, in screen pixels.
-          warpArg: `${Math.round((ax - e.clientX) * devicePixelRatio)},${Math.round((ay - e.clientY) * devicePixelRatio)}` };
+          // The centre as a fraction of the window: the same point whatever the display scaling.
+          warpArg: `${(ax / window.innerWidth).toFixed(5)},${(ay / window.innerHeight).toFixed(5)}` };
         if (native) nativeCursor('cursor-save');
         this.controls.enabled = false;
         this.updateCursor();
@@ -1781,15 +1794,17 @@ export class Viewport extends EventTarget {
         if (rmb?.native) {
           // The cursor is put back at the view's centre whenever it gets far from it, so it never
           // stops at the screen edge. Movement is measured from positions: the first event after the
-          // jump is the one nearer the centre than the place it jumped from.
-          const from = rmb.warpFrom;
-          if (from && Math.hypot(e.clientX - rmb.ax, e.clientY - rmb.ay) < Math.hypot(e.clientX - from.x, e.clientY - from.y)) {
-            rmb.lastX = rmb.ax; rmb.lastY = rmb.ay; rmb.warpFrom = null;
-          }
+          // jump is the one nearer the centre than the previous event. It does not move the view
+          // (wherever the cursor landed), and a jump that never shows up is asked again, otherwise the
+          // cursor would reach the screen edge and the view would stop turning.
+          const now = performance.now();
+          if (rmb.warpAt && Math.hypot(e.clientX - rmb.ax, e.clientY - rmb.ay) < Math.hypot(e.clientX - rmb.lastX, e.clientY - rmb.lastY)) {
+            rmb.lastX = e.clientX; rmb.lastY = e.clientY; rmb.warpAt = 0;
+          } else if (rmb.warpAt && now - rmb.warpAt > 250) rmb.warpAt = 0;
           dx = e.clientX - rmb.lastX; dy = e.clientY - rmb.lastY;
           rmb.lastX = e.clientX; rmb.lastY = e.clientY;
-          if (!rmb.warpFrom && Math.max(Math.abs(e.clientX - rmb.ax), Math.abs(e.clientY - rmb.ay)) > rmb.radius) {
-            rmb.warpFrom = { x: e.clientX, y: e.clientY };
+          if (!rmb.warpAt && Math.max(Math.abs(e.clientX - rmb.ax), Math.abs(e.clientY - rmb.ay)) > rmb.radius) {
+            rmb.warpAt = now;
             nativeCursor('cursor-recenter', rmb.warpArg);
           }
         } else if (rmb && !rmb.locked && this.hideCursorWhileLooking && c.requestPointerLock) {

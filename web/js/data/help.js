@@ -51,7 +51,7 @@ export const KIND_HELP = {
   CAME: {
     title: 'Camera',
     what: 'Cameras of the intro fly-over, of the replay and of the goal. Opening cameras are chained with "Next camera".',
-    tips: ['Zoom is the field of view in degrees (smaller = more zoomed in).', 'Look-at start/end are the points the camera looks at at the beginning and at the end of its time.', 'Duration is in frames (60 frames = 1 second).', 'The Cameras tab shows the intro in order, plays it and adds shots from the current 3D view.'],
+    tips: ['Zoom is the field of view in degrees (smaller = more zoomed in).', 'Look-at start/end are the points the camera looks at at the beginning and at the end of its time.', 'Duration is in frames (60 frames = 1 second).', 'The Cameras tab edits the intro as keyframes on a timeline under the 3D view: frame the view and press K.'],
   },
   JGPT: {
     title: 'Respawn point',

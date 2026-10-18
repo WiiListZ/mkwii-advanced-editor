@@ -244,13 +244,15 @@ export class TrackDocument extends EventTarget {
     this.emit('selection');
   }
 
-  // Runs a modification and records it in the history.
-  change(label, fn, { structural = true, kclFlags = false } = {}) {
-    const before = this.snapshot();
+  // Runs a modification and records it in the history. `archivePaths`: archive files the
+  // modification writes too (undo restores them).
+  change(label, fn, { structural = true, kclFlags = false, archivePaths = [] } = {}) {
+    const before = this.snapshot(archivePaths);
     const result = fn();
     this.pushHistory(label, before);
     this.invalidate();
     if (kclFlags) { this.kclFlagsChanged = true; this.emit('kcl'); }
+    if (archivePaths.length) this.emit('model');
     this.emit('change', { structural });
     return result;
   }

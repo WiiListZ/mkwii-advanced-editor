@@ -212,7 +212,7 @@ test('Foreign model part DAE: renames, moves and keeps only the chosen triangles
   const materials = { road: { settings: { name: 'road' }, layers: [{ name: 'tex.1' }], polygons: { poly: { draw_priority: 3 } }, pat0: { frames: [{ frame: 0, texture: 'tex.1' }] } }, other: {} };
   const out = foreignPartDae(xml, materials, {
     polygon: 'poly', name: 'src_poly', materialNames: { road: 'src_road' }, textureNames: { 'tex.1': 'src_tex.1' },
-    wanted: new Map([['0,0,0|0,100,0|100,0,0', 1]]), delta: [10, 0, 0],
+    wanted: [[[0, 1, 0], [0, 0, 0], [1, 0, 0.001]]], delta: [10, 0, 0],
   });
   expect(out.triangles).toBe(1);
   expect(out.xml).toContain('<p>0 1 2</p>');

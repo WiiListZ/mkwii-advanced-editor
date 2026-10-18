@@ -14,7 +14,7 @@ import { isYaz0, yaz0Decompress } from "../../js/formats/yaz0.js";
 import { isU8, parseU8, buildU8, findFile, setFile, setFilePath, newSzsTree, listFiles } from "../../js/formats/u8.js";
 import { parseKMP, buildKMP, make } from "../../js/formats/kmp.js";
 import { introChain, introIndex, introPose, introTimeline, selectionIndex, setCameraHeader, setIntroChain, simulateCamera } from "../../js/editor/cameras.js";
-import { appendShot, introKeyframes, moveKey, removeKey, setKeyPose, splitShot } from "../../js/editor/intro-keys.js";
+import { appendShot, fixIntroShots, introKeyframes, introShotIssues, moveKey, removeKey, setKeyPose, shotSpeedLimits, splitShot } from "../../js/editor/intro-keys.js";
 import { COLLISION_SHAPES, KCL_MAX_TRIANGLES, appendCollisionTriangles, buildCollisionShape, collisionBoxFromTriangles, collisionCoverage, deleteCollisionTriangles, duplicateCollisionTriangles, flipCollisionTriangles, isFloorTriangle, modelCollisionTriangles, simplifyCollisionTriangles, transformCollisionTriangles } from "../../js/editor/collision.js";
 import { parseKCL, buildKCL, patchKCLFlags } from "../../js/formats/kcl.js";
 import { parseOBJ, kclToOBJ, modelToOBJ } from "../../js/formats/obj.js";
@@ -29,7 +29,7 @@ import { isItemSlot, isStatsFile } from "../../js/formats/params.js";
 
 export const PATH_KINDS = ["ENPT", "ITPT", "CKPT", "POTI"];
 export const LAYER_LABEL: Record<string, string> = { VISUAL: "Track model", SKY: "Sky", KCL: "Collision", MODEL: "Reference model", GRID: "Grid", ...SECTION_LABEL };
-const PERSISTED = ["workspace", "riivolutionXml", "cameraPreview", "hideGrid", "confirmModelDrop", "partsFolder", "favoriteObjects", "favoriteModelSources", "favoriteModelParts", "iconSize", "checkpointWidth", "autoCheckpointWidth", "pathWidth", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "showDescriptions", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "textureBrushSize", "uiFont", "offerCopyUpdates", "keepBackups", "map2DAddSeveral"] as const;
+const PERSISTED = ["workspace", "riivolutionXml", "cameraPreview", "hideGrid", "confirmModelDrop", "partsFolder", "favoriteObjects", "favoriteModelSources", "favoriteModelParts", "iconSize", "checkpointWidth", "autoCheckpointWidth", "pathWidth", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "showDescriptions", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "textureBrushSize", "uiFont", "offerCopyUpdates", "keepBackups", "map2DAddSeveral", "introFollow", "introTimelineHeight"] as const;
 const VIEW_SETTINGS = new Set<keyof Settings>(["hideGrid", "iconSize", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking"]);
 const textEncoder = new TextEncoder();
 const sameBytes = (a: Uint8Array, b: Uint8Array) => {
@@ -48,6 +48,8 @@ export interface Settings {
   flySpeed: number; lookSensitivity: number; hideCursorWhileLooking: boolean; textureBrushSize: number;
   workspace: string; riivolutionXml: string; partsFolder: string; favoriteObjects: number[]; favoriteModelSources: string[]; favoriteModelParts: string[];
   confirmModelDrop: boolean; hideGrid: boolean; cameraPreview: boolean; offerCopyUpdates: boolean; keepBackups: boolean; map2DAddSeveral: boolean;
+  introFollow: boolean; // Cameras tab: the 3D view jumps to the intro camera at the playhead
+  introTimelineHeight: number; // Cameras tab: height of the keyframe timeline under the 3D view (px)
   uiFont: "default" | "game";
   viewCenter: () => number[];
 }
@@ -56,7 +58,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS = {
   iconSize: 150, checkpointWidth: 3000, autoCheckpointWidth: true, pathWidth: 20,
   modelMode: "real", displayMode: "auto", modelEditing: true, smartAlignment: false, animations: true, showLabels: true, selectionBox: false, showAreaVolumes: true, areaOutlinesThroughWalls: false, showEffects: true, showDescriptions: true, quality: "high",
-  flySpeed: 1, lookSensitivity: 1, hideCursorWhileLooking: false, textureBrushSize: 8, confirmModelDrop: true, hideGrid: false, cameraPreview: true, uiFont: "default", offerCopyUpdates: true, keepBackups: true, map2DAddSeveral: false,
+  flySpeed: 1, lookSensitivity: 1, hideCursorWhileLooking: false, textureBrushSize: 8, confirmModelDrop: true, hideGrid: false, cameraPreview: true, uiFont: "default", offerCopyUpdates: true, keepBackups: true, map2DAddSeveral: false, introFollow: true, introTimelineHeight: 118,
 } satisfies Partial<Settings>;
 
 export type CollisionShapeKind = keyof typeof COLLISION_SHAPES;
@@ -713,6 +715,13 @@ export class Editor {
       if (!/\.(szs|kmp|kcl)$/i.test(path)) path += ".szs";
       kind = path.match(/\.(szs|kmp|kcl)$/i)[1].toLowerCase();
     }
+    // Intro shots the game would play differently (type 6 replay cameras, routes that run past their
+    // end…) are rewritten before saving, so the saved intro is the one the preview shows. Undoable.
+    if (kind !== "kcl" && introShotIssues(d.kmp).length) {
+      let fixed = 0;
+      this.editIntro("Fix intro cameras", (k) => { fixed = fixIntroShots(k); });
+      toast.info(`${fixed} intro camera${fixed === 1 ? "" : "s"} fixed for the game`, { description: "They were saved so the game plays them as the Cameras tab shows them. Ctrl+Z undoes it.", duration: 9000 });
+    }
     return this.withBusy("Saving…", async () => {
       try {
         let result: any;
@@ -1252,6 +1261,35 @@ export class Editor {
     dialogs.open("modelParts");
   }
 
+  openGameObjects() {
+    if (!this.doc.szs) return toast.error("Open a track archive (.szs) first");
+    dialogs.open("gameObjects");
+  }
+
+  // Places an object taken from another track: its settings and model files come with it.
+  placeGameObject(o: { objectId: number; settings?: number[]; scale?: number[]; presence?: number; files?: { path: string; data: Uint8Array }[] }) {
+    this.startPlacing("GOBJ", o);
+  }
+
+  // A placeable object with the user's own 3D model: the model becomes the resource of an existing
+  // object type in this track (the game keeps that type's behaviour), then the object is placed.
+  async createObjectFromModel(objectId: number, path: string, animation = "") {
+    const resource = (this.assets?.resourceNames(objectId) as string[] | undefined)?.[0];
+    if (!resource || !this.doc.szs) { toast.error("This object type has no model resource"); return false; }
+    try {
+      const data: Uint8Array = await this.withBusy("Converting 3D model…", () => api.convertModelBRRES(path, animation, resource));
+      if (!parseBRRES(data).models.some((m: any) => m.name === resource)) throw new Error(`The converted model is not named ${resource}`);
+      const existing = listFiles(this.doc.szs).find((f: any) => f.path.toLowerCase() === `${resource}.brres`.toLowerCase() || f.path.toLowerCase().endsWith(`/${resource}.brres`.toLowerCase()));
+      this.doc.changeArchiveFile(`Model of ${this.objectLabel(objectId)} from ${path.split(/[\\/]/).pop()}`, existing?.path || `${resource}.brres`, data);
+      this.placeGameObject({ objectId });
+      toast.success(`${this.objectLabel(objectId)} now uses your model`, { description: "Click on the track to place it (Shift+click for several). Save the SZS to keep it." });
+      return true;
+    } catch (e: any) {
+      toast.error("Could not create the object", { description: e.message });
+      return false;
+    }
+  }
+
   // Adds one polygon (or one connected piece of it) from any game BRRES to course_model.brres.
   async addGamePart(source: Uint8Array, opts: { model: string; part: string; piece: number[] | null; placement: "view" | "original" | "click"; tag: string; label: string;
     collision?: { tris: number[]; verts: Float32Array; flags: Uint16Array; box: { min: number[]; max: number[] } } | null }) {
@@ -1773,6 +1811,7 @@ export class Editor {
       case "newTrack": return this.newTrack();
       case "importTrackModel": return this.importTrackModel();
       case "modelParts": return this.openModelParts();
+      case "gameObjects": return this.openGameObjects();
       case "undo": { const l = d.undo(); if (l) toast(`Undo: ${l}`, { duration: 1500 }); break; }
       case "redo": { const l = d.redo(); if (l) toast(`Redo: ${l}`, { duration: 1500 }); break; }
       case "delete": {
@@ -2112,7 +2151,7 @@ export class Editor {
       done?.(point);
       return;
     }
-    this.ops.add(t.kind, point, { objectId: t.objectId });
+    this.ops.add(t.kind, point, { objectId: t.objectId, settings: t.settings, scale: t.scale, presence: t.presence, files: t.files });
     if (single || (!PATH_KINDS.includes(t.kind) && !shift)) this.viewport.setTool(null);
   }
 
@@ -2273,7 +2312,11 @@ export class Editor {
         if (steps) {
           const total = this.introTimeline().total;
           this.intro.frame = Math.min(total - 1, this.intro.frame + steps);
-          if (this.intro.frame >= total - 1) this.intro.playing = false;
+          if (this.intro.frame >= total - 1) {
+            this.intro.playing = false;
+            // Played from the keyframe timeline: back to editing at the last frame.
+            if (this.tab === "cameras") { this.finishIntro(); return; }
+          }
           this.showIntroFrame();
           this.bump("intro");
         }
@@ -2304,11 +2347,36 @@ export class Editor {
     this.refreshCameraViews();
     this.bump("intro", "ui");
   }
+  // Stops playback and goes on editing at the frame it reached (the timeline playhead moves there).
+  finishIntro() {
+    if (!this.intro) return;
+    const frame = this.intro.frame;
+    this.stopIntro();
+    this.setIntroPlayhead(frame);
+  }
+  // Play / pause of the keyframe timeline: plays from the playhead (from the start when it is at the end).
+  toggleIntroTimelinePlay() {
+    if (this.intro) { this.finishIntro(); return; }
+    const { total } = this.introTimeline();
+    this.watchIntro(this.introPlayhead >= total - 1 ? 0 : this.introPlayhead);
+  }
 
   // Editing the intro chain. The editor view (position, orbit target, field of view) becomes a shot.
   viewPose() {
     const vp = this.viewport;
-    return { position: vp.camera.position.toArray().map(Math.round), target: vp.controls.target.toArray().map(Math.round), fov: Math.round(vp.camera.fov) };
+    return { position: vp.camera.position.toArray().map(Math.round), target: vp.controls.target.toArray().map(Math.round), fov: Math.round(vp.camera.fov * 10) / 10 };
+  }
+  // Puts the editor view exactly on a camera pose, without the transition of viewFromPose.
+  setViewPose(pose: { position: number[]; target: number[]; fov: number } | null) {
+    const vp = this.viewport;
+    if (!vp || !pose) return;
+    vp.camAnim = null;
+    vp.camera.fov = Math.max(1, Math.min(170, pose.fov || 45));
+    vp.camera.updateProjectionMatrix();
+    vp.camera.position.set(...(pose.position as [number, number, number]));
+    vp.controls.target.set(...(pose.target as [number, number, number]));
+    vp.controls.update();
+    vp.needsRender = true;
   }
   private rewriteIntro(k: any, chain: number[]) { setIntroChain(k, chain); }
   addIntroShot() {
@@ -2371,12 +2439,52 @@ export class Editor {
       if (this.doc.selection.size !== 1 || !this.doc.selection.has(uid)) this.doc.select([uid]);
       this.cameraFrame = f - shot.start;
       this.refreshCameraViews();
+      if (this.settings.introFollow && !this.intro) this.setViewPose(this.introPoseAtPlayhead());
     }
     this.bump("intro");
+  }
+  // The intro camera at the playhead: a keyframe's own pose on a keyframe (the start of the next
+  // shot at a cut), the last pose after the end.
+  introPoseAtPlayhead() {
+    const key = this.introKeyAtPlayhead();
+    if (key) return key.pose;
+    const timeline = this.introTimeline();
+    if (!timeline.total) return null;
+    return introPose(this.doc.kmp, timeline, Math.min(this.introPlayhead, timeline.total - 1), this.introCache)?.pose ?? null;
+  }
+  // Moves the playhead to the previous / next keyframe.
+  stepIntroKey(direction: -1 | 1) {
+    const { keys } = this.introKeyframes();
+    const head = this.intro ? this.intro.frame : this.introPlayhead;
+    const key = direction < 0 ? [...keys].reverse().find((k: any) => k.frame < head - 2) : keys.find((k: any) => k.frame > head + 2);
+    if (!key) return;
+    if (this.intro) this.finishIntro();
+    this.setIntroPlayhead(key.frame);
+  }
+  // Changes a keyframe's pose from typed values; `side` as in setKeyPose.
+  setIntroKeyPose(key: any, pose: { position: number[]; target: number[]; fov: number }, side: "both" | "before" | "after" = "both") {
+    if (![...pose.position, ...pose.target, pose.fov].every(Number.isFinite)) return;
+    this.editIntro("Intro keyframe", (k) => { setKeyPose(k, key, pose, side); });
+    this.setIntroPlayhead(key.frame);
+  }
+  // Rewrites intro shots that the game plays differently from the preview (see introShotIssues).
+  fixIntroCameras() {
+    let fixed = 0;
+    this.editIntro("Fix intro cameras", (k) => { fixed = fixIntroShots(k); });
+    this.setIntroPlayhead(this.introPlayhead);
+    toast.success(`${fixed} intro camera${fixed === 1 ? "" : "s"} fixed`, { description: "They now play in the game as the preview shows them. Save the SZS to keep it." });
+  }
+  // Removes the cut at a keyframe: the shot before now ends where the next one starts.
+  joinIntroCut(key: any) {
+    if (!key.afterPose || key.before === null) return;
+    this.editIntro("Remove intro cut", (k) => { setKeyPose(k, key, key.afterPose, "before"); });
+    this.setIntroPlayhead(key.frame);
   }
   // Runs an intro edit; cameras and routes it leaves unused are deleted afterwards.
   private editIntro(label: string, fn: (k: any) => number[] | void) {
     const k = this.doc.kmp;
+    const tooShort = () => new Set(introChain(k).filter((i) => shotSpeedLimits(k.CAME[i]).length).map((i) => k.CAME[i].uid));
+    const shortBefore = tooShort();
     const before = new Set<number>(introChain(k).map((i) => k.CAME[i].route).filter((r) => r !== 0xff));
     const routes = k.POTI.length;
     this.doc.change(label, () => {
@@ -2388,6 +2496,11 @@ export class Editor {
       const unused = [...before, ...Array.from({ length: Math.max(0, k.POTI.length - routes) }, (_, n) => routes + n)].filter((r) => r < k.POTI.length && !users(r));
       if (unused.length) this.ops.removeRoutes(new Set(unused));
       this.doc.invalidate();
+    });
+    // A look-at point has a top speed: a shot too short for its change of view never reaches its
+    // keyframe, in the preview and in the game.
+    if ([...tooShort()].some((uid) => !shortBefore.has(uid))) toast.warning("A shot is too short for its change of view", {
+      description: "Its look-at point cannot reach the next keyframe in time (it is marked on the timeline). Make the shot longer or the change of view smaller.",
     });
   }
   // Puts the view's pose on the keyframe under the playhead, or adds a keyframe there: inside a
@@ -2414,12 +2527,6 @@ export class Editor {
     });
     this.setIntroPlayhead(frame);
   }
-  // A new keyframe `seconds` after the end of the intro, from the current view.
-  appendIntroKey(seconds = 3) {
-    const { total, shots } = this.introTimeline();
-    this.introPlayhead = shots.length ? total + Math.round(seconds * 60) : 0;
-    this.setIntroKeyFromView();
-  }
   moveIntroKey(key: any, frame: number) {
     let to = key.frame;
     this.editIntro("Move intro keyframe", (k) => { to = moveKey(k, key, frame); });
@@ -2429,20 +2536,13 @@ export class Editor {
     this.editIntro("Delete intro keyframe", (k) => removeKey(k, key));
     this.setIntroPlayhead(Math.min(this.introPlayhead, this.introTimeline().total));
   }
-  // Moves the 3D view to the pose of a keyframe (or of the intro at the playhead).
+  // Moves the 3D view to a camera pose.
   viewFromPose(pose: { position: number[]; target: number[]; fov: number } | null) {
     if (!pose) return;
     const vp = this.viewport;
     vp.camera.fov = pose.fov;
     vp.camera.updateProjectionMatrix();
     vp.animateCamera(new THREE.Vector3(...pose.target), new THREE.Vector3(...pose.position));
-  }
-  viewFromPlayhead() {
-    const key = this.introKeyAtPlayhead();
-    if (key) return this.viewFromPose(key.pose);
-    const { total } = this.introTimeline();
-    if (!total) return;
-    this.viewFromPose(introPose(this.doc.kmp, this.introTimeline(), Math.min(this.introPlayhead, total - 1), this.introCache)?.pose ?? null);
   }
 
   setSelectionCamera(index: number) {
@@ -2489,10 +2589,12 @@ export class Editor {
       return;
     }
     // Watching the intro: Space plays / pauses, arrows step, Esc goes back to editing.
+    // From the keyframe timeline (Cameras tab), pausing goes back to editing at that frame.
     if (this.intro) {
-      const step = e.shiftKey ? 60 : 1;
-      if (e.key === "Escape") this.stopIntro();
-      else if (e.key === " ") this.toggleIntroPlay();
+      const step = e.shiftKey ? 60 : 1, timeline = this.tab === "cameras";
+      if (e.key === "Escape") timeline ? this.finishIntro() : this.stopIntro();
+      else if (e.key === " ") timeline ? this.finishIntro() : this.toggleIntroPlay();
+      else if (timeline && (e.key === "," || e.key === ".")) this.stepIntroKey(e.key === "," ? -1 : 1);
       else if (e.key === "ArrowLeft") this.seekIntro(this.intro.frame - step);
       else if (e.key === "ArrowRight") this.seekIntro(this.intro.frame + step);
       else return;
@@ -2517,6 +2619,7 @@ export class Editor {
     else if (ctrl && k === ",") this.cmd("settingsDialog");
     else if (ctrl && (e.key === "PageUp" || e.key === "PageDown")) { e.preventDefault(); this.adjacentTrack(e.key === "PageUp" ? -1 : 1); }
     else if (ctrl) handled = false;
+    else if (this.tab === "cameras" && !this.map2D && !e.altKey && this.handleIntroKey(e)) return;
     else if (k === "enter" && this.tool?.type === "collision-create") this.finishCollisionShape();
     else if (k === "backspace" && this.tool?.type === "collision-create") this.undoCollisionPoint();
     else if (k === "delete" || k === "backspace") this.cmd("delete");
@@ -2546,6 +2649,25 @@ export class Editor {
     else if (k === "f1") this.cmd("help");
     else handled = false;
     if (handled) e.preventDefault();
+  }
+  // Keyframe timeline keys (Cameras tab): K adds / updates the keyframe at the playhead from the
+  // view, Space plays, , and . jump between keyframes, the arrows move the playhead (Shift: 1 s),
+  // Delete removes the keyframe at the playhead. Returns whether the key was used.
+  private handleIntroKey(e: KeyboardEvent) {
+    const k = e.key.toLowerCase();
+    const key = this.introKeyAtPlayhead();
+    if (k === "k") this.setIntroKeyFromView();
+    else if (k === " ") this.toggleIntroTimelinePlay();
+    else if (k === "," || k === ".") this.stepIntroKey(k === "," ? -1 : 1);
+    else if (k === "arrowleft" || k === "arrowright") this.setIntroPlayhead(this.introPlayhead + (k === "arrowleft" ? -1 : 1) * (e.shiftKey ? 60 : 1));
+    // Only while a shot touching that keyframe is selected (the playhead selects it): any other
+    // camera is still deleted as a camera.
+    else if ((k === "delete" || k === "backspace") && key && [key.before, key.after].includes(this.selectedCamera())) this.removeIntroKey(key);
+    else return false;
+    e.preventDefault();
+    // Space must not also press the button that has the focus.
+    if (document.activeElement instanceof HTMLButtonElement) document.activeElement.blur();
+    return true;
   }
 }
 

@@ -41,6 +41,9 @@ export function AddMenuItems({ Item, Separator }: { Item: any; Separator: any })
       <Item onSelect={() => { void ed.pickObject(0x65, "add"); }}>
         <KIND_ICON.GOBJ /> Other object…
       </Item>
+      <Item onSelect={() => ed.cmd("gameObjects")}>
+        <KIND_ICON.GOBJ /> Object from a track or my 3D model…
+      </Item>
       <Separator />
       <Item onSelect={() => ed.cmd("modelParts")}>
         <Box className="text-amber-400" /> Model part from the game…
@@ -180,6 +183,7 @@ export function TitleBar() {
                 <MenubarSubContent>
                   <MenubarItem onSelect={cmd("importTrackModel")}><Box /> 3D model into track…</MenubarItem>
                   <MenubarItem onSelect={cmd("modelParts")}><Boxes /> Part from game models…</MenubarItem>
+                  <MenubarItem onSelect={cmd("gameObjects")}><Boxes /> Object from a track or 3D model…</MenubarItem>
                   <MenubarItem onSelect={cmd("importKMP")}><Route /> KMP (replace course data)…</MenubarItem>
                   <MenubarItem onSelect={cmd("importKCL")}><BrickWall /> KCL (replace collision)…</MenubarItem>
                   <MenubarItem onSelect={cmd("importOBJCollision")}><Shapes /> OBJ as collision…</MenubarItem>

@@ -2,6 +2,7 @@
 
 import { parseBRRES } from '../formats/brres.js';
 import { findFile } from '../formats/u8.js';
+import { fixIntroShots, introShotIssues } from './intro-keys.js';
 
 const segCross = (a, b, c, d) => {
   const o = (p, q, r) => Math.sign((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]));
@@ -139,6 +140,10 @@ export function validate(doc, ops, objectNames) {
     if (c.route !== 0xFF && c.route >= routeCount) add('error', `Camera uses missing route ${c.route}.`, c.uid);
   });
   if (!k.CAME.length) add('warning', 'No cameras: the intro and the replay/goal camera will not work properly.');
+  for (const { index, problems } of introShotIssues(k)) {
+    add('warning', `Intro camera ${index} plays differently in the game than in the preview: ${problems.join('; ')}.`, k.CAME[index].uid,
+      { label: 'Fix intro cameras', run: () => doc.change('Fix intro cameras', () => fixIntroShots(k)) });
+  }
 
   k.JGPT.forEach((j, i) => { if (j.id !== i) add('info', `Respawn ${i} has ID ${j.id} (usually equal to the index).`, j.uid, { label: 'Renumber IDs', run: () => ops.renumberIds() }); });
 

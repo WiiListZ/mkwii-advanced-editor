@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ArrowDown, ArrowUp, BookOpen, Camera, Clapperboard, Crosshair, Eye, ListPlus, Play, Plus, Scissors, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, BookOpen, Camera, Clapperboard, Crosshair, Eye, ListPlus, Play, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CAMERA_TYPES } from "../../../js/data/defs.js";
@@ -8,11 +8,9 @@ import { useEditor } from "../hooks";
 import { dialogs } from "../dialogs-store";
 import { SectionTitle } from "../common";
 import { NumberField } from "../number-field";
+import { SHOT_COLORS, seconds } from "../IntroTimeline";
+import { introShotIssues, shotSpeedLimits } from "../../../js/editor/intro-keys.js";
 import { cn } from "@/lib/utils";
-
-const seconds = (frames: number) => `${(frames / 60).toFixed(1)} s`;
-// One colour per shot so the timeline and the list match.
-const SHOT_COLORS = ["#e879f9", "#60a5fa", "#34d399", "#fbbf24", "#f87171", "#a78bfa", "#2dd4bf", "#fb923c"];
 
 // Left sidebar tab: the intro fly-over (shots in order, timeline, playback) and the other cameras.
 export function CamerasPanel() {
@@ -25,18 +23,24 @@ export function CamerasPanel() {
   const others = k.CAME.map((c: any, i: number) => ({ c, i })).filter(({ i }: any) => !inIntro.has(i));
   const select = (i: number) => { ed.doc.select([String(k.CAME[i].uid)]); };
   const sel = selectionIndex(k);
+  const issues = introShotIssues(k);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto p-3">
       <div className="mb-2.5 flex items-baseline gap-2 text-[11px] text-muted-foreground">
         <span className="text-sm font-semibold text-foreground">Intro</span>
-        <span className="ml-auto tabular-nums">{chain.length ? `${chain.length + 1} keyframes` : "no keyframes"} · {seconds(timeline.total)}</span>
+        <span className="ml-auto tabular-nums">{chain.length ? `${chain.length + 1} keyframes` : "no keyframes"} · {seconds(timeline.total, 1)}</span>
       </div>
+      {issues.length > 0 && (
+        <div className="mb-2.5 flex flex-col gap-1.5 rounded-md border p-2 text-[11px] leading-relaxed">
+          <span><b>{issues.length} shot{issues.length === 1 ? "" : "s"}</b> {issues.length === 1 ? "plays" : "play"} differently in the game than in this preview (made by an older version of the editor): {[...new Set(issues.flatMap((i: any) => i.problems))].join("; ")}.</span>
+          <Button size="sm" variant="secondary" className="self-start" onClick={() => ed.fixIntroCameras()}>Fix intro cameras</Button>
+        </div>
+      )}
       <IntroKeyframes />
       <Button size="sm" variant="ghost" className="mt-1.5 self-start text-muted-foreground" onClick={() => dialogs.open("help", { tab: "tutorials", tutorial: "intro" })}><BookOpen /> How to make an intro</Button>
 
-      <SectionTitle>Shots (between keyframes)</SectionTitle>
-      {!chain.length && <p className="m-0 text-[11px] leading-relaxed text-muted-foreground">None yet.</p>}
+      {chain.length > 0 && <SectionTitle>Shots (game cameras between keyframes)</SectionTitle>}
       <div className="flex flex-col gap-0.5">
         {chain.map((i: number, n: number) => {
           const c = k.CAME[i];
@@ -46,7 +50,8 @@ export function CamerasPanel() {
               <span className="size-2.5 shrink-0 rounded-sm" style={{ background: SHOT_COLORS[n % SHOT_COLORS.length] }} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[12.5px]">Keyframe {n + 1} → {n + 2} <span className="text-muted-foreground">· camera {i}</span></div>
-                <div className="truncate text-[10.5px] text-muted-foreground">{c.route !== 0xff ? `Follows route ${c.route}` : "Fixed position"} · {seconds(cameraFrames(c))}</div>
+                <div className="truncate text-[10.5px] text-muted-foreground">{c.route !== 0xff ? `Follows route ${c.route}` : "Fixed position"} · {seconds(cameraFrames(c), 1)}</div>
+                {shotSpeedLimits(c).length > 0 && <div className="text-[10.5px] leading-snug text-warning">Too short: its {shotSpeedLimits(c).join(" and ")} cannot reach the next keyframe in time. Make it longer.</div>}
               </div>
               <div className="flex opacity-0 group-hover:opacity-100">
                 <IconButton label="Earlier" disabled={n === 0} onClick={() => ed.moveIntroShot(i, -1)}><ArrowUp /></IconButton>
@@ -89,126 +94,98 @@ export function CamerasPanel() {
   );
 }
 
-// Keyframe timeline of the intro: scrub the playhead, fly the 3D view, press "Add keyframe".
-// The camera flies from each keyframe to the next one in the time between them.
+// Keyframes of the intro in time order; the one at the playhead opens with its values.
 function IntroKeyframes() {
   const ed = useEditor("doc", "intro", "selection");
-  const { keys, shots, total } = ed.introKeyframes();
-  const bar = React.useRef<HTMLDivElement>(null);
-  const press = React.useRef<{ key: any | null; moved: boolean } | null>(null);
-  const [dragFrame, setDragFrame] = React.useState<number | null>(null);
-  // Room after the end of the intro, where a click places the next keyframe.
-  const span = Math.max(240, total + Math.max(180, Math.round(total * 0.2)));
-  const head = Math.min(ed.introPlayhead, span);
-  const at = ed.introKeyAtPlayhead();
-  const atIndex = at ? keys.indexOf(keys.find((k: any) => k.frame === at.frame)) : -1;
-  const pct = (f: number) => `${(f / span) * 100}%`;
-  const frameAt = (clientX: number) => {
-    const r = bar.current!.getBoundingClientRect();
-    const f = Math.round(Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * span);
-    const near = keys.find((k: any) => Math.abs(k.frame - f) / span * r.width < 6);
-    return near ? near.frame : f;
-  };
-  const step = span > 60 * 40 ? 600 : span > 60 * 15 ? 300 : 60;
-  const ticks = Array.from({ length: Math.floor(span / step) + 1 }, (_, n) => n * step);
-  const onDown = (e: React.PointerEvent, key: any = null) => {
-    e.stopPropagation();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    press.current = { key, moved: false };
-    ed.setIntroPlayhead(key ? key.frame : frameAt(e.clientX));
-  };
-  const onMove = (e: React.PointerEvent) => {
-    const p = press.current;
-    if (!p) return;
-    const f = frameAt(e.clientX);
-    if (p.key) {
-      if (p.key.before === null) return; // the first keyframe stays at 0
-      p.moved = p.moved || f !== p.key.frame;
-      setDragFrame(f);
-    } else ed.setIntroPlayhead(f);
-  };
-  const onUp = () => {
-    const p = press.current;
-    press.current = null;
-    if (p?.key && p.moved && dragFrame !== null) ed.moveIntroKey(p.key, dragFrame);
-    setDragFrame(null);
-  };
-  const inShot = !at && head < total ? shots.findIndex((s: any) => head < s.start + s.frames) : -1;
-  const where = at ? `Keyframe ${atIndex + 1}` : !shots.length ? "Empty intro" : head >= total ? "After the end" : `Between keyframes ${inShot + 1} and ${inShot + 2}`;
-
+  const { keys, shots } = ed.introKeyframes();
+  const at = ed.intro ? null : ed.introKeyAtPlayhead();
+  if (!shots.length) return (
+    <ol className="m-0 flex list-decimal flex-col gap-1.5 pl-4 text-[11px] leading-relaxed text-muted-foreground">
+      <li>Fly the 3D view to where the intro starts (right-drag and W A S D).</li>
+      <li>Press <b className="text-foreground">K</b> (or <b className="text-foreground">Add keyframe</b> under the 3D view).</li>
+      <li>Click later on the timeline, frame the next view and press K again. The camera flies from one keyframe to the next.</li>
+    </ol>
+  );
   return (
-    <div className="flex flex-col gap-2">
-      <div className="select-none px-2" onPointerDown={(e) => onDown(e)} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
-        <div ref={bar} className="relative h-14 cursor-pointer rounded-sm border bg-muted/30" aria-label="Intro timeline">
-          {ticks.map((t) => (
-            <div key={t} className="pointer-events-none absolute top-0 h-full border-l border-border/60" style={{ left: pct(t) }}>
-              <span className="absolute left-0.5 top-0 text-[9px] tabular-nums text-muted-foreground">{t / 60}s</span>
-            </div>
-          ))}
-          {shots.map((s: any, n: number) => (
-            <div key={s.index} className="pointer-events-none absolute bottom-2 h-3 border-r border-black/40"
-              style={{ left: pct(s.start), width: pct(s.frames), background: SHOT_COLORS[n % SHOT_COLORS.length], opacity: 0.55 }} />
-          ))}
-          {keys.map((k: any, n: number) => {
-            const f = dragFrame !== null && press.current?.key?.frame === k.frame ? dragFrame : k.frame;
-            const on = at?.frame === k.frame;
-            return (
-              <button key={n} type="button" aria-label={`Keyframe ${n + 1}`} title={`Keyframe ${n + 1} · ${seconds(k.frame)}${k.linked ? "" : " · cut"}${k.before !== null ? " · drag to change its time" : ""}`}
-                onPointerDown={(e) => onDown(e, k)}
-                className={cn("absolute bottom-1.5 size-4 -translate-x-1/2 rotate-45 cursor-grab border-2 active:cursor-grabbing", on ? "border-foreground bg-primary" : "border-foreground/70 bg-background",
-                  !k.linked && "rounded-none border-dashed")}
-                style={{ left: pct(f) }} />
-            );
-          })}
-          <div className="pointer-events-none absolute inset-y-0 w-px bg-primary" style={{ left: pct(head) }} />
-        </div>
-      </div>
-      <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-        <span className="tabular-nums text-foreground">{seconds(head)}</span>
-        <span className="truncate">{where}</span>
-        <Button size="sm" variant="ghost" className="ml-auto h-6 px-1.5 text-[11px]" disabled={!shots.length} onClick={() => ed.watchIntro(Math.min(head, Math.max(0, total - 1)))}><Play /> Watch</Button>
-      </div>
-
-      <div className="flex gap-1.5">
-        <Button size="sm" className="flex-1" onClick={() => ed.setIntroKeyFromView()} title="Uses the position, look-at point (the point the view orbits around) and zoom of the 3D view">
-          <Camera /> {at ? "Set keyframe from view" : "Add keyframe from view"}
-        </Button>
-        <Button size="sm" variant="secondary" disabled={!shots.length} onClick={() => ed.viewFromPlayhead()} title="Moves the 3D view to the intro camera at the playhead"><Eye /> Go to</Button>
-      </div>
-      {shots.length > 0 && <Button size="sm" variant="outline" onClick={() => ed.appendIntroKey(3)} title="New keyframe 3 seconds after the last one, from the 3D view"><Plus /> Keyframe 3 s after the end</Button>}
-
-      {at && (
-        <div className="flex flex-col gap-1.5 rounded-md border p-2">
-          <div className="flex items-center gap-2 text-xs">
-            <span className="font-medium">Keyframe {atIndex + 1}</span>
-            <span className="ml-auto text-[11px] text-muted-foreground">time (s)</span>
-            <NumberField commit aria-label="Keyframe time" className="h-7 w-20 text-xs" value={Math.round((at.frame / 60) * 100) / 100} min={0} step={0.1}
-              disabled={at.before === null} onValue={(v) => ed.moveIntroKey(at, Math.round(v * 60))} />
+    <div className="flex flex-col gap-0.5">
+      {keys.map((k: any, n: number) => {
+        const on = at?.frame === k.frame;
+        return (
+          <div key={n} className={cn("rounded-md", on && "bg-accent/60")}>
+            <button type="button" onClick={() => ed.setIntroPlayhead(k.frame)}
+              className={cn("flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent/60", on && "hover:bg-transparent")}>
+              <span className={cn("size-2.5 shrink-0 rotate-45 border-2", on ? "border-foreground bg-primary" : "border-foreground/70", !k.linked && "border-dashed")} />
+              <span className="flex-1 text-[12.5px]">Keyframe {n + 1}</span>
+              {!k.linked && <span className="text-[10.5px] text-muted-foreground">cut</span>}
+              <span className="w-14 text-right text-[11px] tabular-nums text-muted-foreground">{seconds(k.frame)}</span>
+            </button>
+            {on && <KeyframeDetails k={k} />}
           </div>
-          {at.before !== null && at.after !== null && (at.linked
-            ? <p className="m-0 text-[11px] leading-relaxed text-muted-foreground">The camera flies through this keyframe without a cut.</p>
-            : <p className="m-0 text-[11px] leading-relaxed text-muted-foreground">Cut: the shot before ends on one view, the next one starts on another.</p>)}
-          {at.before !== null && at.after !== null && !at.linked ? (
-            <div className="grid grid-cols-[1fr_auto_auto] items-center gap-1 text-[11px]">
-              <span>End of the shot before</span>
-              <Button size="sm" variant="outline" className="h-6 px-1.5 text-[11px]" onClick={() => ed.setIntroKeyFromView("before")}>From view</Button>
-              <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[11px]" onClick={() => ed.viewFromPose(at.beforePose)}>Go to</Button>
-              <span>Start of the shot after</span>
-              <Button size="sm" variant="outline" className="h-6 px-1.5 text-[11px]" onClick={() => ed.setIntroKeyFromView("after")}>From view</Button>
-              <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[11px]" onClick={() => ed.viewFromPose(at.afterPose)}>Go to</Button>
-            </div>
-          ) : null}
-          <div className="flex flex-wrap gap-1">
-            {at.before !== null && at.after !== null && at.linked && (
-              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => ed.setIntroKeyFromView("after")} title="Only the next shot starts from the 3D view; the shot before still ends on the old view">
-                <Scissors /> Cut to view
-              </Button>
-            )}
-            <Button size="sm" variant="ghost" className="h-7 text-[11px] text-muted-foreground hover:text-destructive" onClick={() => ed.removeIntroKey(at)}><Trash2 /> Delete keyframe</Button>
+        );
+      })}
+    </div>
+  );
+}
+
+type Pose = { position: number[]; target: number[]; fov: number };
+
+// Time, transition and camera values of the keyframe at the playhead.
+function KeyframeDetails({ k }: { k: any }) {
+  const ed = useEditor("doc", "intro");
+  const middle = k.before !== null && k.after !== null;
+  // A smooth keyframe shows one view; "Cut" shows the two sides so each can be set on its own.
+  const [split, setSplit] = React.useState(false);
+  const cut = middle && (!k.linked || split);
+  return (
+    <div className="flex flex-col gap-2.5 px-2 pb-2.5 pt-1">
+      <div className="grid grid-cols-[1fr_auto] items-center gap-x-2 gap-y-1.5 text-[11px]">
+        <span className="text-muted-foreground">Time (s)</span>
+        <NumberField commit aria-label="Keyframe time" className="h-7 w-24 text-xs" value={Math.round((k.frame / 60) * 100) / 100} min={0} step={0.1}
+          disabled={k.before === null} title={k.before === null ? "The first keyframe is the start of the intro" : undefined} onValue={(v) => ed.moveIntroKey(k, Math.round(v * 60))} />
+        {middle && <>
+          <span className="text-muted-foreground">Transition</span>
+          <div className="flex rounded-md border p-0.5">
+            <button type="button" className={cn("cursor-pointer rounded px-2 py-0.5", !cut ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}
+              title="The camera flies through this keyframe" onClick={() => { setSplit(false); if (!k.linked) ed.joinIntroCut(k); }}>Smooth</button>
+            <button type="button" className={cn("cursor-pointer rounded px-2 py-0.5", cut ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}
+              title="The shot before ends on one view and the next one starts on another" onClick={() => setSplit(true)}>Cut</button>
           </div>
-        </div>
-      )}
-      {!shots.length && <p className="m-0 text-[11px] leading-relaxed text-muted-foreground">Fly the 3D view to where the intro starts and press <b className="text-foreground">Add keyframe from view</b>. Then click later on the timeline, move the view and add the next keyframe: the camera flies from one keyframe to the next.</p>}
+        </>}
+      </div>
+      {cut ? <>
+        <PoseFields title="End of the shot before" pose={k.beforePose} onPose={(p) => ed.setIntroKeyPose(k, p, "before")} onFromView={() => ed.setIntroKeyFromView("before")} />
+        <PoseFields title="Start of the shot after" pose={k.afterPose} onPose={(p) => ed.setIntroKeyPose(k, p, "after")} onFromView={() => ed.setIntroKeyFromView("after")} />
+      </> : <PoseFields pose={k.pose} onPose={(p) => ed.setIntroKeyPose(k, p)} onFromView={() => ed.setIntroKeyFromView()} />}
+      <Button size="sm" variant="ghost" className="self-start text-muted-foreground hover:text-destructive" onClick={() => ed.removeIntroKey(k)}><Trash2 /> Delete keyframe</Button>
+    </div>
+  );
+}
+
+function PoseFields({ title, pose, onPose, onFromView }: { title?: string; pose: Pose; onPose: (pose: Pose) => void; onFromView: () => void }) {
+  const ed = useEditor("doc");
+  const vector = (label: string, field: "position" | "target") => (
+    <>
+      <span className="text-muted-foreground">{label}</span>
+      {[0, 1, 2].map((a) => (
+        <NumberField key={a} commit aria-label={`${label} ${"XYZ"[a]}`} title={"XYZ"[a]} className="h-7 min-w-0 px-1.5 text-xs" value={Math.round(pose[field][a])} step={10}
+          onValue={(v) => { const next = [...pose[field]]; next[a] = v; onPose({ ...pose, [field]: next }); }} />
+      ))}
+    </>
+  );
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-1">
+        {title && <span className="text-[11px] font-medium">{title}</span>}
+        <Button size="sm" variant="outline" className="ml-auto h-6 px-1.5 text-[11px]" onClick={onFromView} title="Uses the 3D view: its position, the point it orbits around and its zoom"><Camera /> From view</Button>
+        <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[11px]" onClick={() => ed.viewFromPose(pose)} title="Moves the 3D view to this camera"><Eye /> Go to</Button>
+      </div>
+      <div className="grid grid-cols-[auto_1fr_1fr_1fr] items-center gap-1 text-[11px]">
+        {vector("Position", "position")}
+        {vector("Looks at", "target")}
+        <span className="text-muted-foreground">Zoom (°)</span>
+        <NumberField commit aria-label="Zoom" title="Field of view in degrees: smaller is more zoomed in" className="h-7 min-w-0 px-1.5 text-xs" value={Math.round(pose.fov * 10) / 10} min={1} max={170} step={1}
+          onValue={(v) => onPose({ ...pose, fov: v })} />
+      </div>
     </div>
   );
 }
@@ -245,7 +222,7 @@ export function CameraTools({ index }: { index: number }) {
       {frames > 1 && (
         <div className="flex items-center gap-2">
           <input aria-label="Preview frame" type="range" min={0} max={frames - 1} value={frame} onChange={(e) => ed.setCameraFrame(Number(e.target.value))} className="min-w-0 flex-1 accent-primary" />
-          <span className="w-16 text-right text-[11px] tabular-nums text-muted-foreground">{seconds(frame)} / {seconds(frames)}</span>
+          <span className="w-16 text-right text-[11px] tabular-nums text-muted-foreground">{seconds(frame, 1)} / {seconds(frames, 1)}</span>
         </div>
       )}
       {!opening && <p className="m-0 text-[11px] leading-relaxed text-muted-foreground">This camera follows the kart in the game; the preview uses the first start position.</p>}

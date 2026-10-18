@@ -122,7 +122,7 @@ function Sidebar() {
   const tabs = [
     { id: "outline", icon: ListTree, label: "Track", text: "Every element of the track, grouped by kind. Click to select, double-click to focus." },
     { id: "collision", icon: BrickWall, label: "Collision", text: "Surface types of the track (road, off-road, walls…): show, hide and paint them." },
-    { id: "cameras", icon: Clapperboard, label: "Cameras", text: "The intro fly-over as keyframes on a timeline: fly the 3D view and add a keyframe, the camera flies between them. Also replay cameras." },
+    { id: "cameras", icon: Clapperboard, label: "Cameras", text: "The intro fly-over as keyframes on a timeline under the 3D view: frame the view and press K, the camera flies between keyframes. Also replay cameras." },
     { id: "validate", icon: ShieldCheck, label: "Check", text: "Finds mistakes that crash the game or break races, with one-click fixes." },
   ];
   return (

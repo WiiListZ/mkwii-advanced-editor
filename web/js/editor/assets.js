@@ -186,11 +186,12 @@ export class GameAssets {
       const blight = findFile(tree, 'posteffect.blight');
       try { BrresModelBuilder.lightSets = blight ? parseBLIGHT(blight.data) : null; } catch { BrresModelBuilder.lightSets = null; }
     }
-    // Object models: only when one of their own files changed (or one appeared in the archive).
+    // Object models: only when one of their own files changed (or one appeared in the archive, which
+    // then replaces the Common.szs or tracks folder model).
     let objectsChanged = false;
     if ([...changed].some((path) => !/(^|\/)(course|vrcorn)_model\.brres$/.test(path))) {
       for (const [id, found] of this.objects) {
-        if (!found || found.from === 'track') { this.objects.delete(id); objectsChanged = true; }
+        if (!found || found.from === 'track' || this.resourceNames(id).some((n) => touched(`${n}.brres`.toLowerCase()))) { this.objects.delete(id); objectsChanged = true; }
       }
     }
     const vp = this.viewport;
