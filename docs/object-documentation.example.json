@@ -8,11 +8,19 @@
         "2": {
           "label": "Player item type",
           "description": "Item type used for human players.",
-          "values": "0=default; 1=Banana; 2=Mushroom; 7=Green Shell. See the built-in guide for the other original-game codes.",
-          "limits": "Known original-game codes: 0–16 and 597 (0x255)."
+          "options": { "0": "Default", "1": "Banana", "2": "Mushroom", "7": "Green Shell" },
+          "otherValues": true,
+          "limits": "See the built-in guide for the other original-game codes."
         },
         "3": {
           "label": "CPU item type"
+        },
+        "7": {
+          "label": "Height offset",
+          "description": "Signed offset from the object position.",
+          "signed": true,
+          "min": -1000,
+          "max": 1000
         }
       }
     },
@@ -27,8 +35,14 @@
         "1": {
           "label": "Speed",
           "description": "Describe the unit here.",
-          "values": "0=stopped; positive values move the object.",
-          "limits": "Example: 0–120 tested for this custom object."
+          "values": "0 stops the object; higher values move it faster.",
+          "min": 0,
+          "max": 120,
+          "limits": "Tested on this custom object."
+        },
+        "2": {
+          "label": "Direction",
+          "options": { "0": "Clockwise", "1": "Counterclockwise" }
         }
       }
     }

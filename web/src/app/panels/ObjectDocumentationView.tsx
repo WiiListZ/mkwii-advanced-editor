@@ -16,6 +16,7 @@ export function ObjectDocumentationView({ id, label, name, documentation }: { id
         return <div key={index} className="rounded border bg-background/40 px-2 py-1.5">
           <div className="font-medium">{index + 1}. {setting?.label || `Setting ${index + 1}`}</div>
           {setting?.description && <p className="text-muted-foreground">{setting.description}</p>}
+          {guidance.options.length > 0 && <p className="text-muted-foreground"><span className="text-foreground">Choices:</span> {guidance.options.map(([v, label]: any) => `${v} = ${label}`).join(" · ")}{guidance.otherValues ? " · other values allowed" : ""}</p>}
           {guidance.values && <p className="text-muted-foreground"><span className="text-foreground">Values:</span> {guidance.values}</p>}
           <p className="text-muted-foreground"><span className="text-foreground">Limits:</span> {guidance.limits}</p>
         </div>;

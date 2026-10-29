@@ -1,6 +1,6 @@
 import * as React from "react";
 import {
-  BookOpen, BrickWall, CircleCheck, Download, FilePlus2, FolderOpen, GraduationCap, Keyboard, Package, Puzzle, Replace, Rocket, Trash2,
+  BookOpen, BrickWall, CircleCheck, Download, FileJson, FilePlus2, FolderOpen, GraduationCap, Keyboard, Package, Puzzle, Replace, Rocket, Trash2,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -35,6 +35,7 @@ import { AudioDialog } from "./AudioDialog";
 import { AssetEditorDialog, AssetTextureEditorDialog } from "./AssetEditorDialog";
 import { RiivolutionDialog } from "./RiivolutionDialog";
 import { WorkspaceCard } from "../panels/WorkspaceCard";
+import { ObjectDocumentationHelp } from "../panels/ObjectDocumentationHelp";
 import { SettingsPanel } from "../panels/SettingsPanel";
 import { TextureEditorDialog, TrackSettingsEditor } from "../panels/Inspector";
 import { ObjectPreview } from "../panels/ObjectPreview";
@@ -343,7 +344,7 @@ function HelpDialog({ tab = "start", tutorial, close }: { tab?: string; tutorial
       <DialogHeader><DialogTitle>Help center</DialogTitle></DialogHeader>
       <Tabs defaultValue={tab} orientation="vertical" className="grid h-[62vh] min-h-0 grid-cols-[200px_1fr] gap-5">
         <TabsList className="h-auto flex-col items-stretch justify-start gap-1 bg-transparent p-0">
-          {[["start", Rocket, "Getting started"], ["tutorials", GraduationCap, "Tutorials"], ["elements", Puzzle, "Track elements"], ["collision", BrickWall, "Collision types"], ["keys", Keyboard, "Mouse & keyboard"]].map(([id, Icon, label]: any) => (
+          {[["start", Rocket, "Getting started"], ["tutorials", GraduationCap, "Tutorials"], ["elements", Puzzle, "Track elements"], ["collision", BrickWall, "Collision types"], ["objectDocs", FileJson, "Object documentation"], ["keys", Keyboard, "Mouse & keyboard"]].map(([id, Icon, label]: any) => (
             <TabsTrigger key={id} value={id} className="flex-none justify-start px-3 py-2 data-[state=active]:bg-accent"><Icon /> {label}</TabsTrigger>
           ))}
         </TabsList>
@@ -387,6 +388,7 @@ function HelpDialog({ tab = "start", tutorial, close }: { tab?: string; tutorial
               ))}
             </div>
           </TabsContent>
+          <TabsContent value="objectDocs" className="mt-0"><ObjectDocumentationHelp /></TabsContent>
           <TabsContent value="keys" className="mt-0">
             <div className="flex flex-col divide-y rounded-lg border">
               {KEYS.map(([k, v]) => (
@@ -408,7 +410,7 @@ function AboutDialog() {
   return (
     <>
       <DialogHeader>
-        <div className="flex items-center gap-3"><img src="icon.png" className="size-10" alt="" /><DialogTitle>MKWii Advanced Editor {APP_VERSION}</DialogTitle></div>
+        <div className="flex items-center gap-3"><img src="icon.png" className="size-10 select-none" alt="" draggable={false} /><DialogTitle>MKWii Advanced Editor {APP_VERSION}</DialogTitle></div>
         <DialogDescription>A visual track editor for Mario Kart Wii.</DialogDescription>
       </DialogHeader>
       <p className="m-0 text-[13px] text-muted-foreground">Reads and writes SZS (Yaz0 + U8), KMP, KCL and BRRES models natively. Built with Bun, React, shadcn/ui, Three.js and WebView2.</p>
@@ -418,9 +420,10 @@ function AboutDialog() {
         {updates.phase === "checking" ? <p className="m-0 text-muted-foreground">Checking for updates…</p>
           : updates.phase === "downloading" ? <p className="m-0 text-muted-foreground">Downloading update {updates.status?.version}… {Math.floor(updates.progress * 100)}%</p>
           : updates.phase === "installing" ? <p className="m-0 text-muted-foreground">Installing update {updates.status?.version}…</p>
-          : updates.status?.available ? <><p className="m-0">Version {updates.status.version} {updates.phase === "ready" ? "is ready to install." : "is available."}</p><p className="m-0 max-h-40 overflow-auto whitespace-pre-wrap text-muted-foreground">{updates.status.notes}</p>{updates.phase === "error" && <p className="m-0 text-destructive">Download failed: {updates.error}</p>}<Button size="sm" onClick={() => void (updates.phase === "ready" ? updates.restart() : updates.accept())}>{updates.phase === "ready" ? "Restart & update" : updates.phase === "error" ? "Retry update" : "Update now"}</Button></>
+          : updates.status?.available ? <><p className="m-0">Version {updates.status.version} {updates.phase === "ready" ? "is ready to install." : "is available."}</p>{updates.phase === "error" && <p className="m-0 text-destructive">Download failed: {updates.error}</p>}<div className="flex gap-2"><Button size="sm" onClick={() => void (updates.phase === "ready" ? updates.restart() : updates.accept())}>{updates.phase === "ready" ? "Restart & update" : updates.phase === "error" ? "Retry update" : "Update now"}</Button><Button size="sm" variant="secondary" onClick={() => updates.showNotes({ version: updates.status?.version || "", title: updates.status?.title, notes: updates.status?.notes || "", url: updates.status?.url })}>Release notes</Button></div></>
           : updates.phase === "error" ? <p className="m-0 text-muted-foreground">Could not check: {updates.error}</p>
           : <p className="m-0 text-muted-foreground">{updates.status?.supported ? "You have the latest release." : "Updates are available in the built Windows executable."}</p>}
+        {updates.installed && <Button size="sm" variant="secondary" onClick={() => updates.showNotes(updates.installed!)}>What's new in {updates.installed.version}</Button>}
       </div>
       <p className="m-0 text-[13px] text-muted-foreground">Not affiliated with Nintendo. Use your own legally dumped game files.</p>
     </>

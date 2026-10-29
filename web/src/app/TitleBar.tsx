@@ -3,7 +3,7 @@ import {
   Archive, ArrowDownToDot, ArrowDownToLine, ArrowLeftRight, AudioLines, BookOpen, Box, Boxes, BrickWall, Bug, ChevronDown, ChevronLeft, ChevronRight,
   CircleHelp, Clapperboard, Cloud, Flame, ClipboardPaste, Compass, Copy, CopyPlus, Crosshair, Eye, FileOutput, FilePlus2, FileText, FileX, Flag, FlipHorizontal2,
   FolderCog, FolderOpen, Github, GraduationCap, History, House, Image as ImageIcon, ImageOff, ImagePlus, Import, Info, Keyboard, Languages, Layers,
-  Link, ListChecks, ListOrdered, MapPin, Maximize, Minus, Mountain, PackageOpen, PackagePlus, Paintbrush, Pencil, Play, Plus, Puzzle, Redo2, Route, Save, SaveAll,
+  Lightbulb, Link, ListChecks, ListOrdered, MapPin, Maximize, Minus, Mountain, PackageOpen, PackagePlus, Paintbrush, Pencil, Play, Plus, Puzzle, Redo2, Route, Save, SaveAll,
   Settings as SettingsIcon, Shapes, SlidersHorizontal, ShieldCheck, Sparkles, Square, SquareX, StretchHorizontal, Trash2, Undo2, Video, X,
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -23,10 +23,10 @@ import { api } from "../../js/api.js";
 const ADD_KINDS = ["KTPT", "ENPT", "ITPT", "CKPT", "POTI", "AREA", "CAME", "JGPT", "CNPT", "MSPT"];
 
 export function AddMenuItems({ Item, Separator }: { Item: any; Separator: any }) {
-  const ed = useEditor("settings");
+  const ed = useEditor("settings", "doc");
   return (
     <>
-      {ADD_KINDS.map((k) => {
+      {ADD_KINDS.filter((k) => k !== "MSPT" || ed.usesBattleEnds()).map((k) => {
         const Icon = KIND_ICON[k];
         return (
           <Item key={k} onSelect={() => ed.startPlacing(k)}>
@@ -142,7 +142,7 @@ export function TitleBar() {
   return (
     <header data-window-chrome style={modal ? { pointerEvents: "auto" } : undefined}
       className={cn("relative flex h-10 shrink-0 items-center gap-1 border-b bg-sidebar pl-3", modal && "z-[60] [&>*:not([data-window-controls])]:pointer-events-none [&>*:not([data-window-controls])]:opacity-40")} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onDoubleClick={onDoubleClick} onPointerUp={() => { dragStart.current = null; }} onPointerLeave={() => { dragStart.current = null; }}>
-      <img src="icon.png" className="size-5" alt="" />
+      <img src="icon.png" className="size-5 select-none" alt="" draggable={false} />
       <span className="mr-2 ml-1 whitespace-nowrap text-[13px] font-semibold tracking-tight">MKWii Advanced Editor</span>
       <span className="-ml-2 mr-2 text-[10px] text-muted-foreground">v{APP_VERSION}</span>
       {!ed.homeVisible && <button type="button" aria-label="Home" title="Home" onClick={cmd("home")}
@@ -234,7 +234,7 @@ export function TitleBar() {
             <MenubarSub>
               <MenubarSubTrigger><Eye /> Show</MenubarSubTrigger>
               <MenubarSubContent>
-                {([["auto", "Automatic"], ["visual", "Track model"], ["collision", "Collision"], ["both", "Model + collision"]] as const).map(([v, l]) => (
+                {([["visual", "Track model"], ["collision", "Collision"], ["both", "Model + collision"]] as const).map(([v, l]) => (
                   <MenubarCheckboxItem key={v} checked={s.displayMode === v} onCheckedChange={() => ed.setSetting("displayMode", v)}>{l}</MenubarCheckboxItem>
                 ))}
               </MenubarSubContent>
@@ -281,8 +281,9 @@ export function TitleBar() {
             {!home && <MenubarItem onSelect={cmd("trackObjects")} disabled={!d.szs}><Boxes /> Track objects of this track…</MenubarItem>}
             {!home && <MenubarItem onSelect={cmd("sky")} disabled={!d.szs}><Cloud /> Sky…</MenubarItem>}
             {!home && <MenubarItem onSelect={cmd("effects")} disabled={!d.szs}><Sparkles /> Effects of this track…</MenubarItem>}
+            {!home && <MenubarItem onSelect={cmd("lighting")} disabled={!d.szs}><Lightbulb /> Lighting of this track…</MenubarItem>}
             <MenubarItem onSelect={cmd("workspaceEffects")} disabled={!ed.workspace()}><Flame /> Effects in the game folder…</MenubarItem>
-            <MenubarItem onSelect={cmd("gameParams")}><SlidersHorizontal /> Vehicle stats and item chances…</MenubarItem>
+            <MenubarItem onSelect={cmd("gameParams")}><SlidersHorizontal /> Game data (.bin, .bcp, .bsp)…</MenubarItem>
             <MenubarItem onSelect={cmd("riivolution")}><PackagePlus /> Riivolution mod…</MenubarItem>
             {!home && <>
               <MenubarItem onSelect={() => ed.watchIntro(0)} disabled={!d.kmp.CAME.length}><Clapperboard /> Watch intro</MenubarItem>

@@ -101,6 +101,10 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       if (req.method !== "POST") return json({ error: "POST required" }, 405);
       return json(await updater.apply());
 
+    // Notes of the version installed by the updater; POST marks them as read.
+    case "release-notes":
+      return json(req.method === "POST" ? await updater.markNotesShown() : await updater.installedNotes());
+
     case "open-dialog": {
       const body = (await req.json()) as { filters?: FileFilter[]; title?: string };
       return json({ path: await openDialog(body.filters || [], body.title) });
@@ -256,8 +260,9 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     case "import-model": {
       if (req.method !== "POST") return json({ error: "POST required" }, 405);
       const target = (url.searchParams.get("target") || "").split(",").map(Number);
-      const result = await import3DModel(new Uint8Array(await req.arrayBuffer()), url.searchParams.get("path") || "", target, url.searchParams.get("animation") || "");
-      return new Response(result, { headers: { "content-type": "application/octet-stream" } });
+      const warnings: string[] = [];
+      const result = await import3DModel(new Uint8Array(await req.arrayBuffer()), url.searchParams.get("path") || "", target, url.searchParams.get("animation") || "", warnings);
+      return new Response(result, { headers: { "content-type": "application/octet-stream", "x-import-warnings": encodeURIComponent(JSON.stringify(warnings)) } });
     }
 
     case "convert-model-brres": {

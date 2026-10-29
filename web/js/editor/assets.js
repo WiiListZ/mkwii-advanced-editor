@@ -182,14 +182,17 @@ export class GameAssets {
     for (const key of [...this.brresCache.keys()]) {
       if (key.startsWith('track:') && touched(key.slice(6))) this.brresCache.delete(key);
     }
-    if (touched('posteffect.blight')) {
+    // New lights: every model is built again, since the materials take their light sets when built.
+    const lights = touched('posteffect.blight');
+    if (lights) {
       const blight = findFile(tree, 'posteffect.blight');
       try { BrresModelBuilder.lightSets = blight ? parseBLIGHT(blight.data) : null; } catch { BrresModelBuilder.lightSets = null; }
     }
     // Object models: only when one of their own files changed (or one appeared in the archive, which
     // then replaces the Common.szs or tracks folder model).
     let objectsChanged = false;
-    if ([...changed].some((path) => !/(^|\/)(course|vrcorn)_model\.brres$/.test(path))) {
+    if (lights && this.objects.size) { this.objects.clear(); objectsChanged = true; }
+    else if ([...changed].some((path) => !/(^|\/)(course|vrcorn)_model\.brres$/.test(path))) {
       for (const [id, found] of this.objects) {
         if (!found || found.from === 'track' || this.resourceNames(id).some((n) => touched(`${n}.brres`.toLowerCase()))) { this.objects.delete(id); objectsChanged = true; }
       }
@@ -197,11 +200,11 @@ export class GameAssets {
     const vp = this.viewport;
     await tick();
     if (version !== this.trackVersion) return { course: false, sky: false };
-    if (touched('course_model.brres')) {
+    if (lights || touched('course_model.brres')) {
       this.built.course = this.buildFromArchive(tree, 'course_model.brres', 'course', { lit: false });
       vp.setCourseModel(this.built.course?.group || null);
     }
-    if (touched('vrcorn_model.brres')) {
+    if (lights || touched('vrcorn_model.brres')) {
       this.built.sky = this.buildFromArchive(tree, 'vrcorn_model.brres', 'vrcorn', { lit: false });
       vp.setSkyModel(this.built.sky?.group || null);
     }

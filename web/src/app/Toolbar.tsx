@@ -1,7 +1,7 @@
 import * as React from "react";
 import {
   ArrowDownToLine, Box, BrickWall, ChevronDown, CircleHelp, Flag, Layers, Magnet, Map, Maximize2, Mountain, Move, Pause, Play, Plus,
-  Redo2, RotateCw, Save, Scale3d, ScanSearch, Settings, Sparkles, Undo2,
+  Redo2, RotateCw, Save, Scale3d, ScanSearch, Settings, Undo2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Toggle } from "@/components/ui/toggle";
@@ -133,7 +133,7 @@ export function Toolbar() {
       {!ed.map2D && <Cluster id="view">
         <Hint wrap {...tip("display")}>
           <ToggleGroup type="single" value={s.displayMode} onValueChange={(v: any) => v && ed.setSetting("displayMode", v)} className="gap-0.5 bg-transparent p-0">
-            {([["auto", Sparkles, "Auto"], ["visual", Mountain, "Model"], ["collision", BrickWall, "Collision"], ["both", Layers, "Both"]] as const).map(([v, Icon, label]) => (
+            {([["visual", Mountain, "Model"], ["collision", BrickWall, "Collision"], ["both", Layers, "Both"]] as const).map(([v, Icon, label]) => (
               <ToggleGroupItem key={v} value={v} aria-label={label} className="h-7 gap-1.5 px-2 text-xs">
                 <Icon /> <span className="hidden xl:inline">{label}</span>
               </ToggleGroupItem>

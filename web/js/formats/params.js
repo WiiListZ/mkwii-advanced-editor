@@ -1,6 +1,6 @@
 // Game parameter files of Race/Common.szs, edited in place (every value keeps its size):
 // kartParam.bin (vehicle stats), driverParam.bin (character bonuses, same layout) and ItemSlot.bin
-// (item probabilities). Layout and meanings follow the Custom Mario Kart wiki (Tockdom) and the
+// (item probabilities). Layout and meanings follow the Custom Mario Kart wiki (mkwiiki.org, formerly Tockdom) and the
 // Mario Kart Wii decompilation; values nobody has documented are shown as unknown.
 
 import { KCL_TYPES } from '../data/defs.js';
@@ -58,13 +58,13 @@ const STATS = [
   [0x6c, 'u32', 'Mini-Turbo duration', 'How long the boost of a Mini-Turbo lasts, in frames (60 frames = 1 second). Higher = longer boost after a drift.'],
 ];
 const TAIL = [
-  [0x170, 'f32', 'Unknown 0x170', 'Not documented (item and collision related according to the decompilation). Changing it is not recommended.'],
-  [0x174, 'f32', 'Unknown 0x174', 'Not documented. Changing it is not recommended.'],
-  [0x178, 'f32', 'Unknown 0x178', 'Not documented. Changing it is not recommended.'],
-  [0x17c, 'f32', 'Unknown 0x17C', 'Not documented. Changing it is not recommended.'],
-  [0x180, 'f32', 'Unknown 0x180', 'Not documented. Changing it is not recommended.'],
-  [0x184, 'f32', 'Unknown 0x184 (Mega Mushroom size?)', 'Believed to be the size multiplier while a Mega Mushroom is active (name from the decompilation, not verified). Changing it is not recommended.'],
-  [0x188, 'f32', 'Unknown 0x188', 'Not documented. Changing it is not recommended.'],
+  [0x170, 'f32', 'Rotating items Z radius', 'Distance along Z of the items that circle around the vehicle.'],
+  [0x174, 'f32', 'Rotating items X radius', 'Distance along X of the items that circle around the vehicle.'],
+  [0x178, 'f32', 'Rotating and trailing items Y distance', 'Height of the items that circle around or trail behind the vehicle.'],
+  [0x17c, 'f32', 'Rotating and trailing items Z distance', 'Distance along Z of the items that circle around or trail behind the vehicle.'],
+  [0x180, 'f32', 'Maximum normal acceleration', 'Always 12 in the original files.'],
+  [0x184, 'f32', 'Mega Mushroom scale', 'Size of the vehicle and driver while a Mega Mushroom is active.'],
+  [0x188, 'f32', 'Shocked scale', 'Size of the vehicle when it is hit by Lightning.'],
 ];
 
 export const STAT_FIELDS = [

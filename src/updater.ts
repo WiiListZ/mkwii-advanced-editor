@@ -1,6 +1,6 @@
 // Portable Windows release updater. Releases are fetched from the project's GitHub repository.
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export const RELEASES_URL = "https://api.github.com/repos/WiiListZ/mkwii-advanced-editor/releases/latest";
@@ -59,6 +59,26 @@ export class ReleaseUpdater {
     private source = { releasesUrl: RELEASES_URL, downloadPrefix: DOWNLOAD_PREFIX }) {}
 
   progress(): DownloadState { return { ...this.state, version: this.release?.version }; }
+
+  // Release notes of the version this updater installed, kept until the next update. A version
+  // installed by hand (downloaded from GitHub) has none, so its notes are not shown at start.
+  private get notesFile() { return join(this.settingsDir, "updates", "installed-release.json"); }
+
+  async installedNotes() {
+    const record = JSON.parse(await readFile(this.notesFile, "utf8").catch(() => "null"));
+    let current = false;
+    try { current = !!record?.version && compareVersions(record.version, this.currentVersion) === 0; } catch { /* invalid record */ }
+    if (!current) return { available: false, show: false };
+    return { available: true, show: !record.shown, version: String(record.version), title: String(record.title || ""),
+      notes: String(record.notes || ""), url: String(record.url || "") };
+  }
+
+  // After the notes were shown once they only open on request (Help › About).
+  async markNotesShown() {
+    const record = JSON.parse(await readFile(this.notesFile, "utf8").catch(() => "null"));
+    if (record && !record.shown) await writeFile(this.notesFile, JSON.stringify({ ...record, shown: true }, null, 2));
+    return { ok: true };
+  }
 
   // Starts the download in the background (once) and returns at once; progress() follows it.
   startDownload() {
@@ -133,6 +153,10 @@ export class ReleaseUpdater {
 
   async apply() {
     if (!this.executable || !this.stagedPath) throw new Error("No verified update is ready");
+    if (this.release) {
+      const { version, title, notes, url } = this.release;
+      await writeFile(this.notesFile, JSON.stringify({ version, title, notes, url, shown: false }, null, 2));
+    }
     const script = join(this.settingsDir, "updates", "install-update.ps1");
     // The paths are written into the script as literals, so no command line has to quote them.
     // UTF-8 with BOM: Windows PowerShell reads a script without BOM as ANSI, which breaks

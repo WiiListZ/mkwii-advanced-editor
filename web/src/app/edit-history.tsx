@@ -1,4 +1,4 @@
-// Undo / redo / save for editors that change files inside an archive (effects, game parameters).
+// Undo / redo / save for editors that change files inside an archive (effects, game data).
 // Each step remembers a file's bytes before and after; undo and redo write them back.
 
 import * as React from "react";

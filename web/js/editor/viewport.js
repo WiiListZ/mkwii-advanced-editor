@@ -56,6 +56,11 @@ export class Viewport extends EventTarget {
     this.mode = 'translate';
     this.tool = null;
     this.groundSnap = false;
+    // Settings › Editing: drag a selected element with the left button in Move mode, and hide the
+    // Move arrows (which needs the first one).
+    this.dragToMove = false;
+    this.hideMoveArrows = false;
+    this.freeDragging = false;
     this.smartAlignment = false;
     this.translationSnap = 0;
     this.rotationSnap = 0;
@@ -63,8 +68,7 @@ export class Viewport extends EventTarget {
     this.keys = new Set();
     this.rmbDown = false;
     // Display settings (changed from the app/preferences).
-    this.displayMode = 'auto';   // auto | visual | collision | both
-    this.collisionFocus = false; // Collision tab open: Auto shows the collision over the model
+    this.displayMode = 'visual'; // visual | collision | both
     this.modelMode = 'real';     // real | simple | markers
     this.animations = true;      // play in-game animations
     this.showLabels = true;      // names above unknown objects
@@ -73,7 +77,7 @@ export class Viewport extends EventTarget {
     this.showAreaVolumes = true; // transparent AREA boxes and outlines (Settings)
     this.areaOutlinesThroughWalls = false; // show a faint copy of occluded AREA edges
     this.lookSensitivity = 1;
-    this.hideCursorWhileLooking = false;
+    this.hideCursorWhileLooking = true;
     this.objectModelProvider = null; // (objectId) => { template, chr } | null
     this.startModelProvider = null;  // () => { template, chr } | null (Mario's kart for start positions)
     this.respawnModelProvider = null; // () => { template, chr } | null (Lakitu for respawn points)
@@ -476,7 +480,6 @@ export class Viewport extends EventTarget {
     if (this.tool?.type === 'paint') return this.paintOverModel && this.hasCourseModel ? 'both' : 'collision';
     if (this.tool?.type === 'collision-create') return this.hasCourseModel ? 'both' : 'collision';
     if (this.tool?.type === 'geometry') return this.tool.target === 'collision' ? 'collision' : 'visual';
-    if (this.displayMode === 'auto') return this.hasCourseModel ? (this.collisionFocus ? 'both' : 'visual') : 'collision';
     if (this.displayMode !== 'collision' && !this.hasCourseModel) return 'collision';
     return this.displayMode;
   }
@@ -1261,7 +1264,7 @@ export class Viewport extends EventTarget {
       this.pivot.scale.set(1, 1, 1);
       this.gizmo.setMode(this.mode);
       this.gizmo.setSpace(this.mode === 'translate' ? 'world' : 'local');
-      this.gizmo.showX = this.gizmo.showY = this.gizmo.showZ = true;
+      this.gizmo.showX = this.gizmo.showY = this.gizmo.showZ = !(this.hideMoveArrows && this.mode === 'translate');
       this.gizmo.setTranslationSnap(this.translationSnap || null);
       this.gizmo.setRotationSnap(this.rotationSnap ? this.rotationSnap * DEG : null);
       this.gizmo.attach(this.pivot);
@@ -1293,6 +1296,7 @@ export class Viewport extends EventTarget {
     } else {
       this.gizmo.showX = this.gizmo.showY = this.gizmo.showZ = true;
     }
+    if (this.hideMoveArrows && mode === 'translate') this.gizmo.showX = this.gizmo.showY = this.gizmo.showZ = false;
     this.gizmo.setTranslationSnap(this.translationSnap || null);
     this.gizmo.setRotationSnap(this.rotationSnap ? this.rotationSnap * DEG : null);
     this.gizmo.attach(this.pivot);
@@ -1509,10 +1513,12 @@ export class Viewport extends EventTarget {
       }
       for (const { info, start } of ds.items) {
         this.doc.translate(info, start, [d.x, d.y, d.z]);
-        if ((this.groundSnap || this.smartAlignment) && this.doc.heights && info.item.pos) {
+        // Elements dragged freely that stood on the ground keep following it.
+        const follow = ds.grounded?.has(info.item.uid);
+        if ((this.groundSnap || this.smartAlignment || follow) && this.doc.heights && info.item.pos) {
           const p = info.item.pos;
           const y = this.doc.heights.groundBelow(p[0], p[2], p[1] + 2000, 0);
-          if (y !== null && (this.groundSnap || Math.abs(p[1] - y) < this.iconSize)) p[1] = y;
+          if (y !== null && (this.groundSnap || follow || Math.abs(p[1] - y) < this.iconSize)) p[1] = y;
         }
       }
     } else if (mode === 'rotate') {
@@ -1646,7 +1652,65 @@ export class Viewport extends EventTarget {
 
   updateCursor() {
     this.canvas.style.cursor = this.rmbDown && this.hideCursorWhileLooking ? 'none'
+      : this.freeDragging ? 'grabbing'
       : this.tool ? (this.tool.type === 'paint' ? 'cell' : 'crosshair') : '';
+  }
+
+  // Where the pointer ray meets a plane.
+  rayPlane(e, plane) {
+    this.raycaster.setFromCamera(this.ndc(e), this.camera);
+    const p = new THREE.Vector3();
+    return this.raycaster.ray.intersectPlane(plane, p) ? p : null;
+  }
+
+  // Left button down in Move mode with "drag to move": a KMP element under the pointer is selected
+  // unless it already is, and dragging it moves the selection on the horizontal plane through it.
+  // A track model piece is only dragged when it is already selected, so pressing on the road and
+  // dragging never moves the road by mistake. Returns null when nothing can be dragged there.
+  startFreeDrag(e) {
+    const entity = this.pickEntityHit(e);
+    const model = this.modelEditingEnabled ? this.pickModelHit(e) : null;
+    if (model && (!entity || model.distance < entity.distance - this.iconSize * 1.5)) {
+      const s = model.selection;
+      const selected = this.geometrySelection?.type === 'model'
+        && [...this.modelSelections()].some((p) => p.partIndex === s.partIndex && p.pieceIndex === s.pieceIndex && p.modelName === s.modelName);
+      if (!selected) return null;
+    } else if (entity) {
+      if (!this.doc.selection.has(String(entity.key))) this.selectEntity(entity.key, 'replace');
+    } else return null;
+    if (!this.gizmo.object) return null;
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -this.pivot.position.y);
+    const start = this.rayPlane(e, plane);
+    return start ? { plane, start, started: false } : null;
+  }
+
+  moveFreeDrag(e, drag) {
+    if (!drag.started) {
+      drag.started = true;
+      this.onGizmoDragging(true);
+      if (this.dragStart && this.doc.heights) {
+        this.dragStart.grounded = new Set(this.dragStart.items.filter(({ pos }) => {
+          const y = this.doc.heights.groundBelow(pos[0], pos[2], pos[1] + 50, 0);
+          return y !== null && Math.abs(pos[1] - y) < 5;
+        }).map(({ info }) => info.item.uid));
+      }
+      this.freeDragging = true;
+      this.updateCursor();
+    }
+    const p = this.rayPlane(e, drag.plane);
+    const base = this.geometryDrag?.pos || this.dragStart?.pos;
+    if (!p || !base) return;
+    const d = p.sub(drag.start);
+    if (this.translationSnap) d.set(...d.toArray().map((v) => Math.round(v / this.translationSnap) * this.translationSnap));
+    this.pivot.position.copy(base).add(d);
+    this.onGizmoChange();
+    this.needsRender = true;
+  }
+
+  endFreeDrag() {
+    this.freeDragging = false;
+    this.onGizmoDragging(false);
+    this.updateCursor();
   }
 
   bindInput() {
@@ -1692,6 +1756,7 @@ export class Viewport extends EventTarget {
       if (e.button !== 0) return;
       if (this.gizmo.dragging || this.gizmo.axis) return;
       down = { x: e.clientX, y: e.clientY, e, moved: false };
+      if (this.dragToMove && this.mode === 'translate' && !this.tool && !e.shiftKey && !e.ctrlKey && !e.metaKey) down.free = this.startFreeDrag(e);
       if (this.tool?.type === 'paint') {
         this.paintStroke = true;
         this.emit('paint-start');
@@ -1743,6 +1808,7 @@ export class Viewport extends EventTarget {
       down = null;
       marquee.style.display = 'none';
       if (this.paintStroke) { this.paintStroke = false; this.emit('paint-end'); return; }
+      if (d.free?.started) { this.endFreeDrag(); return; }
       if (d.moved) {
         if (this.tool?.type === 'geometry' && this.tool.target === 'collision') this.marqueeCollision(d, e);
         else this.marqueeSelect(d, e);
@@ -1822,6 +1888,10 @@ export class Viewport extends EventTarget {
         this.controls.target.copy(this.camera.position).add(new THREE.Vector3().setFromSpherical(spherical).normalize().multiplyScalar(distance));
         this.camera.lookAt(this.controls.target);
         this.needsRender = true;
+        return;
+      }
+      if (down?.free) {
+        if (down.free.started || Math.abs(e.clientX - down.x) > 4 || Math.abs(e.clientY - down.y) > 4) { down.moved = true; this.moveFreeDrag(e, down.free); }
         return;
       }
       const collisionBox = this.tool?.type === 'geometry' && this.tool.target === 'collision' && down?.e.shiftKey;

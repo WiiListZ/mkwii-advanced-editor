@@ -1,5 +1,6 @@
 import * as React from "react";
-import { Box, FolderOpen, Loader2, Package, Search, Star } from "lucide-react";
+import { Box, CircleHelp, FolderOpen, Loader2, Package, Search, Star } from "lucide-react";
+import { dialogs } from "../dialogs-store";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -102,6 +103,7 @@ export function ObjectsPanel() {
       <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/20 p-2">
         <span className="min-w-0 flex-1 text-[11px] text-muted-foreground">Object documentation: {Object.keys(ed.importedObjectDocumentation).length} imported entries. JSON entries can add descriptions and explain settings 1–8.</span>
         <Button size="sm" variant="secondary" onClick={() => void ed.importObjectDocumentation()}><FolderOpen /> Import JSON…</Button>
+        <Button size="sm" variant="ghost" onClick={() => void dialogs.open("help", { tab: "objectDocs" })}><CircleHelp /> JSON format</Button>
         {Object.keys(ed.importedObjectDocumentation).length > 0 && <Button size="sm" variant="ghost" onClick={() => void ed.clearImportedObjectDocumentation()}>Remove imported</Button>}
       </div>
       {!loaded && (

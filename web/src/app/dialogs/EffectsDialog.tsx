@@ -56,7 +56,7 @@ export function NumberInput({ value, onCommit, label, integer, min, max }: { val
 export const TYPE_LIMITS: Record<string, [number, number]> = { u8: [0, 255], s8: [-128, 127], u16: [0, 65535], u32: [0, 4294967295], rgba: [0, 255] };
 
 // The native "change" event fires once the colour is chosen, not on every move of the picker.
-function ColorInput({ value, label, onCommit }: { value: string; label: string; onCommit: (hex: string) => void }) {
+export function ColorInput({ value, label, onCommit }: { value: string; label: string; onCommit: (hex: string) => void }) {
   const ref = React.useRef<HTMLInputElement>(null);
   const latest = React.useRef(onCommit);
   latest.current = onCommit;

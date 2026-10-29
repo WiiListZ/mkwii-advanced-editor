@@ -103,3 +103,28 @@ test("updater downloads slowly in the background and reports progress", async ()
     rmSync(directory, { recursive: true, force: true });
   }
 }, 60000);
+
+// Notes written by apply() open once at the next start of that version, then only on request.
+test("notes of an in-app update are shown once, and never for another version", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "mkwii-updater-notes-"));
+  try {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(join(directory, "updates"), { recursive: true });
+    const notes = { version: "1.1.0", title: "Release 1.1", notes: "## New\n- Things", url: "https://github.com/WiiListZ/mkwii-advanced-editor/releases/tag/v1.1.0", shown: false };
+    await writeFile(join(directory, "updates", "installed-release.json"), JSON.stringify(notes));
+    // Installed by hand from GitHub: a newer version than the recorded one, or no record at all.
+    expect((await new ReleaseUpdater("1.2.0", null, directory).installedNotes()).show).toBe(false);
+    expect((await new ReleaseUpdater("1.1.0", null, join(directory, "none")).installedNotes()).available).toBe(false);
+    const updater = new ReleaseUpdater("1.1.0", null, directory);
+    const first = await updater.installedNotes();
+    expect(first.show).toBe(true);
+    expect(first.notes).toBe(notes.notes);
+    await updater.markNotesShown();
+    const later = await new ReleaseUpdater("1.1.0", null, directory).installedNotes();
+    expect(later.show).toBe(false);
+    expect(later.available).toBe(true);
+  } finally {
+    if (!resolve(directory).startsWith(resolve(tmpdir()) + sep)) throw new Error("Unsafe temporary cleanup path");
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

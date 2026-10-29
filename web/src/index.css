@@ -20,6 +20,8 @@
 @source "./";
 
 @custom-variant dark (&:is(.dark *));
+/* Windows lower than 900 px: Home switches to its compact layout so it fits without scrolling. */
+@custom-variant short (@media (max-height: 899px));
 
 @theme inline {
   --color-background: var(--background);

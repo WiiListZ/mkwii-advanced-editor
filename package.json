@@ -1,6 +1,6 @@
 {
   "name": "mkwii-advanced-editor",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "license": "MIT",
   "packageManager": "bun@1.4.3",
   "engines": {

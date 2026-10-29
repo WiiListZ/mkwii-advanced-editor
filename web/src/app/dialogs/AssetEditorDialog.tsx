@@ -342,7 +342,9 @@ export function AssetEditorDialog({ close, initialCategory, initialArchive, init
         animation = choice;
       }
     }
-    let next = await api.import3DModel(bytes, file.path, [0, 0, 0], animation);
+    const result = await api.import3DModel(bytes, file.path, [0, 0, 0], animation);
+    if (result.warnings.length) toast.warning("Some textures were not imported", { description: result.warnings.join("\n"), duration: 15000 });
+    let next = result.data;
     const imported = parseBRRES(next).models[0];
     if (!imported || imported.objects.length <= names.length) throw new Error("The imported file added no model parts");
     for (const name of names) next = clearBRRESPolygon(next, models[0].name, name);

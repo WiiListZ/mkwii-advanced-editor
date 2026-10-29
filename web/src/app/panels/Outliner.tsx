@@ -180,7 +180,7 @@ export function Outliner() {
                 </Hint>
               </div>
             )}
-            {ORDER.map((sec) => {
+            {ORDER.filter((sec) => sec !== "MSPT" || ed.usesBattleEnds()).map((sec) => {
               const Icon = KIND_ICON[sec];
               const list = k[sec];
               const grouped = GROUPED.includes(sec);

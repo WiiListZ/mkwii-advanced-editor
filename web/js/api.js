@@ -7,7 +7,7 @@ const token = params.get('t');
 export const hasBackend = !!token;
 export const startupFile = params.get('open');
 
-async function call(route, { method = 'GET', query = {}, body, raw = false } = {}) {
+async function call(route, { method = 'GET', query = {}, body, raw = false, headers = false } = {}) {
   const qs = new URLSearchParams(query).toString();
   const res = await fetch(`/api/${route}${qs ? '?' + qs : ''}`, {
     method,
@@ -19,19 +19,21 @@ async function call(route, { method = 'GET', query = {}, body, raw = false } = {
     try { msg = (await res.json()).error || msg; } catch { /* not JSON */ }
     throw new Error(msg);
   }
-  return raw ? new Uint8Array(await res.arrayBuffer()) : res.json();
+  if (!raw) return res.json();
+  const data = new Uint8Array(await res.arrayBuffer());
+  return headers ? { data, headers: res.headers } : data;
 }
 
 export const FILTERS = {
   track: [{ name: 'Track files', extensions: ['szs', 'wlz', 'wbz', 'wu8', 'kmp', 'kcl'] }],
   // File › Open: everything the editor can open, change and save back.
   editable: [
-    { name: 'All supported files', extensions: ['szs', 'wlz', 'wbz', 'wu8', 'arc', 'carc', 'kmp', 'kcl', 'brres', 'bmg', 'breff', 'breft', 'bin', 'brstm', 'brsar', 'xml'] },
+    { name: 'All supported files', extensions: ['szs', 'wlz', 'wbz', 'wu8', 'arc', 'carc', 'kmp', 'kcl', 'brres', 'bmg', 'breff', 'breft', 'bin', 'bcp', 'bsp', 'brstm', 'brsar', 'xml'] },
     { name: 'Tracks and archives', extensions: ['szs', 'wlz', 'wbz', 'wu8', 'arc', 'carc', 'kmp', 'kcl'] },
     { name: 'Models (BRRES)', extensions: ['brres'] },
     { name: 'Game text (BMG)', extensions: ['bmg'] },
     { name: 'Effects (BREFF / BREFT)', extensions: ['breff', 'breft'] },
-    { name: 'Vehicle, character and item parameters (BIN)', extensions: ['bin'] },
+    { name: 'Game data (BIN, BCP, BSP)', extensions: ['bin', 'bcp', 'bsp'] },
     { name: 'Music and sounds (BRSTM / BRSAR)', extensions: ['brstm', 'brsar'] },
     { name: 'Riivolution XML', extensions: ['xml'] },
   ],
@@ -106,6 +108,15 @@ export const api = {
 
   async applyUpdate() {
     return call('update-apply', { method: 'POST' });
+  },
+
+  // Notes of the version installed by the in-app updater: { available, show, version, title, notes, url }.
+  async installedReleaseNotes() {
+    return hasBackend ? call('release-notes') : { available: false, show: false };
+  },
+
+  async markReleaseNotesShown() {
+    if (hasBackend) await call('release-notes', { method: 'POST' });
   },
 
   // Asks for a file and reads it. Returns { path, name, data } or null.
@@ -227,9 +238,13 @@ export const api = {
   },
 
   // animation: '' = default, '-' = none, otherwise the name from modelAnimations().
+  // Returns the patched BRRES and the problems that did not stop the import (missing textures).
   async import3DModel(data, path, target, animation = '') {
     if (!hasBackend || !path) throw new Error('3D model import requires the desktop app and a model file on disk');
-    return call('import-model', { method: 'POST', query: { path, target: target.join(','), animation }, body: data, raw: true });
+    const result = await call('import-model', { method: 'POST', query: { path, target: target.join(','), animation }, body: data, raw: true, headers: true });
+    let warnings = [];
+    try { warnings = JSON.parse(decodeURIComponent(result.headers.get('x-import-warnings') || '%5B%5D')); } catch { /* no warnings */ }
+    return { data: result.data, warnings };
   },
 
   // name: the model's name inside the BRRES ('converted' when empty).

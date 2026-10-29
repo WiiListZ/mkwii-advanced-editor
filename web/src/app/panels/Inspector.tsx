@@ -12,7 +12,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Separator } from "@/components/ui/separator";
 import { AREA_TYPES, AREA_SHAPES, CAMERA_TYPES, CHECKPOINT_TYPE_LABEL } from "../../../js/data/defs.js";
 import { AREA_TYPE_HELP, KIND_HELP, fieldHelp } from "../../../js/data/help.js";
-import { settingGuidance } from "../../../js/data/object-documentation.js";
+import { settingDisplayValue, settingGuidance, settingStoredValue } from "../../../js/data/object-documentation.js";
 import { findFile } from "../../../js/formats/u8.js";
 import { useEditor } from "../hooks";
 import { editor, hex, KIND_LABEL, SECTION_LABEL } from "../editor";
@@ -123,6 +123,38 @@ function ScrubNumber({ label, color, value, onLive, onCommit, step = 1, int, min
         </span>
       </Hint>
       <NumberInput value={value} onCommit={onCommit} int={int} min={min} max={max} />
+    </div>
+  );
+}
+
+// One object setting (1–8): a value box with the documented limits, or the documented choices in a
+// list ("Other value…" types any number inside the limits when the documentation allows it).
+function SettingValue({ index, raw, setting, onLive, onCommit }: {
+  index: number; raw: number; setting: any; onLive: (v: number) => void; onCommit: (v: number) => void;
+}) {
+  const g = settingGuidance(setting);
+  const value = settingDisplayValue(raw, setting);
+  const listed = g.options.some(([v]: any) => v === value);
+  const [other, setOther] = React.useState(false);
+  const live = (v: number) => onLive(settingStoredValue(v));
+  const commit = (v: number) => onCommit(settingStoredValue(v));
+  const box = <ScrubNumber label={index} value={value} int min={g.min} max={g.max} onLive={live} onCommit={commit} />;
+  if (!g.options.length) return <div className="w-28 shrink-0">{box}</div>;
+  const typing = other || !listed;
+  return (
+    <div className="flex w-full flex-col gap-1">
+      <Select value={typing ? "other" : String(value)} onValueChange={(v) => {
+        if (v === "other") { setOther(true); return; }
+        setOther(false);
+        commit(Number(v));
+      }}>
+        <SelectTrigger className="h-7 text-xs" aria-label={`Setting ${index}`}><SelectValue /></SelectTrigger>
+        <SelectContent>
+          {g.options.map(([v, label]: any) => <SelectItem key={v} value={String(v)}>{label} <span className="text-muted-foreground">({v})</span></SelectItem>)}
+          {(g.otherValues || !listed) && <SelectItem value="other">{listed || other ? "Other value…" : `${value} (not in the list)`}</SelectItem>}
+        </SelectContent>
+      </Select>
+      {typing && (g.otherValues || !listed) && box}
     </div>
   );
 }
@@ -252,6 +284,15 @@ export function Inspector() {
               .filter((f) => !(primary.kind === "CKPT" && primary.side) || f.key === (primary.side === "L" ? "left" : "right"))
               .map((f) => <FieldEditor key={f.key} info={primary} f={f} bulk={sameKind} />)}
             {primary.kind === "GOBJ" && infos.length === 1 && <ObjectAppearance objectId={primary.item.objectId} />}
+            {/* A route's own settings, also reachable from one of its points (clicking in the 3D view selects a point). */}
+            {primary.kind === "POTI" && primary.route && <>
+              <Separator />
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[13px] font-semibold">Route {primary.routeIndex}</div>
+                <Button size="sm" variant="secondary" onClick={() => d.select([String(primary.route.uid)])}>Select whole route</Button>
+              </div>
+              <RouteSettings route={primary.route} />
+            </>}
           </div>
         )}
     </div>
@@ -532,11 +573,13 @@ function FieldEditor({ info, f, bulk }: { info: any; f: Field; bulk: boolean }) 
           {Array.from({ length: 8 }, (_, i) => {
             const documented = settingsDoc[i + 1];
             const guidance = settingGuidance(documented);
+            const value = <SettingValue index={i + 1} raw={it.settings[i]} setting={documented} onLive={liveIndex(i)} onCommit={setIndex(i)} />;
             return <div key={i} className="rounded-md border bg-muted/20 px-2 py-1.5">
               <div className="flex items-center gap-2">
                 <span className="min-w-0 flex-1 text-xs font-medium">{i + 1}. {documented?.label || `Setting ${i + 1}`}</span>
-                <div className="w-24 shrink-0"><ScrubNumber label={i + 1} value={it.settings[i]} int min={0} max={65535} onLive={liveIndex(i)} onCommit={setIndex(i)} /></div>
+                {!guidance.options.length && value}
               </div>
+              {guidance.options.length > 0 && <div className="mt-1">{value}</div>}
               {documented?.description && <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{documented.description}</p>}
               {guidance.values && <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground"><span className="text-foreground">Values:</span> {guidance.values}</p>}
               <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground"><span className="text-foreground">Limits:</span> {guidance.limits}</p>
@@ -611,6 +654,25 @@ function GroupEditor({ info }: { info: any }) {
   );
 }
 
+function RouteSettings({ route: r }: { route: any }) {
+  const d = editor.doc;
+  return <>
+    <FieldRow label="Smooth curves" help="Interpolate smoothly between points; otherwise objects move in straight lines.">
+      <Switch checked={!!r.smooth} onCheckedChange={(v) => d.change("Edit route", () => { r.smooth = v ? 1 : 0; })} />
+    </FieldRow>
+    <FieldRow label="Motion" help="Cyclic loops back to the first point; back and forth goes to the end and returns.">
+      <Select value={String(r.loop)} onValueChange={(v) => d.change("Edit route", () => { r.loop = Number(v); })}>
+        <SelectTrigger><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="0">Cyclic (loop)</SelectItem>
+          <SelectItem value="1">Back and forth</SelectItem>
+          {r.loop > 1 && <SelectItem value={String(r.loop)}>{String(r.loop)}</SelectItem>}
+        </SelectContent>
+      </Select>
+    </FieldRow>
+  </>;
+}
+
 function RouteEditor({ info }: { info: any }) {
   const ed = editor, d = ed.doc, r = info.item;
   const users = [
@@ -621,19 +683,7 @@ function RouteEditor({ info }: { info: any }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="text-[13px]"><span className="text-muted-foreground">Points:</span> {r.points.length}</div>
-      <FieldRow label="Smooth curves" help="Interpolate smoothly between points; otherwise objects move in straight lines.">
-        <Switch checked={!!r.smooth} onCheckedChange={(v) => d.change("Edit route", () => { r.smooth = v ? 1 : 0; })} />
-      </FieldRow>
-      <FieldRow label="Motion" help="Cyclic loops back to the first point; back and forth goes to the end and returns.">
-        <Select value={String(r.loop)} onValueChange={(v) => d.change("Edit route", () => { r.loop = Number(v); })}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="0">Cyclic (loop)</SelectItem>
-            <SelectItem value="1">Back and forth</SelectItem>
-            {r.loop > 1 && <SelectItem value={String(r.loop)}>{String(r.loop)}</SelectItem>}
-          </SelectContent>
-        </Select>
-      </FieldRow>
+      <RouteSettings route={r} />
       <FieldRow label="Used by">
         <div className="text-[13px] text-muted-foreground">{users.length ? users.join(", ") : "Nothing uses this route yet."}</div>
       </FieldRow>

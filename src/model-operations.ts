@@ -1,9 +1,9 @@
 // BRRES geometry operations through ABMatt, invoked as a separate program.
 // The Windows build includes its CLI distribution under the upstream GPL license.
-import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Euler, Matrix4, Quaternion, Vector3 } from "three";
 import { attachCHR0, type ImportedAnimation } from "./chr0-import.ts";
 import { attachMaterialAnimations, type MaterialAnimation } from "./material-animations.ts";
@@ -20,7 +20,8 @@ const abmattPath = () => {
 
 const MODEL_EXTENSIONS = new Set([".obj", ".fbx", ".gltf", ".glb", ".dae", ".stl", ".ply", ".blend"]);
 
-async function blenderPath() {
+// Every Blender found, preferred first: MKWII_BLENDER, PATH, then installed versions newest first.
+async function blenderPaths() {
   const candidates = [process.env.MKWII_BLENDER, Bun.which("blender")].filter(Boolean) as string[];
   if (process.platform === "win32") {
     for (const root of [process.env.ProgramW6432, process.env.ProgramFiles, process.env["ProgramFiles(x86)"]].filter(Boolean) as string[]) {
@@ -30,7 +31,34 @@ async function blenderPath() {
       for (const version of versions) candidates.push(join(folder, version, "blender.exe"));
     }
   }
-  return candidates.find(existsSync) || null;
+  const seen = new Set<string>();
+  return candidates.filter((path) => {
+    const key = resolve(path).toLowerCase();
+    if (seen.has(key) || !existsSync(path)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function blenderPath() {
+  return (await blenderPaths())[0] || null;
+}
+
+// Runs BLENDER_IMPORT_SCRIPT. A model that needs COLLADA (removed in Blender 5) is retried
+// with the next installed Blender. Lines starting with MKWII_WARNING are returned as warnings.
+async function runBlenderScript(dir: string, args: string[]) {
+  const script = join(dir, "convert.py");
+  await writeFile(script, BLENDER_IMPORT_SCRIPT);
+  for (const blender of await blenderPaths()) {
+    const child = Bun.spawn([blender, "--background", "--factory-startup", "--python", script, "--", ...args], {
+      cwd: dir, stdout: "pipe", stderr: "pipe", windowsHide: true,
+    });
+    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    if (stdout.includes("MKWII_NEEDS_COLLADA")) continue;
+    const warnings = [...stdout.matchAll(/^MKWII_WARNING (.+)$/gm)].map((match) => match[1].trim());
+    return { code, log: (stdout + "\n" + stderr).trim(), warnings };
+  }
+  throw new Error("This model needs COLLADA support (DAE files, rigged or animated models, standalone BRRES conversion), which Blender 5 removed. Install Blender 4.5 LTS next to your current Blender (the editor finds it automatically) or set MKWII_BLENDER to its blender.exe.");
 }
 
 const BLENDER_IMPORT_SCRIPT = `import bpy, json, math, os, sys, traceback
@@ -44,6 +72,15 @@ if import_all:
     choice = ''
 extension = os.path.splitext(source)[1].lower()
 TRANSFORM_PATHS = ('location', 'rotation_euler', 'rotation_quaternion', 'scale')
+
+# Blender 5 removed COLLADA. DAE files, rigged or animated models and standalone conversion
+# need it: the editor then retries with an older Blender installation.
+def need_collada():
+    try:
+        bpy.ops.wm.collada_export.get_rna_type()
+    except Exception:
+        print('MKWII_NEEDS_COLLADA')
+        sys.exit(3)
 
 # Blender 4.4+ "slotted" actions: one action (one glTF animation) holds a slot per object,
 # so the curves and the assignment must use the object's own slot.
@@ -193,6 +230,7 @@ try:
     elif extension in ('.gltf', '.glb'):
         bpy.ops.import_scene.gltf(filepath=source)
     elif extension == '.dae':
+        need_collada()
         bpy.ops.wm.collada_import(filepath=source)
     elif extension == '.blend':
         bpy.ops.wm.open_mainfile(filepath=source)
@@ -345,30 +383,48 @@ try:
             obj.data.name = unique_prefix + '_Geom' + str(index)
     # OBJ's exporter only reads simple base-color texture links. Flatten imported
     # glTF/FBX material graphs to that form and write packed images beside the OBJ.
+    def colour_image(image):
+        return image is not None and getattr(image.colorspace_settings, 'name', '') != 'Non-Color'
+    def linked_images(socket, visited):
+        for link in socket.links:
+            node = link.from_node
+            if node in visited:
+                continue
+            visited.add(node)
+            if node.type == 'TEX_IMAGE' and node.image:
+                yield node.image
+            for node_input in node.inputs:
+                yield from linked_images(node_input, visited)
     for index, material in enumerate(bpy.data.materials):
-        if not material.use_nodes:
+        if not material.use_nodes or material.node_tree is None:
             continue
         nodes = material.node_tree.nodes
+        # Principled base colour first; then whatever feeds the output (unlit glTF, Emission,
+        # Diffuse BSDF, node groups); then any colour image node of the material.
         bsdf = next((node for node in nodes if node.type == 'BSDF_PRINCIPLED'), None)
-        visited = set()
-        def linked_image(socket):
-            for link in socket.links:
-                node = link.from_node
-                if node in visited:
-                    continue
-                visited.add(node)
-                if node.type == 'TEX_IMAGE' and node.image:
-                    return node.image
-                for node_input in node.inputs:
-                    found = linked_image(node_input)
-                    if found:
-                        return found
-            return None
-        image = linked_image(bsdf.inputs['Base Color']) if bsdf else None
+        output = next((node for node in nodes if node.type == 'OUTPUT_MATERIAL' and node.is_active_output), None) \\
+            or next((node for node in nodes if node.type == 'OUTPUT_MATERIAL'), None)
+        candidates = []
+        if bsdf:
+            candidates += list(linked_images(bsdf.inputs['Base Color'], set()))
+        if output:
+            candidates += [image for image in linked_images(output.inputs['Surface'], set()) if colour_image(image)]
+        candidates += [node.image for node in nodes if node.type == 'TEX_IMAGE' and colour_image(node.image)]
+        image_path = os.path.join(os.path.dirname(target), 'texture_%d.png' % index)
+        image = None
+        for candidate in dict.fromkeys(candidates):
+            # Textures the model file points to but that are missing on this computer have no
+            # pixels: skip them so the model still imports (untextured) instead of failing.
+            try:
+                candidate.save_render(image_path, scene=bpy.context.scene)
+            except Exception as error:
+                print('MKWII_WARNING Texture %s of material %s could not be read: %s' % (candidate.name, material.name, error))
+                continue
+            if os.path.exists(image_path):
+                image = candidate
+                break
         if not image:
             continue
-        image_path = os.path.join(os.path.dirname(target), 'texture_%d.png' % index)
-        image.save_render(image_path, scene=bpy.context.scene)
         image = bpy.data.images.load(image_path, check_existing=False)
         nodes.clear()
         output = nodes.new('ShaderNodeOutputMaterial')
@@ -554,6 +610,7 @@ try:
         for obj in meshes:
             obj.select_set(True)
         bpy.context.view_layer.objects.active = rigs[0]
+        need_collada()
         bpy.ops.wm.collada_export(filepath=target + '.dae', selected=True, include_animations=False, apply_modifiers=False, triangulate=True)
     if shape_hosts:
         shape_actions = [action for _, _, action in shape_hosts]
@@ -615,6 +672,7 @@ try:
                 if obj.type in ('ARMATURE', 'MESH'):
                     obj.select_set(True)
                     bpy.context.view_layer.objects.active = obj
+            need_collada()
             bpy.ops.wm.collada_export(filepath=target + '.dae', selected=True, include_animations=False, apply_modifiers=False, triangulate=True)
     if hasattr(bpy.ops.wm, 'obj_export'):
         bpy.ops.wm.obj_export(filepath=target, export_materials=True, export_normals=False, export_triangulated_mesh=True, path_mode='COPY', forward_axis='NEGATIVE_Z', up_axis='Y')
@@ -626,6 +684,7 @@ try:
         for obj in rigged:
             obj.select_set(True)
         bpy.context.view_layer.objects.active = next((obj for obj in rigged if obj.type == 'ARMATURE'), rigged[0])
+        need_collada()
         bpy.ops.wm.collada_export(filepath=target + '.dae', selected=True, include_animations=False, apply_modifiers=False, triangulate=True)
 except SystemExit:
     raise
@@ -638,17 +697,12 @@ except Exception:
 export async function listModelAnimations(modelPath: string): Promise<{ name: string; frames: number; objects: number }[]> {
   const extension = extname(modelPath).toLowerCase();
   if (![".fbx", ".gltf", ".glb", ".dae", ".blend"].includes(extension)) return [];
-  const blender = await blenderPath();
-  if (!blender) return [];
+  if (!(await blenderPath())) return [];
   const dir = await mkdtemp(join(tmpdir(), "mkwii-model-anims-"));
   try {
-    const script = join(dir, "convert.py"), out = join(dir, "animations.json");
-    await writeFile(script, BLENDER_IMPORT_SCRIPT);
-    const child = Bun.spawn([blender, "--background", "--factory-startup", "--python", script, "--", resolve(modelPath), out, "[0,0,0]", "__LIST__"], {
-      cwd: dir, stdout: "pipe", stderr: "pipe", windowsHide: true,
-    });
-    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
-    if (code !== 0 || !existsSync(out)) throw new Error(`Blender could not read the model: ${(stdout + "\n" + stderr).trim().slice(-600)}`);
+    const out = join(dir, "animations.json");
+    const { code, log } = await runBlenderScript(dir, [resolve(modelPath), out, "[0,0,0]", "__LIST__"]);
+    if (code !== 0 || !existsSync(out)) throw new Error(`Blender could not read the model: ${log.slice(-600)}`);
     return JSON.parse(await readFile(out, "utf8"));
   } finally {
     const base = resolve(tmpdir()) + sep;
@@ -658,14 +712,14 @@ export async function listModelAnimations(modelPath: string): Promise<{ name: st
 }
 
 // animation: "" = the file's default animation, "-" = import without animation, otherwise the animation to use.
-export async function import3DModel(data: Uint8Array, modelPath: string, target: number[], animation = "") {
+// Problems that do not stop the import (a texture that cannot be found) are added to `warnings`.
+export async function import3DModel(data: Uint8Array, modelPath: string, target: number[], animation = "", warnings: string[] = []) {
   const extension = extname(modelPath).toLowerCase();
   if (!MODEL_EXTENSIONS.has(extension)) throw new Error(`Unsupported model format: ${extension || "(none)"}`);
-  if (extension === ".obj") return importOBJModel(data, modelPath, target);
+  if (extension === ".obj") return importOBJModel(data, modelPath, target, warnings);
   if (target.length !== 3 || !target.every(Number.isFinite)) throw new Error("Invalid model position");
   if (!abmattPath()) throw new Error("ABMatt is unavailable. Check the included tools or set MKWII_ABMATT.");
-  const blender = await blenderPath();
-  if (!blender) throw new Error("Blender is required to import BLEND, FBX, glTF, GLB, DAE, STL and PLY models. Install Blender or set MKWII_BLENDER.");
+  if (!(await blenderPath())) throw new Error("Blender is required to import BLEND, FBX, glTF, GLB, DAE, STL and PLY models. Install Blender or set MKWII_BLENDER.");
   const current = parseBRRES(data), currentModel = current.models.find((m: any) => m.name === "course") || current.models[0];
   let number = 1;
   while (currentModel?.objects.some((o: any) => o.name.startsWith(`Imported_${number}_`)) || currentModel?.bones.some((b: any) => b.name.startsWith(`Imported_${number}_`))) number++;
@@ -673,15 +727,11 @@ export async function import3DModel(data: Uint8Array, modelPath: string, target:
   const dir = await mkdtemp(join(tmpdir(), "mkwii-model-import-"));
   try {
     const obj = join(dir, `${basename(modelPath, extension).replace(/[^a-zA-Z0-9_-]/g, "_") || "imported"}.obj`);
-    const script = join(dir, "convert.py");
-    await writeFile(script, BLENDER_IMPORT_SCRIPT);
-    const child = Bun.spawn([blender, "--background", "--factory-startup", "--python", script, "--", resolve(modelPath), obj, JSON.stringify(target), uniquePrefix, animation], {
-      cwd: dir, stdout: "pipe", stderr: "pipe", windowsHide: true,
-    });
-    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
-    if (code !== 0 || !existsSync(obj)) throw new Error(`Blender could not convert the model: ${(stdout + "\n" + stderr).trim().slice(-800)}`);
+    const blender = await runBlenderScript(dir, [resolve(modelPath), obj, JSON.stringify(target), uniquePrefix, animation]);
+    if (blender.code !== 0 || !existsSync(obj)) throw new Error(`Blender could not convert the model: ${blender.log.slice(-800)}`);
+    warnings.push(...blender.warnings);
     const hasBones = existsSync(obj + ".anim.json"), hasShapes = existsSync(obj + ".shape.json");
-    let result = hasBones || hasShapes ? await importAnimatedModel(data, obj, target, dir) : await importOBJModel(data, obj, target);
+    let result = hasBones || hasShapes ? await importAnimatedModel(data, obj, target, dir) : await importOBJModel(data, obj, target, warnings);
     if (existsSync(obj + ".material.json")) {
       const materialAnimation = JSON.parse(await readFile(obj + ".material.json", "utf8")) as MaterialAnimation;
       result = await attachMaterialAnimations(result, materialAnimation, dir);
@@ -706,16 +756,11 @@ export async function convert3DToBRRES(modelPath: string, animation = "", name =
   try {
     let geometry = "";
     let skeletal: ImportedAnimation | null = null;
-    const blender = await blenderPath();
-    if (!blender) throw new Error("Blender is required to convert a standalone BRRES");
+    if (!(await blenderPath())) throw new Error("Blender is required to convert a standalone BRRES");
     // ABMatt names the model after the DAE file, up to its first dot.
-    const script = join(dir, "convert.py"), obj = join(dir, `${name}.obj`);
-    await writeFile(script, BLENDER_IMPORT_SCRIPT);
-    const child = Bun.spawn([blender, "--background", "--factory-startup", "--python", script, "--", resolve(modelPath), obj, "[0,0,0]", "Converted", animation], {
-      cwd: dir, stdout: "pipe", stderr: "pipe", windowsHide: true,
-    });
-    const [blenderCode, blenderOut, blenderErr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
-    if (blenderCode || !existsSync(obj)) throw new Error(`Blender could not convert the model: ${(blenderOut + "\n" + blenderErr).trim().slice(-800)}`);
+    const obj = join(dir, `${name}.obj`);
+    const blender = await runBlenderScript(dir, [resolve(modelPath), obj, "[0,0,0]", "Converted", animation]);
+    if (blender.code || !existsSync(obj)) throw new Error(`Blender could not convert the model: ${blender.log.slice(-800)}`);
     if (existsSync(obj + ".shape.json")) throw new Error("Standalone BRRES conversion does not yet support shape-key animation");
     skeletal = existsSync(obj + ".anim.json") ? JSON.parse(await readFile(obj + ".anim.json", "utf8")) as ImportedAnimation : null;
     geometry = obj + ".dae";
@@ -1306,7 +1351,50 @@ export async function exportBRRESModel(data: Uint8Array, destination: string) {
   }
 }
 
-export async function importOBJModel(data: Uint8Array, objPath: string, target: number[]) {
+// "-s 1 1 1 -bm 0.5 grass.png" → "grass.png": the file name after the options of an MTL map statement.
+export function mtlImageName(args: string) {
+  const tokens = args.trim().split(/\s+/);
+  let i = 0;
+  while (i < tokens.length - 1 && /^-[a-z]/i.test(tokens[i])) {
+    const option = tokens[i++].toLowerCase();
+    const values = ["-o", "-s", "-t"].includes(option) ? 3 : option === "-mm" ? 2 : 1;
+    // The first value is always taken; the optional ones only when they are numbers.
+    for (let n = 0; n < values && i < tokens.length - 1 && (n === 0 || /^[-+]?(\d|\.\d)/.test(tokens[i])); n++) i++;
+  }
+  return tokens.slice(i).join(" ");
+}
+
+// Finds the files an OBJ refers to. Exporters often write absolute paths of the author's computer
+// or paths outside the model's folder, so these are looked up by name in the folder and its
+// subfolders (two levels). Nothing outside the model's folder is read.
+export function resourceFinder(root: string) {
+  let byName: Map<string, string> | null = null;
+  const index = async () => {
+    const found = new Map<string, string>();
+    let queue = [root], budget = 5000;
+    for (let depth = 0; depth <= 2 && queue.length; depth++) {
+      const next: string[] = [];
+      for (const folder of queue) for (const entry of await readdir(folder, { withFileTypes: true }).catch(() => [])) {
+        if (--budget < 0) return found;
+        const path = join(folder, entry.name);
+        if (entry.isFile() && !found.has(entry.name.toLowerCase())) found.set(entry.name.toLowerCase(), path);
+        else if (entry.isDirectory()) next.push(path);
+      }
+      queue = next;
+    }
+    return found;
+  };
+  return async (reference: string) => {
+    const name = reference.trim().replace(/^"(.*)"$/, "$1");
+    if (!name) return null;
+    const direct = resolve(root, name), inside = relative(root, direct);
+    if (inside && !inside.startsWith("..") && !isAbsolute(inside) && (await stat(direct).catch(() => null))?.isFile()) return direct;
+    byName ??= await index();
+    return byName.get(name.split(/[\\/]/).pop()!.toLowerCase()) || null;
+  };
+}
+
+export async function importOBJModel(data: Uint8Array, objPath: string, target: number[], warnings: string[] = []) {
   const exe = abmattPath();
   if (!exe) throw new Error("ABMatt is unavailable. Check the included tools or set MKWII_ABMATT.");
   if (!objPath || extname(objPath).toLowerCase() !== ".obj" || target.length !== 3 || !target.every(Number.isFinite)) throw new Error("Invalid OBJ import parameters");
@@ -1332,44 +1420,56 @@ export async function importOBJModel(data: Uint8Array, objPath: string, target: 
   while (oldNames.has(unique)) unique = `${stem}_${suffix++}`;
   const dir = await mkdtemp(join(tmpdir(), "mkwii-obj-import-"));
   try {
-    const sourceDir = dirname(resolve(objPath));
-    const safeSource = (reference: string) => {
-      const found = resolve(sourceDir, reference.trim());
-      if (!found.startsWith(sourceDir + sep)) throw new Error(`Unsafe OBJ resource path: ${reference}`);
-      return found;
-    };
-    const mtlNames: string[] = [];
+    const findResource = resourceFinder(dirname(resolve(objPath)));
+    const materialFiles: string[] = [];
     for (const line of lines) if (/^mtllib\s+/i.test(line)) {
-      const name = line.trim().slice(7).trim();
-      if (name) mtlNames.push(name);
+      const rest = line.trim().slice(6).trim();
+      // One file name that contains spaces, or several file names.
+      const whole = rest && await findResource(rest);
+      for (const name of whole ? [rest] : rest.split(/\s+/).filter(Boolean)) {
+        const found = whole || await findResource(name);
+        if (!found) warnings.push(`Material file ${name} was not found in the model's folder: its materials are imported without textures`);
+        else if (!materialFiles.includes(found)) materialFiles.push(found);
+      }
     }
-    const materialLines: string[] = [];
-    for (const [index, name] of mtlNames.entries()) {
-      const materialPath = safeSource(name);
-      if (!existsSync(materialPath)) throw new Error(`Missing OBJ material file: ${name}`);
-      let material = await readFile(materialPath, "utf8");
-      material = material.replace(/^(map_Kd|map_Ka|map_d|bump|map_Bump)\s+(.+)$/gim, (_line, command, imageName) => {
-        const imagePath = safeSource(imageName);
-        if (!existsSync(imagePath)) throw new Error(`Missing material image: ${imageName}`);
-        const copyName = `${index}_${basename(imagePath)}`;
-        materialLines.push(`${imagePath}\t${copyName}`);
-        return `${command} ${copyName}`;
-      });
-      await writeFile(join(dir, `material_${index}.mtl`), material);
-    }
-    for (const line of materialLines) {
-      const [sourcePath, copyName] = line.split("\t");
-      await copyFile(sourcePath, join(dir, copyName));
+    // Only the diffuse image (and its alpha) is used: other maps (bump, specular…) have no Wii equivalent here.
+    const defined = new Set<string>(), copies = new Map<string, string>(), copyNames = new Set<string>();
+    for (const [index, materialPath] of materialFiles.entries()) {
+      const material: string[] = [];
+      for (const line of (await readFile(materialPath, "utf8")).split(/\r?\n/)) {
+        const newmtl = line.match(/^\s*newmtl\s+(.+?)\s*$/i);
+        if (newmtl) defined.add(newmtl[1]);
+        const map = line.match(/^\s*(map_\w+|bump|disp|decal|refl|norm)\s+(.+?)\s*$/i);
+        if (!map) { material.push(line); continue; }
+        const command = map[1].toLowerCase();
+        if (command !== "map_kd" && command !== "map_d") continue;
+        const imageName = mtlImageName(map[2]);
+        const imagePath = await findResource(imageName);
+        if (!imagePath) {
+          if (command === "map_kd") warnings.push(`Texture ${imageName} was not found in the model's folder`);
+          continue;
+        }
+        let copy = copies.get(imagePath);
+        if (!copy) {
+          copy = uniqueName(basename(imagePath).replace(/[^A-Za-z0-9_.-]/g, "_"), copyNames);
+          copies.set(imagePath, copy);
+          await copyFile(imagePath, join(dir, copy));
+        }
+        material.push(`${command === "map_kd" ? "map_Kd" : "map_d"} ${copy}`);
+      }
+      await writeFile(join(dir, `material_${index}.mtl`), material.join("\n"));
     }
     const hasMaterial = lines.some((line) => /^usemtl\s+/i.test(line));
-    if (!mtlNames.length || !hasMaterial) {
-      const names = new Set(["imported"]);
-      if (!mtlNames.length) for (const line of lines) if (/^usemtl\s+/i.test(line)) names.add(line.trim().slice(7).trim());
-      await writeFile(join(dir, "material_fallback.mtl"), [...names].map((name) => `newmtl ${name}\nKd 1 1 1\n`).join(""));
+    // Materials the OBJ uses but no material file defines become plain white.
+    const fallback = new Set(hasMaterial ? [] : ["imported"]);
+    for (const line of lines) if (/^usemtl\s+/i.test(line)) {
+      const name = line.trim().slice(6).trim();
+      if (name && !defined.has(name)) fallback.add(name);
     }
+    if (fallback.size) await writeFile(join(dir, "material_fallback.mtl"), [...fallback].map((name) => `newmtl ${name}\nKd 1 1 1\n`).join(""));
     let vertexIndex = 0;
-    const importedMtls = mtlNames.map((_, i) => `material_${i}.mtl`);
-    if (!mtlNames.length || !hasMaterial) importedMtls.push("material_fallback.mtl");
+    const importedMtls = materialFiles.map((_, i) => `material_${i}.mtl`);
+    if (fallback.size) importedMtls.push("material_fallback.mtl");
     const output = [`mtllib ${importedMtls.join(" ")}`, `o ${unique}`];
     if (!hasMaterial) output.push("usemtl imported");
     for (const line of lines) {

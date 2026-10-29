@@ -3,7 +3,7 @@
 // Nested archives open in another window and are written back into this one.
 
 import * as React from "react";
-import { Archive, AudioLines, Box, BrickWall, Download, File, FilePlus2, Film, FolderOpen, Gauge, Image as ImageIcon, Languages, LayoutTemplate, Music, Replace, Route, Save, SlidersHorizontal, Sparkles, Trash2, Type, X, type LucideIcon } from "lucide-react";
+import { Archive, AudioLines, Box, BrickWall, Download, File, FilePlus2, Film, FolderOpen, Image as ImageIcon, Languages, Lightbulb, LayoutTemplate, Music, Replace, Route, Save, SlidersHorizontal, Sparkles, Trash2, Type, X, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -12,11 +12,11 @@ import { buildU8, isU8, listFiles, parseU8, setFilePath } from "../../../js/form
 import { isYaz0, yaz0Compress, yaz0Decompress } from "../../../js/formats/yaz0.js";
 import { isBRRES } from "../../../js/formats/brres.js";
 import { editor } from "../editor";
-import { isParamFile } from "./ParamsDialog";
+import { isLightingFile, isParamFile, paramFileLabel } from "./ParamsDialog";
 import { dialogs } from "../dialogs-store";
 import type { MenuResourceFormat } from "./MenuResourceDialog";
 
-type Kind = { label: string; icon: LucideIcon; tool?: "model" | "text" | "track" | "archive" | "effect" | "params" | "menu"; format?: MenuResourceFormat };
+type Kind = { label: string; icon: LucideIcon; tool?: "model" | "text" | "track" | "archive" | "effect" | "params" | "lighting" | "menu"; format?: MenuResourceFormat };
 
 const magic = (data: Uint8Array) => String.fromCharCode(...data.subarray(0, 8));
 function kindOf(path: string, data: Uint8Array): Kind {
@@ -36,9 +36,8 @@ function kindOf(path: string, data: Uint8Array): Kind {
   if (m.startsWith("RFNA")) return { label: "Font", icon: Type };
   if (data[0] === 0x00 && data[1] === 0x20 && data[2] === 0xaf && data[3] === 0x30) return { label: "Texture (TPL)", icon: ImageIcon, tool: "menu", format: "tpl" };
   if (/[.](tpl|tex0|png)$/i.test(path)) return { label: "Texture", icon: ImageIcon };
-  if (/[.]bsp$/i.test(path)) return { label: "Vehicle physics (BSP)", icon: Gauge };
-  if (isParamFile(path, data)) return { label: /kartParam/i.test(path) ? "Vehicle stats" : /driverParam/i.test(path) ? "Character stats" : "Item chances", icon: SlidersHorizontal, tool: "params" };
-  if (/[.]bin$/i.test(path)) return { label: "Game parameters (BIN)", icon: SlidersHorizontal };
+  if (isParamFile(path, data)) return { label: paramFileLabel(path, data), icon: SlidersHorizontal, tool: "params" };
+  if (isLightingFile(path, data)) return { label: /\.blmap$/i.test(path) ? "Light maps" : "Lights", icon: Lightbulb, tool: "lighting" };
   return { label: (path.match(/\.([^./]+)$/)?.[1] || "file").toUpperCase(), icon: File };
 }
 
@@ -47,7 +46,7 @@ const cloneTree = (node: any): any => ({ ...node, children: node.children?.map(c
 
 export function ArchiveDialog({ path, name, tree: initialTree, compressed = true, onCommit, initialTool, close }: {
   path: string | null; name: string; tree: any; compressed?: boolean;
-  // Opens the first file of that tool right away (Tools › Game parameters).
+  // Opens the first file of that tool right away (Tools › Game data).
   initialTool?: "params";
   // Nested archive: the bytes go back into the parent instead of a file.
   onCommit?: (bytes: Uint8Array) => void;
@@ -109,8 +108,8 @@ export function ArchiveDialog({ path, name, tree: initialTree, compressed = true
     } else if (kind.tool === "track") {
       close(null);
       await editor.loadFile({ path: null, name: fileName, data: file.node.data });
-    } else if (kind.tool === "params") {
-      await dialogs.open("params", { tree, archiveName: name, initialPath: file.path, onSave: () => save(),
+    } else if (kind.tool === "params" || kind.tool === "lighting") {
+      await dialogs.open("params", { tree, archiveName: name, initialPath: file.path, mode: kind.tool === "lighting" ? "lighting" : "data", onSave: () => save(),
         onChange: (filePath: string, data: Uint8Array) => { const target = listFiles(tree).find((f: any) => f.path === filePath); if (target) { target.node.data = data; changed(); } } });
     } else if (kind.tool === "effect") {
       await dialogs.open("effects", { tree, archiveName: name, initialPath: file.path, onSave: () => save(),
@@ -126,7 +125,7 @@ export function ArchiveDialog({ path, name, tree: initialTree, compressed = true
       await dialogs.open("menuResource", { tree, filePath: file.path, format: kind.format });
     }
   };
-  const toolLabel = (kind: Kind) => kind.tool === "model" ? "Characters and models" : kind.tool === "text" ? "Game text" : kind.tool === "track" ? "the track editor" : kind.tool === "effect" ? "the effects editor" : kind.tool === "params" ? "the parameters editor" : kind.tool === "menu" ? "the menu resource preview" : "a new window";
+  const toolLabel = (kind: Kind) => kind.tool === "model" ? "Characters and models" : kind.tool === "text" ? "Game text" : kind.tool === "track" ? "the track editor" : kind.tool === "effect" ? "the effects editor" : kind.tool === "params" ? "the game data editor" : kind.tool === "lighting" ? "the lighting editor" : kind.tool === "menu" ? "the menu resource preview" : "a new window";
   const toolAvailable = (kind: Kind) => kind.tool === "model" || kind.tool === "text" ? !!path && !onCommit && hasBackend : !!kind.tool;
 
   React.useEffect(() => {

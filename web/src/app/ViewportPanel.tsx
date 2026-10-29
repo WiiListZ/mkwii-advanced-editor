@@ -1,6 +1,7 @@
 import * as React from "react";
 import { ArrowRight, AudioLines, Box, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, Flame, FolderOpen, History, Languages, Mouse, PackagePlus, Pause, Play, Search, Settings, SlidersHorizontal, Sparkles, Video, X } from "lucide-react";
 import { WorkspaceCard } from "./panels/WorkspaceCard";
+import { CommonSzsCard, ObjectDocumentationCard } from "./panels/GameFilesCards";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -8,6 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { KIND_HELP } from "../../js/data/help.js";
 import { CAMERA_TYPES, trackKind, trackLabel } from "../../js/data/defs.js";
 import { Input } from "@/components/ui/input";
+import { Kbd } from "@/components/ui/kbd";
 import { useEditor } from "./hooks";
 import { editor, hasBackend, PATH_KINDS } from "./editor";
 import { contextActions } from "./context-actions";
@@ -100,7 +102,8 @@ export function viewHintText(ed: typeof editor) {
   else if (ed.geometrySelection?.type === "model") text = `${ed.geometrySelection.name} selected · drag an arrow to move · Ctrl+S to save`;
   else if (ed.doc.selection.size) {
     const kh = ed.doc.primary && (KIND_HELP as any)[ed.doc.primary.kind];
-    text = `${kh ? kh.title + " selected" : "Selected"} · drag the arrows to move · W / E / R = move / rotate / scale · G = ground · Del = delete`;
+    const move = ed.settings.hideMoveArrows ? "drag it to move" : ed.settings.dragToMove ? "drag it or the arrows to move" : "drag the arrows to move";
+    text = `${kh ? kh.title + " selected" : "Selected"} · ${move} · W / E / R = move / rotate / scale · G = ground · Del = delete`;
   } else if (!ed.isEmpty) text = "Click something to select it · right-drag to look around · wheel to zoom · Add places new elements";
   if (ed.hint) text = ed.hint;
   return text;
@@ -109,61 +112,92 @@ export function viewHintText(ed: typeof editor) {
 function Welcome() {
   const ed = useEditor("settings", "doc", "ui");
   const recent = ed.settings.recent || [];
+  // Tools for the rest of the game; the ones that need the game folder appear once it is chosen.
+  const library = !!ed.trackFiles?.files.length;
+  const gameTools = [
+    { icon: Languages, title: "Game text", text: "Menu and race messages, with a preview", cmd: "gameText", detail: "Edit menu and race messages with a preview of where they appear in the game" },
+    { icon: AudioLines, title: "Sounds and music", text: "Listen to and replace music and effects", cmd: "audio", detail: "Listen to the game's music and sound effects and replace them with your own" },
+    { icon: Box, title: "Characters and models", text: "Models, textures and animations", cmd: "assets", detail: "Edit game characters, object models, textures and animations" },
+    ...(ed.workspace() ? [{ icon: Flame, title: "Effects", text: "Smoke, fire, sparks of every archive", cmd: "workspaceEffects", detail: "Edit the particle effects (smoke, fire, sparks…) of every track and archive in the game folder" }] : []),
+    ...(ed.workspaceInfo?.common ? [{ icon: SlidersHorizontal, title: "Game data", text: "Stats, items, objects, cameras and physics (.bin, .bcp, .bsp)", cmd: "gameParams", detail: "The data files of Race/Common.szs, every value explained: vehicle and character stats, item chances, object types and reactions, CPU drivers, vehicle parts and cameras (.bin), the camera before the countdown (.bcp) and the physics of each vehicle (.bsp)" }] : []),
+    { icon: PackagePlus, title: "Riivolution mod", text: "Mod folder for Riivolution or Dolphin", cmd: "riivolution", detail: "Turn your edited files into a mod folder for Riivolution or Dolphin, or edit a Riivolution XML" },
+  ];
   return (
-    // m-auto (not items-center) keeps the top reachable when the content is taller than the view.
-    <div className="absolute inset-0 z-10 flex overflow-y-auto bg-background p-6">
-      <div className="m-auto flex w-full max-w-[680px] flex-col items-center gap-6">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <img src="icon.png" className="size-16 drop-shadow-[0_8px_24px_rgba(255,255,255,0.12)]" alt="" />
-          <h1 className="m-0 text-2xl font-semibold tracking-tight">MKWii Advanced Editor</h1>
-          <p className="m-0 max-w-md text-[13px] text-muted-foreground">Edit Mario Kart Wii tracks visually: objects, routes, checkpoints, cameras, areas and collision — with the game's real models.</p>
-        </div>
-        <div className="flex gap-2">
+    // With a track library the page fills the window and only the library list scrolls; without one
+    // the content is centred. m-auto (not items-center) keeps the top reachable on very small windows.
+    <div className="absolute inset-0 z-10 flex overflow-y-auto bg-background p-6 short:py-4">
+      <div className={`mx-auto flex w-full max-w-[1040px] flex-col gap-5 short:gap-3 ${library ? "h-full min-h-[520px]" : "my-auto"}`}>
+        <header className="flex items-center gap-3">
+          <img src="icon.png" className="size-14 shrink-0 select-none short:size-11" alt="" draggable={false} />
+          <div className="min-w-0 flex-1">
+            <h1 className="m-0 text-lg font-semibold tracking-tight">MKWii Advanced Editor</h1>
+            <p className="m-0 truncate text-xs text-muted-foreground">Edit Mario Kart Wii tracks visually, with the game's real models.</p>
+          </div>
           <Button variant="ghost" size="sm" aria-label="Settings" onClick={() => ed.cmd("settingsDialog")}><Settings /> Settings</Button>
           <Button variant="ghost" size="sm" onClick={() => ed.cmd("help")}><CircleHelp /> Help</Button>
-        </div>
-        <WorkspaceCard />
+        </header>
         {!ed.isEmpty && (
-          <div className="flex w-full flex-wrap items-center gap-2 border-y py-3">
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2.5">
             <div className="min-w-0 flex-1">
-              <div className="truncate text-xs font-medium">{ed.doc.fileName}</div>
-              <div className="text-[11px] text-muted-foreground">{ed.doc.dirty ? "Unsaved changes" : "Current track"}</div>
+              <div className="truncate text-[13px] font-medium">{ed.doc.fileName}</div>
+              <div className="text-[11px] text-muted-foreground">{ed.doc.dirty ? "Unsaved changes" : "Open in the editor"}</div>
             </div>
             <Button size="sm" onClick={() => ed.cmd("editor")}><ArrowRight /> Continue editing</Button>
             <Button size="icon" variant="ghost" title="Close track" aria-label="Close track" onClick={() => ed.cmd("closeTrack")}><X /></Button>
           </div>
         )}
-        {ed.trackFiles?.files.length ? <WelcomeTracks /> : null}
-        <div className="grid w-full gap-2">
-          <WelcomeAction icon={FolderOpen} title="Open a track" text="A .szs from Race/Course, or a single .kmp / .kcl" primary onClick={() => ed.cmd("open")} />
-          <WelcomeAction icon={Sparkles} title="Create a new track" text="Draw the layout from above — road, walls, routes and checkpoints are built for you" onClick={() => ed.cmd("newTrack")} />
-          <WelcomeAction icon={FilePlus2} title="Empty project" text="Start from scratch and import your own collision" onClick={() => ed.cmd("newEmpty")} />
-          <WelcomeAction icon={Languages} title="Edit game text" text="Edit menu and race messages with a preview of where they appear in the game" onClick={() => ed.cmd("gameText")} />
-          <WelcomeAction icon={AudioLines} title="Sounds and music" text="Listen to the game's music and sound effects and replace them with your own" onClick={() => ed.cmd("audio")} />
-          <WelcomeAction icon={Box} title="Characters and models" text="Edit game characters, object models, textures and animations" onClick={() => ed.cmd("assets")} />
-          {ed.workspace() && <WelcomeAction icon={Flame} title="Effects" text="Edit the particle effects (smoke, fire, sparks…) of every track and archive in the game folder" onClick={() => ed.cmd("workspaceEffects")} />}
-          {ed.workspaceInfo?.common && <WelcomeAction icon={SlidersHorizontal} title="Vehicle stats and item chances" text="Edit kartParam.bin, driverParam.bin and ItemSlot.bin from Race/Common.szs, with an explanation of every value" onClick={() => ed.cmd("gameParams")} />}
-          <WelcomeAction icon={PackagePlus} title="Riivolution mod" text="Turn your edited files into a mod folder for Riivolution or Dolphin, or edit a Riivolution XML" onClick={() => ed.cmd("riivolution")} />
+        <div className="grid min-h-0 flex-1 items-start gap-5 short:gap-3 lg:grid-cols-[minmax(0,1fr)_300px] lg:grid-rows-[minmax(0,1fr)] lg:items-stretch">
+          <div className="flex min-h-0 min-w-0 flex-col gap-5 short:gap-3">
+            <HomeSection title="Tracks">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <HomeTile icon={FolderOpen} title="Open a track" text=".szs, .kmp or .kcl file" shortcut="Ctrl+O" primary detail="A .szs from Race/Course, or a single .kmp / .kcl" onClick={() => ed.cmd("open")} />
+                <HomeTile icon={Sparkles} title="New track" text="Draw it from above; the rest is built" shortcut="Ctrl+N" detail="Draw the layout from above — road, walls, routes and checkpoints are built for you" onClick={() => ed.cmd("newTrack")} />
+                <HomeTile icon={FilePlus2} title="Empty project" text="Start from your own collision" detail="Start from scratch and import your own collision" onClick={() => ed.cmd("newEmpty")} />
+              </div>
+            </HomeSection>
+            <HomeSection title="Game files and mods">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {gameTools.map((tool) => <HomeTile key={tool.cmd} icon={tool.icon} title={tool.title} text={tool.text} detail={tool.detail} onClick={() => ed.cmd(tool.cmd)} />)}
+              </div>
+            </HomeSection>
+            {library ? <WelcomeTracks /> : null}
+          </div>
+          <aside className="flex min-h-0 min-w-0 flex-col gap-5 short:gap-3 lg:overflow-y-auto">
+            <WorkspaceCard brief />
+            <CommonSzsCard className="p-3" brief />
+            <ObjectDocumentationCard className="p-3" brief />
+            <HomeSection title="Recent files">
+              {recent.length ? (
+                <div className="flex flex-col gap-0.5 rounded-lg border bg-card p-1">
+                  {recent.map((p) => (
+                    <button key={p} onClick={() => ed.openPath(p)} title={p} className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent">
+                      <History className="size-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[12.5px] font-medium">{p.split(/[\\/]/).pop()}</span>
+                        <span className="block truncate text-[10.5px] text-muted-foreground [direction:rtl] text-left">{p.split(/[\\/]/).slice(0, -1).join("\\")}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : <p className="m-0 text-xs text-muted-foreground">Files you open appear here.</p>}
+            </HomeSection>
+            {!hasBackend && (
+              <CardDescription>Running in a plain browser: files are opened from disk and saved as downloads. Start the desktop app for direct saving.</CardDescription>
+            )}
+            <p className="m-0 text-xs text-muted-foreground">Tip: you can also drop a file onto this window.</p>
+          </aside>
         </div>
-        {recent.length > 0 && (
-          <Card className="w-full">
-            <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><History className="size-3.5" /> Recent files</CardTitle></CardHeader>
-            <CardContent className="flex flex-col gap-0.5 px-2 pb-2">
-              {recent.map((p) => (
-                <button key={p} onClick={() => ed.openPath(p)} className="flex cursor-pointer flex-col items-start rounded-md px-2 py-1.5 text-left hover:bg-accent">
-                  <span className="text-[13px] font-medium">{p.split(/[\\/]/).pop()}</span>
-                  <span className="w-full truncate text-[11px] text-muted-foreground">{p}</span>
-                </button>
-              ))}
-            </CardContent>
-          </Card>
-        )}
-        {!hasBackend && (
-          <CardDescription className="text-center">Running in a plain browser: files are opened from disk and saved as downloads. Start the desktop app for direct saving.</CardDescription>
-        )}
-        <p className="m-0 text-xs text-muted-foreground">Tip: you can also drop a file onto this window.</p>
       </div>
     </div>
+  );
+}
+
+function HomeSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="flex flex-col gap-2 short:gap-1.5">
+      <h2 className="m-0 text-xs font-medium text-muted-foreground">{title}</h2>
+      {children}
+    </section>
   );
 }
 
@@ -243,19 +277,19 @@ function WelcomeTracks() {
   const changeMode = (next: typeof mode) => { setMode(next); setPage(0); };
   const changeKind = (next: typeof kind) => { setKind(next); setPage(0); };
   return (
-    <Card className="w-full overflow-hidden">
-      <CardHeader className="border-b bg-muted/20 p-3">
+    <Card className="flex min-h-[200px] w-full flex-1 flex-col overflow-hidden">
+      <CardHeader className="border-b bg-muted/20 p-3 short:py-2">
         <CardTitle className="flex items-center gap-2 text-sm">
           <FolderOpen className="size-4 text-primary" /> Track library
           <span className="ml-auto rounded-full border bg-background px-2 py-0.5 text-[11px] font-normal tabular-nums text-muted-foreground">{t.files.length.toLocaleString()} {t.files.length === 1 ? "file" : "files"}</span>
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-2 p-3">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2.5 top-2 size-4 text-muted-foreground" />
-          <Input value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} onKeyDown={(e) => e.stopPropagation()} placeholder="Search by name or file number…" aria-label="Search tracks" className="h-8 pl-8 text-xs" />
-        </div>
+      <CardContent className="flex min-h-0 flex-1 flex-col gap-2 p-3">
         <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[200px] flex-1">
+            <Search className="pointer-events-none absolute left-2.5 top-2 size-4 text-muted-foreground" />
+            <Input value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} onKeyDown={(e) => e.stopPropagation()} placeholder="Search by name or file number…" aria-label="Search tracks" className="h-8 pl-8 text-xs" />
+          </div>
           <span className="text-[11px] text-muted-foreground">Version</span>
           <Select value={mode} onValueChange={(value) => changeMode(value as typeof mode)}>
             <SelectTrigger aria-label="Track version" className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>
@@ -276,7 +310,7 @@ function WelcomeTracks() {
           </Select>
           <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{files.length.toLocaleString()} shown</span>
         </div>
-        <div className="grid max-h-80 grid-cols-1 gap-1 overflow-y-auto sm:grid-cols-2">
+        <div className="grid min-h-0 flex-1 grid-cols-1 content-start gap-1 overflow-y-auto max-lg:max-h-80 sm:grid-cols-2">
           {shown.map((f) => {
             const label = trackLabel(f), number = f.replace(/\.(szs|wlz|wbz|wu8)$/i, "");
             return <button key={f} onClick={() => ed.openPath(`${t.folder}\\${f}`)} title={`${t.folder}\\${f}`}
@@ -301,15 +335,21 @@ function WelcomeTracks() {
   );
 }
 
-function WelcomeAction({ icon: Icon, title, text, primary, onClick }: { icon: any; title: string; text: string; primary?: boolean; onClick: () => void }) {
+// One square of the Home grid: icon and shortcut on top, a short title and one line under it
+// (the longer description is the tooltip). Short windows show one row: icon, title, shortcut.
+function HomeTile({ icon: Icon, title, text, detail, shortcut, primary, onClick }: { icon: any; title: string; text: string; detail?: string; shortcut?: string; primary?: boolean; onClick: () => void }) {
   return (
-    <Button variant={primary ? "default" : "secondary"} className="h-auto justify-start gap-4 px-4 py-3 text-left" onClick={onClick}>
-      <Icon className="!size-5" />
-      <span className="flex flex-col items-start gap-0.5">
-        <span className="text-[14px] font-semibold">{title}</span>
-        <span className={primary ? "text-xs font-normal opacity-80" : "text-xs font-normal text-muted-foreground"}>{text}</span>
+    <button onClick={onClick} title={detail}
+      className={`flex min-h-[92px] min-w-0 cursor-pointer flex-col justify-between gap-3 rounded-lg p-3 text-left shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring short:min-h-0 short:flex-row short:items-center short:justify-start short:gap-2.5 short:py-2.5 ${primary ? "bg-primary text-primary-foreground hover:bg-primary/90" : "bg-secondary text-secondary-foreground hover:bg-secondary/70"}`}>
+      <span className="flex items-center justify-between gap-2 short:contents">
+        <Icon className="size-5 shrink-0 short:size-4" />
+        {shortcut && <Kbd className={`short:order-last short:ml-auto ${primary ? "border-primary-foreground/20 bg-primary-foreground/10 text-primary-foreground/80" : ""}`}>{shortcut}</Kbd>}
       </span>
-    </Button>
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="truncate text-[13px] font-semibold">{title}</span>
+        <span className={`line-clamp-2 text-[11.5px] leading-snug short:hidden ${primary ? "text-primary-foreground/75" : "text-muted-foreground"}`}>{text}</span>
+      </span>
+    </button>
   );
 }
 

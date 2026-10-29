@@ -32,12 +32,12 @@ try {
   }, text);
   const closeAll = async () => { for (let i = 0; i < 4; i++) { await page.keyboard.press("Escape"); await sleep(200); } await page.evaluate(() => document.querySelectorAll('[role="dialog"] button[aria-label^="Close"]').forEach((b) => (b as HTMLElement).click())); await sleep(400); };
 
-  // Home: the editing actions, Effects and Vehicle stats among them.
-  await page.waitForFunction(() => document.body.textContent?.includes("Vehicle stats and item chances"), { timeout: 20000 });
+  // Home: the editing actions, Effects and Game data among them.
+  await page.waitForFunction(() => document.body.textContent?.includes("Game data"), { timeout: 20000 });
   await sleep(800);
   await page.evaluate(() => {
     const action = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Open a track"));
-    action?.scrollIntoView({ block: "start" });
+    (action?.closest("section") ?? action)?.scrollIntoView({ block: "start" });
     (document.activeElement as HTMLElement)?.blur();
   });
   await sleep(400);
@@ -50,9 +50,9 @@ try {
   await page.evaluate(() => { const box = document.querySelector('[role="dialog"] .overflow-y-auto'); if (box) box.scrollTop = 120; });
   await page.screenshot({ path: out("archive.png") });
 
-  // Game parameters: vehicle stats, then item chances.
+  // Game data: vehicle stats, then item chances.
   await page.evaluate(() => { const rows = [...document.querySelectorAll('[role="dialog"] div.border-b')].filter((r) => r.textContent?.includes("kartParam.bin")); (rows[0]?.querySelector("button") as HTMLElement)?.click(); });
-  await page.waitForFunction(() => document.body.textContent?.includes("Game parameters"));
+  await page.waitForFunction(() => document.body.textContent?.includes("Game data ·"));
   await sleep(600);
   await topDialogClick("Flame Runner");
   await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());

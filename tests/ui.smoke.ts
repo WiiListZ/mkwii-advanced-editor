@@ -38,7 +38,7 @@ await page.evaluateOnNewDocument(() => {
 await page.goto(`http://127.0.0.1:${port}/?t=smoke`, { waitUntil: "networkidle0" });
 await wait(800);
 await shot("1-welcome");
-await page.evaluate(() => ([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Edit game text")) as HTMLElement)?.click());
+await page.evaluate(() => ([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Game text")) as HTMLElement)?.click());
 await page.waitForSelector('[role="dialog"]');
 if (!(await page.evaluate(() => document.querySelector('[role="dialog"]')?.textContent?.includes("Game text"))))
   throw new Error("Game text editor did not open from Home without a track");
@@ -73,8 +73,8 @@ if (!nativeMenuBlocked) throw new Error("Native right-click menu is not blocked 
 // The dedicated Settings section updates the view and persists changes across a restart.
 await page.click('button[aria-label="Settings"]');
 await page.waitForSelector('[data-settings-panel]');
-if (await page.evaluate(() => (window as any).app.settings.hideCursorWhileLooking !== false))
-  throw new Error("Hide cursor must be disabled by default");
+if (await page.evaluate(() => (window as any).app.settings.hideCursorWhileLooking !== true))
+  throw new Error("Hide cursor must be enabled by default");
 await shot("1-settings");
 await page.click('#setting-flySpeed');
 await page.evaluate(() => ([...document.querySelectorAll('[role="option"]')].find((el) => el.textContent === "Fast") as HTMLElement)?.click());
@@ -85,11 +85,11 @@ await page.keyboard.type("12");
 await page.keyboard.press("Tab");
 await page.waitForFunction(() => {
   const app = (window as any).app;
-  return app.settings.flySpeed === 1.5 && app.viewport.flySpeed === 1.5 && app.settings.showLabels === false && app.settings.hideCursorWhileLooking === true && app.settings.textureBrushSize === 12;
+  return app.settings.flySpeed === 1.5 && app.viewport.flySpeed === 1.5 && app.settings.showLabels === false && app.settings.hideCursorWhileLooking === false && app.settings.textureBrushSize === 12;
 });
 for (let attempt = 0; attempt < 30; attempt++) {
   const saved = await Bun.file(joinPath(testDir, "settings.json")).json();
-  if (saved.flySpeed === 1.5 && saved.showLabels === false && saved.hideCursorWhileLooking === true && saved.textureBrushSize === 12) break;
+  if (saved.flySpeed === 1.5 && saved.showLabels === false && saved.hideCursorWhileLooking === false && saved.textureBrushSize === 12) break;
   if (attempt === 29) throw new Error("Settings changes did not persist");
   await wait(100);
 }
@@ -99,11 +99,11 @@ const restoredSettings = await page.evaluate(() => {
   const app = (window as any).app;
   return { speed: app.viewport.flySpeed, labels: app.settings.showLabels, hideCursor: app.settings.hideCursorWhileLooking, brush: app.settings.textureBrushSize };
 });
-if (restoredSettings.speed !== 1.5 || restoredSettings.labels !== false || restoredSettings.hideCursor !== true || restoredSettings.brush !== 12)
+if (restoredSettings.speed !== 1.5 || restoredSettings.labels !== false || restoredSettings.hideCursor !== false || restoredSettings.brush !== 12)
   throw new Error("Settings did not restore after restart: " + JSON.stringify(restoredSettings));
 await page.evaluate(() => {
   const app = (window as any).app;
-  app.setSettings({ flySpeed: 1, showLabels: true, hideCursorWhileLooking: false, textureBrushSize: 8 });
+  app.setSettings({ flySpeed: 1, showLabels: true, hideCursorWhileLooking: true, textureBrushSize: 8 });
   app.cmd("preferences");
 });
 await page.waitForSelector('[data-settings-panel]');
@@ -316,13 +316,14 @@ await page.keyboard.up("e");
 const flyUp = await page.evaluate(() => (window as any).app.viewport.camera.position.y);
 if (flyUp <= flyAfter[1] + 1) throw new Error("Free vertical camera movement did not work");
 const lookBefore = await page.evaluate(() => (window as any).app.viewport.controls.target.toArray());
+await page.evaluate(() => (window as any).app.setSetting("hideCursorWhileLooking", false));
 await page.mouse.move(800, 430);
 await page.mouse.down({ button: "right" });
 const cursorWhileLooking = await page.evaluate(() => (window as any).app.viewport.canvas.style.cursor);
 await page.mouse.move(890, 465, { steps: 3 });
 await page.mouse.up({ button: "right" });
 const cursorAfterLooking = await page.evaluate(() => (window as any).app.viewport.canvas.style.cursor);
-if (cursorWhileLooking !== "" || cursorAfterLooking !== "") throw new Error("Right-drag cursor should remain visible by default");
+if (cursorWhileLooking !== "" || cursorAfterLooking !== "") throw new Error("Right-drag cursor should remain visible with Hide cursor off");
 const lookAfter = await page.evaluate(() => (window as any).app.viewport.controls.target.toArray());
 if (Math.hypot(...lookAfter.map((v: number, i: number) => v - lookBefore[i])) < 1) throw new Error("Free right-drag look did not rotate the camera");
 await page.evaluate(() => (window as any).app.setSetting("hideCursorWhileLooking", true));

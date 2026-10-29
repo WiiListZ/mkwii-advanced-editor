@@ -20,7 +20,7 @@ import { parseKCL, buildKCL, patchKCLFlags } from "../../js/formats/kcl.js";
 import { parseOBJ, kclToOBJ, modelToOBJ } from "../../js/formats/obj.js";
 import { clearBRRESPolygon, isBRRES, parseBRRES, polygonPieces, resetPieceMemory, replaceBRRESTexture, setCHR0Loop, transformBRRESPart, translateBRRESPart } from "../../js/formats/brres.js";
 import { BrresModelBuilder, mainModel } from "../../js/editor/brresmodel.js";
-import { BUILTIN_OBJECTS, KCL_TYPES, OBJECT_DISPLAY, OBJECT_INFO, makeFlag, objectDisplayY, parseObjFlow, trackLabel } from "../../js/data/defs.js";
+import { BUILTIN_OBJECTS, KCL_TYPES, OBJECT_DISPLAY, OBJECT_INFO, makeFlag, objectDisplayY, parseObjFlow, trackKind, trackLabel } from "../../js/data/defs.js";
 import { objectDocumentation, parseObjectDocumentation } from "../../js/data/object-documentation.js";
 import { externalPath, parseRiivolution } from "../../js/formats/riivolution.js";
 import { findRiivolutionWorkspace, findWorkspaceRoot, resolveRiivolutionPath } from "../../js/editor/workspace.js";
@@ -29,8 +29,8 @@ import { isItemSlot, isStatsFile } from "../../js/formats/params.js";
 
 export const PATH_KINDS = ["ENPT", "ITPT", "CKPT", "POTI"];
 export const LAYER_LABEL: Record<string, string> = { VISUAL: "Track model", SKY: "Sky", KCL: "Collision", MODEL: "Reference model", GRID: "Grid", ...SECTION_LABEL };
-const PERSISTED = ["workspace", "riivolutionXml", "cameraPreview", "hideGrid", "confirmModelDrop", "partsFolder", "favoriteObjects", "favoriteModelSources", "favoriteModelParts", "iconSize", "checkpointWidth", "autoCheckpointWidth", "pathWidth", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "showDescriptions", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "textureBrushSize", "uiFont", "offerCopyUpdates", "keepBackups", "map2DAddSeveral", "introFollow", "introTimelineHeight"] as const;
-const VIEW_SETTINGS = new Set<keyof Settings>(["hideGrid", "iconSize", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking"]);
+const PERSISTED = ["workspace", "riivolutionXml", "cameraPreview", "hideGrid", "confirmModelDrop", "partsFolder", "favoriteObjects", "favoriteModelSources", "favoriteModelParts", "iconSize", "checkpointWidth", "autoCheckpointWidth", "pathWidth", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "showDescriptions", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "textureBrushSize", "uiFont", "offerCopyUpdates", "keepBackups", "map2DAddSeveral", "introFollow", "introTimelineHeight", "dragToMove", "hideMoveArrows"] as const;
+const VIEW_SETTINGS = new Set<keyof Settings>(["hideGrid", "iconSize", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "dragToMove", "hideMoveArrows"]);
 const textEncoder = new TextEncoder();
 const sameBytes = (a: Uint8Array, b: Uint8Array) => {
   if (a.length !== b.length) return false;
@@ -42,10 +42,11 @@ export type Channel = "doc" | "selection" | "live" | "hover" | "ui" | "settings"
 
 export interface Settings {
   iconSize: number; checkpointWidth: number; autoCheckpointWidth: boolean; pathWidth: number; recent: string[];
-  modelMode: "real" | "simple" | "markers"; displayMode: "auto" | "visual" | "collision" | "both";
+  modelMode: "real" | "simple" | "markers"; displayMode: "visual" | "collision" | "both";
   modelEditing: boolean; smartAlignment: boolean;
   animations: boolean; showLabels: boolean; selectionBox: boolean; showAreaVolumes: boolean; areaOutlinesThroughWalls: boolean; showEffects: boolean; showDescriptions: boolean; quality: "high" | "medium" | "low";
   flySpeed: number; lookSensitivity: number; hideCursorWhileLooking: boolean; textureBrushSize: number;
+  dragToMove: boolean; hideMoveArrows: boolean;
   workspace: string; riivolutionXml: string; partsFolder: string; favoriteObjects: number[]; favoriteModelSources: string[]; favoriteModelParts: string[];
   confirmModelDrop: boolean; hideGrid: boolean; cameraPreview: boolean; offerCopyUpdates: boolean; keepBackups: boolean; map2DAddSeveral: boolean;
   introFollow: boolean; // Cameras tab: the 3D view jumps to the intro camera at the playhead
@@ -57,8 +58,8 @@ export interface Settings {
 // Preferences that "Reset to defaults" restores. Recent files, favourites and folders are kept.
 export const DEFAULT_SETTINGS = {
   iconSize: 150, checkpointWidth: 3000, autoCheckpointWidth: true, pathWidth: 20,
-  modelMode: "real", displayMode: "auto", modelEditing: true, smartAlignment: false, animations: true, showLabels: true, selectionBox: false, showAreaVolumes: true, areaOutlinesThroughWalls: false, showEffects: true, showDescriptions: true, quality: "high",
-  flySpeed: 1, lookSensitivity: 1, hideCursorWhileLooking: false, textureBrushSize: 8, confirmModelDrop: true, hideGrid: false, cameraPreview: true, uiFont: "default", offerCopyUpdates: true, keepBackups: true, map2DAddSeveral: false, introFollow: true, introTimelineHeight: 118,
+  modelMode: "real", displayMode: "visual", modelEditing: true, smartAlignment: false, animations: true, showLabels: true, selectionBox: false, showAreaVolumes: true, areaOutlinesThroughWalls: false, showEffects: true, showDescriptions: true, quality: "high",
+  flySpeed: 1, lookSensitivity: 1, hideCursorWhileLooking: true, dragToMove: false, hideMoveArrows: false, textureBrushSize: 8, confirmModelDrop: true, hideGrid: false, cameraPreview: true, uiFont: "default", offerCopyUpdates: true, keepBackups: true, map2DAddSeveral: false, introFollow: true, introTimelineHeight: 118,
 } satisfies Partial<Settings>;
 
 export type CollisionShapeKind = keyof typeof COLLISION_SHAPES;
@@ -69,7 +70,7 @@ export interface PaintState { type: number; variant: number; shadow: number; bru
 const MODEL_FILE = /\.(obj|fbx|gltf|glb|dae|stl|ply|blend)$/i;
 
 // Game files that open on their own (not as a track) in the editor that changes them.
-export type LooseKind = "model" | "text" | "effect" | "params" | "music" | "sounds" | "riivolution";
+export type LooseKind = "model" | "text" | "effect" | "params" | "lighting" | "music" | "sounds" | "riivolution";
 export type LooseFile = { path: string | null; name: string; data: Uint8Array };
 export function looseKind(name: string, data: Uint8Array): LooseKind | null {
   const magic = String.fromCharCode(...data.subarray(0, 8));
@@ -79,7 +80,8 @@ export function looseKind(name: string, data: Uint8Array): LooseKind | null {
   if (magic.startsWith("RSTM")) return "music";
   if (magic.startsWith("RSAR")) return "sounds";
   if (/\.xml$/i.test(name) && /<wiidisc[\s>]/i.test(new TextDecoder().decode(data.subarray(0, 4096)))) return "riivolution";
-  if (isStatsFile(name, data) || isItemSlot(name, data)) return "params";
+  if (isStatsFile(name, data) || isItemSlot(name, data) || /\.(bin|bcp|bsp)$/i.test(name)) return "params";
+  if (/\.(blight|blmap)$/i.test(name) && /^(LGHT|LMAP)$/.test(magic.slice(0, 4))) return "lighting";
   return null;
 }
 
@@ -297,6 +299,16 @@ export class Editor {
     try {
       const s = await api.getSettings();
       for (const key of PERSISTED) if (s[key] !== undefined) (this.settings as any)[key] = s[key];
+      // Hidden Move arrows need dragging to move (see setSetting).
+      if (this.settings.hideMoveArrows) this.settings.dragToMove = true;
+      // "Auto" was removed: the model view, with the collision over it in the Collision tab (see setTab).
+      if (!["visual", "collision", "both"].includes(this.settings.displayMode)) this.settings.displayMode = "visual";
+      // "Hide cursor while looking" became on by default: switched on once for everyone,
+      // also those who had it off, then their own choice is kept.
+      if (!s.hideCursorDefaultOn) {
+        this.settings.hideCursorWhileLooking = true;
+        this.saveSettings({ hideCursorWhileLooking: true, hideCursorDefaultOn: true });
+      }
       this.settings.favoriteObjects = Array.isArray(s.favoriteObjects) ? s.favoriteObjects.filter((id: unknown) => Number.isInteger(id) && (id as number) >= 0) : [];
       this.settings.favoriteModelSources = Array.isArray(s.favoriteModelSources) ? s.favoriteModelSources.filter((key: unknown) => typeof key === "string") : [];
       this.settings.favoriteModelParts = Array.isArray(s.favoriteModelParts) ? s.favoriteModelParts.filter((key: unknown) => typeof key === "string") : [];
@@ -336,6 +348,10 @@ export class Editor {
   }
 
   setSetting<K extends keyof Settings>(key: K, value: Settings[K]) {
+    if (key === "displayMode") this.collisionTabView = false;
+    // Hidden Move arrows need dragging to move: hiding them turns dragging on, turning dragging off shows them again.
+    if (key === "hideMoveArrows" && value && !this.settings.dragToMove) { this.settings.dragToMove = true; this.saveSettings({ dragToMove: true }); }
+    if (key === "dragToMove" && !value && this.settings.hideMoveArrows) { this.settings.hideMoveArrows = false; this.saveSettings({ hideMoveArrows: false }); }
     this.settings[key] = value;
     this.saveSettings({ [key]: value });
     if (key === "uiFont") applyUiFont(this.settings.uiFont);
@@ -380,6 +396,8 @@ export class Editor {
     vp.displayMode = s.displayMode;
     vp.modelEditingEnabled = s.modelEditing;
     vp.smartAlignment = s.smartAlignment;
+    vp.dragToMove = s.dragToMove;
+    if (vp.hideMoveArrows !== s.hideMoveArrows) { vp.hideMoveArrows = s.hideMoveArrows; vp.updateGizmo(); }
     if (vp.layers.GRID === s.hideGrid) { vp.layers.GRID = !s.hideGrid; vp.grid.visible = !s.hideGrid; vp.needsRender = true; }
     if (!s.modelEditing && vp.geometrySelection?.type === "model") vp.selectGeometry(null);
     vp.animations = s.animations;
@@ -442,10 +460,21 @@ export class Editor {
   }
 
   // ---- UI state -------------------------------------------------------------------------
+  // The Collision tab shows the collision over the model: the view switches to Both there (the toolbar
+  // shows it) and back to Model when the tab is left, unless another view was chosen in between.
+  collisionTabView = false;
   setTab(tab: string) {
     this.tab = tab;
-    const vp = this.viewport;
-    if (vp && vp.collisionFocus !== (tab === "collision")) { vp.collisionFocus = tab === "collision"; vp.applyDisplayMode(); }
+    const s = this.settings;
+    if (tab === "collision" && s.displayMode === "visual") {
+      s.displayMode = "both";
+      this.collisionTabView = true;
+      this.applyViewSettings();
+      this.bump("settings");
+    } else if (tab !== "collision" && this.collisionTabView) {
+      this.collisionTabView = false;
+      if (s.displayMode === "both") { s.displayMode = "visual"; this.applyViewSettings(); this.bump("settings"); }
+    }
     this.bump("ui");
     if (tab === "validate") this.runValidate();
   }
@@ -512,7 +541,7 @@ export class Editor {
       case "riivolution": return dialogs.open("riivolution", { initialFile: file });
       case "music": case "sounds":
         return dialogs.open("audio", file.path ? { file: file.path } : { loose: file });
-      case "effect": case "params": {
+      case "effect": case "params": case "lighting": {
         // A one-file archive in memory, so the archive editors work on it unchanged. An effect
         // also gets its other half (.breff with .breft) when it sits next to it.
         const files: LooseFile[] = [file];
@@ -535,7 +564,7 @@ export class Editor {
           return true;
         };
         const onChange = (path: string, data: Uint8Array) => { const target = listFiles(tree).find((f: any) => f.path === path); if (target) target.node.data = data; };
-        return dialogs.open(kind === "effect" ? "effects" : "params", { tree, archiveName: file.name, initialPath: file.name, onChange, onSave });
+        return dialogs.open(kind === "effect" ? "effects" : "params", { tree, archiveName: file.name, initialPath: file.name, onChange, onSave, mode: kind === "lighting" ? "lighting" : "data" });
       }
     }
   }
@@ -1433,11 +1462,13 @@ export class Editor {
     }
     if (point === undefined) point = await this.pickPoint(`Click on the track where ${path.split(/[\\/]/).pop()} goes · Esc for the centre of the view`);
     try {
-      let importedAnimation: any = null;
+      let importedAnimation: any = null, warnings: string[] = [];
       await this.withBusy("Importing 3D model…", async () => {
         const before = parseBRRES(node.data);
         const target = point || this.viewport?.viewCenterPoint() || [0, 0, 0];
-        let next = await api.import3DModel(node.data, picked.path, target, animation);
+        const imported = await api.import3DModel(node.data, picked.path, target, animation);
+        let next = imported.data;
+        warnings = imported.warnings;
         const parsed = parseBRRES(next);
         importedAnimation = [...parsed.chr.values()].find((animation: any) => !before.chr.has(animation.name));
         const model = parsed.models.find((m: any) => m.name === "course") || parsed.models[0];
@@ -1460,6 +1491,7 @@ export class Editor {
           ? `${importedAnimation.frames} animation frames are playing in the 3D view. Save the SZS to store the CHR0 for Mario Kart Wii.`
           : "It is selected under Track model. Move, rotate or scale it, then save the SZS.",
       });
+      if (warnings.length) toast.warning("Some textures were not imported", { description: warnings.join("\n"), duration: 15000 });
     } catch (e: any) { toast.error("Could not import 3D model", { description: e.message }); }
   }
 
@@ -1936,11 +1968,12 @@ export class Editor {
       case "assets": return this.openAssetEditor();
       case "gameParams": {
         const common = this.workspacePath("Race", "Common.szs");
-        if (!common) return toast.warning("Choose the game folder first", { description: "Vehicle stats and item chances are in Race/Common.szs of the workspace." });
+        if (!common) return toast.warning("Choose the game folder first", { description: "The game data files (.bin, .bcp, .bsp) are in Race/Common.szs of the game folder." });
         return this.openArchiveWindow(common, "params");
       }
       case "workspaceEffects": return this.workspace() ? dialogs.open("effects", { workspace: true }) : toast.warning("Choose the game folder first", { description: "The effects are read from every archive of the game folder." });
       case "effects": return this.doc.szs ? dialogs.open("effects", {}) : toast.warning("Open a track archive (.szs) to edit its effects.");
+      case "lighting": return this.doc.szs ? dialogs.open("params", { mode: "lighting" }) : toast.warning("Open a track archive (.szs) to edit its lighting.");
       case "sky": return this.doc.szs ? dialogs.open("sky", {}) : toast.warning("Open a track archive (.szs) to edit its sky.");
       case "trackObjects": return this.doc.szs ? this.openTrackObjects() : toast.warning("Open a track archive (.szs) to edit its objects.");
       case "about": return dialogs.open("about", {});
@@ -2273,6 +2306,12 @@ export class Editor {
   private introCache = new Map<number, any[]>();
   private introRaf = 0;
 
+  // Battle end points (MSPT) only matter in battle arenas: shown when the track has some, its file is a
+  // battle arena, or it has no checkpoints (arenas have none; every race track does).
+  usesBattleEnds(): boolean {
+    const k = this.doc.kmp;
+    return k.MSPT.length > 0 || trackKind(this.doc.fileName || "") === "battle" || !k.CKPT.some((group: any) => group.points?.length);
+  }
   selectedCamera(): number {
     const infos = this.doc.selectedInfos();
     return infos.length === 1 && infos[0].kind === "CAME" ? infos[0].index : -1;

@@ -11,6 +11,7 @@ import { SETTINGS_HELP } from "../../../js/data/help.js";
 import { useEditor } from "../hooks";
 import { dialogs } from "../dialogs-store";
 import { WorkspaceCard } from "./WorkspaceCard";
+import { CommonSzsCard, ObjectDocumentationCard } from "./GameFilesCards";
 import type { Settings } from "../editor";
 
 type SettingKey = keyof Settings;
@@ -88,6 +89,8 @@ export function SettingsPanel() {
     <h3 className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Editing</h3>
     <div className="space-y-2">
       <SettingRow name="keepBackups">{toggle("keepBackups")}</SettingRow>
+      <SettingRow name="dragToMove">{toggle("dragToMove")}</SettingRow>
+      <SettingRow name="hideMoveArrows">{toggle("hideMoveArrows")}</SettingRow>
       <SettingRow name="textureBrushSize">{number("textureBrushSize", 1, 128)}</SettingRow>
       <SettingRow name="showDescriptions">{toggle("showDescriptions")}</SettingRow>
       <SettingRow name="confirmModelDrop">{toggle("confirmModelDrop")}</SettingRow>
@@ -99,19 +102,8 @@ export function SettingsPanel() {
 
     <h3 className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Game files</h3>
     <div className="mb-2"><WorkspaceCard compact /></div>
-    <div className="mb-2 space-y-2 rounded-md border bg-muted/20 p-2.5">
-      <div className="text-xs font-medium">Object documentation</div>
-      <p className="text-[11px] leading-relaxed text-muted-foreground">Descriptions and setting names for game objects. {Object.keys(ed.importedObjectDocumentation).length} custom entries are saved in the editor settings.</p>
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="secondary" onClick={() => void ed.importObjectDocumentation()}><FolderOpen /> Import JSON…</Button>
-        {Object.keys(ed.importedObjectDocumentation).length > 0 && <Button size="sm" variant="ghost" onClick={() => void ed.clearImportedObjectDocumentation()}>Remove imported</Button>}
-      </div>
-    </div>
-    <div className="space-y-2 rounded-md border bg-muted/20 p-2.5">
-      <div className="text-xs font-medium">Race/Common.szs {ed.assets?.common ? "· Loaded" : "· Not loaded"}</div>
-      <p className="text-[11px] leading-relaxed text-muted-foreground">Provides shared game objects and their original 3D models.</p>
-      <Button size="sm" variant="secondary" onClick={() => ed.loadObjFlow()}><FolderOpen /> Load Common.szs…</Button>
-    </div>
+    <ObjectDocumentationCard className="mb-2" />
+    <CommonSzsCard />
     <div className="mt-2 space-y-2 rounded-md border bg-muted/20 p-2.5">
       <div className="text-xs font-medium">Tracks folder</div>
       <p className="text-[11px] leading-relaxed text-muted-foreground">Folder with the game's track .szs files (files\Race\Course). Track model › + › Part from game models lists them to copy their model parts.</p>
