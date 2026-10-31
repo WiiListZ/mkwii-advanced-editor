@@ -1,0 +1,849 @@
+{
+  "version": 1,
+  "objects": {
+    "itembox": {
+      "description": "Touching this rotating box starts an item lottery. Its item pools and timing can be changed per placement.",
+      "status": "partial",
+      "documented": 75,
+      "settings": {
+        "2": {
+          "label": "Player item type",
+          "description": "Item box item type for human players.",
+          "options": {
+            "0": "Default",
+            "1": "Banana",
+            "2": "Mushroom",
+            "3": "Triple Mushrooms",
+            "4": "Star",
+            "5": "Triple Green Shells",
+            "6": "Banana or Mushroom",
+            "7": "Green Shell",
+            "8": "Bob-omb",
+            "9": "Red Shell",
+            "10": "Mega Mushroom",
+            "11": "Thunder Cloud",
+            "12": "Star or Mushroom",
+            "13": "Empty (gives a Mushroom)",
+            "14": "Empty (gives a Mushroom)",
+            "15": "Empty (gives a Mushroom)",
+            "16": "Empty (gives a Mushroom)",
+            "597": "Default (0x255)"
+          },
+          "otherValues": true,
+          "limits": "Other codes are not documented."
+        },
+        "3": {
+          "label": "CPU item type",
+          "description": "Item box item type for computer players.",
+          "options": {
+            "0": "Default",
+            "1": "Banana",
+            "2": "Mushroom",
+            "3": "Triple Mushrooms",
+            "4": "Star",
+            "5": "Triple Green Shells",
+            "6": "Banana or Mushroom",
+            "7": "Green Shell",
+            "8": "Bob-omb",
+            "9": "Red Shell",
+            "10": "Mega Mushroom",
+            "11": "Thunder Cloud",
+            "12": "Star or Mushroom",
+            "13": "Empty (gives a Mushroom)",
+            "14": "Empty (gives a Mushroom)",
+            "15": "Empty (gives a Mushroom)",
+            "16": "Empty (gives a Mushroom)",
+            "597": "Default (0x255)"
+          },
+          "otherValues": true,
+          "limits": "Other codes are not documented."
+        },
+        "4": {
+          "label": "Disable shadow",
+          "description": "Hides the box shadow when set; any nonzero value hides it.",
+          "options": {
+            "0": "Shadow visible",
+            "1": "Shadow hidden"
+          },
+          "otherValues": true
+        },
+        "6": {
+          "label": "Lottery timing",
+          "description": "Changes roulette duration and item-box respawn time. Short roulette does not work online.",
+          "options": {
+            "0": "Normal roulette, respawn after 150 frames",
+            "2": "Shorter roulette, respawn after 150 frames",
+            "3": "Shorter roulette, respawn after 150 frames",
+            "4": "Shorter roulette, respawn after 600 frames",
+            "5": "Normal roulette, respawn after 600 frames",
+            "6": "Normal roulette, respawn after 900 frames"
+          },
+          "otherValues": true,
+          "limits": "Other codes unverified."
+        },
+        "7": {
+          "label": "Height offset",
+          "description": "Signed offset from the object position.",
+          "signed": true
+        }
+      }
+    },
+    "DummyPole": {
+      "description": "Controls solidity of a pole already present in the course model.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Wall variant",
+          "description": "KCL wall variant used for the pole."
+        }
+      }
+    },
+    "kuribo": {
+      "description": "Goomba that walks along a route and reappears after being hit.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Respawn time",
+          "description": "Time before the Goomba reappears after being hit; the game range is not documented."
+        },
+        "2": {
+          "label": "Speed",
+          "description": "Route movement speed. A value of 32 (0x20) is a documented working example."
+        },
+        "3": {
+          "label": "Animation speed",
+          "description": "Movement animation speed; the game range is not documented."
+        }
+      }
+    },
+    "choropu": {
+      "description": "Moving Monty Mole from Moo Moo Meadows. Its route determines where it burrows or emerges.",
+      "notes": "Do not use choropu and choropu2 together; they share a model resource.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Speed"
+        },
+        "2": {
+          "label": "Start delay",
+          "description": "Delay in frames (60 frames = one second)."
+        }
+      }
+    },
+    "choropu2": {
+      "description": "Alternate Monty Mole that appears at a fixed position.",
+      "notes": "Do not use choropu and choropu2 together.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Hide time",
+          "description": "How long the Monty Mole stays hidden, in frames (60 frames = one second)."
+        },
+        "2": {
+          "label": "Start delay",
+          "description": "Frames before it first appears."
+        }
+      }
+    },
+    "cow": {
+      "description": "A leader cow follows a route while other cows begin near the object position.",
+      "status": "partial",
+      "documented": 80,
+      "settings": {
+        "1": {
+          "label": "Following cows",
+          "description": "Number of cows behind the leader; the supported maximum is not documented."
+        },
+        "3": {
+          "label": "Follower delay",
+          "description": "Start delay of the following cows, in frames (60 frames = one second)."
+        },
+        "4": {
+          "label": "Leader lead time",
+          "description": "How much earlier the leader cow starts, in frames."
+        }
+      }
+    },
+    "dossunc": {
+      "description": "Thwomp obstacle that stomps in place or uses a route for more complex motion.",
+      "notes": "Without a route, settings 1 and 2 should be zero.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Route speed",
+          "description": "Set to 0 when no route is assigned."
+        },
+        "2": {
+          "label": "Route behaviour",
+          "description": "Set to 0 when no route is assigned.",
+          "options": {
+            "0": "No route",
+            "1": "Stomps at route points",
+            "2": "Paired Thwomps moving sideways, then down",
+            "3": "Grounded side-to-side Thwomp"
+          },
+          "otherValues": true,
+          "limits": "Other values unverified."
+        },
+        "3": {
+          "label": "Start delay",
+          "description": "Frames after countdown starts; 240 (0xF0) starts immediately after GO."
+        },
+        "4": {
+          "label": "Sleep time",
+          "description": "Time asleep after countdown starts, in frames."
+        }
+      }
+    },
+    "pakkun_f": {
+      "description": "Attacking Piranha Plant, normally paired with its pipe.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Idle time",
+          "description": "Frames between attacks in Time Trial and online races."
+        }
+      }
+    },
+    "pakkun_dokan": {
+      "description": "Pipe used with the attacking Piranha Plant.",
+      "status": "documented",
+      "documented": 100
+    },
+    "wanwan": {
+      "description": "Chained Chain Chomp that lunges toward a target area.",
+      "status": "partial",
+      "documented": 86,
+      "settings": {
+        "1": {
+          "label": "Chain length",
+          "description": "Chain length in game units."
+        },
+        "4": {
+          "label": "Target X",
+          "description": "Signed target X coordinate divided by 10.",
+          "signed": true
+        },
+        "5": {
+          "label": "Target Z",
+          "description": "Signed target Z coordinate divided by 10.",
+          "signed": true
+        },
+        "6": {
+          "label": "Wander time",
+          "description": "Frames spent wandering. Zero uses about 5 seconds; add about 3.5 seconds for the full cycle.",
+          "values": "0=about 5 seconds; positive values specify frames."
+        },
+        "7": {
+          "label": "Lunge angle",
+          "description": "Encoded as (wedge width in degrees − 35) / 2; the supported angular range is not documented."
+        }
+      }
+    },
+    "Hwanwan": {
+      "description": "Route-following Chain Chomp from DS Peach Gardens.",
+      "notes": "Use a curved route for this object.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Speed"
+        },
+        "2": {
+          "label": "Carried item boxes",
+          "description": "Number of item boxes carried."
+        }
+      }
+    },
+    "poihana": {
+      "description": "Cataquack that flings players upward. In races it can seek nearby players.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Colour",
+          "description": "PAT0 body colour frame; a custom PAT0 may provide more colours.",
+          "options": {
+            "0": "Blue",
+            "1": "Red",
+            "2": "Violet",
+            "3": "Green"
+          },
+          "otherValues": true,
+          "limits": "A custom PAT0 may have more frames."
+        },
+        "2": {
+          "label": "Detection distance",
+          "description": "Distance at which it starts seeking players."
+        }
+      }
+    },
+    "DKrockGC": {
+      "description": "Rolling rock from GCN DK Mountain that follows a route.",
+      "notes": "The route must use back-and-forth motion for the rock to respawn.",
+      "status": "partial",
+      "documented": 83,
+      "settings": {
+        "1": {
+          "label": "Second-rock delay",
+          "description": "A nonzero value introduces an approximately 1.5-second delay for the second rock.",
+          "options": {
+            "0": "No extra delay",
+            "1": "Extra delay"
+          },
+          "otherValues": true,
+          "limits": "Any nonzero value adds the delay."
+        },
+        "2": {
+          "label": "Minimum cycle",
+          "description": "Minimum cycle time in frames (60 frames = one second)."
+        },
+        "3": {
+          "label": "Speed"
+        },
+        "4": {
+          "label": "Bounce factor"
+        },
+        "5": {
+          "label": "Additional flag",
+          "description": "Only value 1 is documented on GCN DK Mountain.",
+          "values": "1=original-track value.",
+          "limits": "Other values have no documented effect."
+        }
+      }
+    },
+    "sanbo": {
+      "description": "Pokey from Dry Dry Ruins and DS Desert Hills that follows a route.",
+      "notes": "Route setting 1 controls the pause at each point in frames.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Speed",
+          "description": "Movement speed along the route."
+        }
+      }
+    },
+    "sanbo_big": {
+      "description": "Large Pokey variant used in a tournament.",
+      "status": "documented",
+      "documented": 100
+    },
+    "hanachan": {
+      "description": "Wiggler from Maple Treeway that follows a route.",
+      "notes": "Route setting 1 controls pauses. Keep the route at suitable heights.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Speed"
+        }
+      }
+    },
+    "basabasa": {
+      "description": "Flying Swoopers that cross the course.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Speed",
+          "description": "Flying speed of the bats along the route."
+        },
+        "2": {
+          "label": "Delay until next group",
+          "description": "Frames between two groups of bats."
+        },
+        "3": {
+          "label": "Swoops per group",
+          "description": "How many bats each group sends."
+        },
+        "4": {
+          "label": "Distance off the route",
+          "description": "How far the bats spread from the route.",
+          "values": "The exact scale is not documented."
+        },
+        "5": {
+          "label": "Maximum height",
+          "description": "Highest point of the swoop."
+        },
+        "6": {
+          "label": "Distance between bats",
+          "description": "Spacing of the bats in a group."
+        },
+        "7": {
+          "label": "Start delay",
+          "description": "Frames before the first group."
+        }
+      }
+    },
+    "FireSnake": {
+      "description": "Ground-level fire enemy associated with DS Desert Hills.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Sun route",
+          "description": "Route used by the sun that releases it."
+        },
+        "2": {
+          "label": "Lifetime",
+          "description": "Time before disappearing, in frames."
+        }
+      }
+    },
+    "crab": {
+      "description": "Crab obstacle from GBA Shy Guy Beach that follows a route.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Speed",
+          "description": "Units per frame (60 frames = one second)."
+        },
+        "2": {
+          "label": "Facing direction",
+          "description": "Direction of the crab along the route.",
+          "options": {
+            "0": "Left",
+            "1": "Right"
+          },
+          "otherValues": true,
+          "limits": "Other values unverified."
+        }
+      }
+    },
+    "Crab": {
+      "description": "Crab obstacle found near beaches.",
+      "status": "partial",
+      "documented": 50
+    },
+    "car_body": {
+      "description": "Traffic car from Moonview Highway. Its route controls the path and blink direction.",
+      "status": "partial",
+      "documented": 83,
+      "settings": {
+        "1": {
+          "label": "Route start"
+        },
+        "2": {
+          "label": "Speed mode 0",
+          "description": "Speed for route setting 2 = 0."
+        },
+        "3": {
+          "label": "Speed mode 1",
+          "description": "Speed for route setting 2 = 1."
+        },
+        "4": {
+          "label": "Car colour",
+          "description": "Original car colour variant.",
+          "options": {
+            "0": "Blue",
+            "1": "Red",
+            "2": "Yellow"
+          },
+          "otherValues": true,
+          "limits": "Other values unverified."
+        }
+      }
+    },
+    "kart_truck": {
+      "description": "Traffic truck from Moonview Highway that follows a route.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Route start"
+        },
+        "2": {
+          "label": "Speed mode 0"
+        },
+        "3": {
+          "label": "Speed mode 1"
+        },
+        "4": {
+          "label": "Truck texture",
+          "description": "Original truck texture variant.",
+          "options": {
+            "0": "Moo Moo",
+            "1": "Fruit",
+            "2": "Factory"
+          },
+          "otherValues": true,
+          "limits": "Other values unverified."
+        }
+      }
+    },
+    "CarA2": {
+      "description": "Moving car from Coconut Mall.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Speed"
+        },
+        "2": {
+          "label": "Acceleration"
+        },
+        "3": {
+          "label": "Pause time"
+        }
+      }
+    },
+    "CarA3": {
+      "description": "Moving car from Coconut Mall.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Speed"
+        },
+        "2": {
+          "label": "Acceleration"
+        },
+        "3": {
+          "label": "Pause time"
+        }
+      }
+    },
+    "TruckWagon": {
+      "description": "Mine cart obstacle that moves along the track.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Speed",
+          "description": "Speed of the mine carts along the route."
+        },
+        "2": {
+          "label": "Delay before the second group",
+          "description": "Frames between the first and the second group of carts."
+        },
+        "3": {
+          "label": "Delay until the first group",
+          "description": "Frames before the first group starts."
+        },
+        "4": {
+          "label": "Collision",
+          "description": "Whether karts collide with the carts.",
+          "options": {
+            "0": "Collision",
+            "1": "No collision"
+          },
+          "otherValues": true
+        }
+      }
+    },
+    "seagull": {
+      "description": "Seagull that flies along a route.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Speed",
+          "description": "Flight speed along the route."
+        },
+        "2": {
+          "label": "Seagull count",
+          "description": "Number of birds; the supported maximum is not documented."
+        }
+      }
+    },
+    "Epropeller": {
+      "description": "Electric propeller obstacle from Koopa Cape.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Rotation speed",
+          "description": "Number of rotations over 12 seconds in the normal game."
+        },
+        "2": {
+          "label": "Direction",
+          "description": "Direction of rotation.",
+          "options": {
+            "0": "Clockwise",
+            "1": "Counterclockwise"
+          },
+          "otherValues": true,
+          "limits": "Other values unverified."
+        },
+        "8": {
+          "label": "Extended timing factor",
+          "description": "Unused in the normal game. With LE-CODE or a compatible cheat, multiplies the period used by setting 1.",
+          "values": "0=normal 12-second period; positive values use 12 × setting 8 seconds.",
+          "limits": "Only meaningful with the compatible extension."
+        }
+      }
+    },
+    "WLfirebarGC": {
+      "description": "Rotating fire-bar obstacle from GCN Waluigi Stadium.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Fireballs per arm"
+        },
+        "2": {
+          "label": "Rotation speed",
+          "description": "Rotation speed and direction.",
+          "signed": true,
+          "values": "Positive: counterclockwise; negative: clockwise; 0: stationary."
+        },
+        "3": {
+          "label": "Fireball spacing"
+        },
+        "4": {
+          "label": "Number of arms"
+        }
+      }
+    },
+    "koopaFirebar": {
+      "description": "Rotating fire-bar obstacle from Bowser’s Castle.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Fireballs per arm"
+        },
+        "2": {
+          "label": "Rotation speed",
+          "description": "Rotation speed and direction.",
+          "signed": true,
+          "values": "Positive: counterclockwise; negative: clockwise; 0: stationary."
+        },
+        "3": {
+          "label": "Fireball spacing"
+        },
+        "4": {
+          "label": "Number of arms"
+        }
+      }
+    },
+    "WLfireringGC": {
+      "description": "Rotating ring of fireballs from GCN Waluigi Stadium.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Fireball count"
+        },
+        "2": {
+          "label": "Rotation speed",
+          "description": "Rotation speed and direction.",
+          "signed": true,
+          "values": "Positive: counterclockwise; negative: clockwise; 0: stationary."
+        },
+        "3": {
+          "label": "Pulsation",
+          "description": "Radius pulsation factor.",
+          "values": "0=no pulsation; setting 3 ≥ setting 4 reverses the pulsation."
+        },
+        "4": {
+          "label": "Radius",
+          "description": "Ring radius. Zero disables pulsation.",
+          "values": "0=no pulsation; positive values specify radius."
+        }
+      }
+    },
+    "begoman_spike": {
+      "description": "Spiked Topman from Galaxy Colosseum; its rings and appearance times are controlled by settings.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Topman ID",
+          "description": "One-based ID used by begoman_manager.",
+          "min": 1,
+          "limits": "The supported count depends on the manager configuration."
+        },
+        "2": {
+          "label": "First ring radius"
+        },
+        "3": {
+          "label": "First switch time",
+          "description": "Frames after race start."
+        },
+        "4": {
+          "label": "Second ring radius"
+        },
+        "5": {
+          "label": "Second switch time",
+          "description": "Frames after race start."
+        },
+        "6": {
+          "label": "Third ring radius"
+        },
+        "7": {
+          "label": "Third switch time",
+          "description": "Frames after race start."
+        },
+        "8": {
+          "label": "Fourth ring radius"
+        }
+      }
+    },
+    "sun": {
+      "description": "Sun and lighting effect used by desert courses.",
+      "status": "documented",
+      "documented": 100
+    },
+    "psea": {
+      "description": "Animated sea from GCN Peach Beach.",
+      "status": "documented",
+      "documented": 100
+    },
+    "Psea": {
+      "description": "Animated sea from GCN Peach Beach.",
+      "status": "documented",
+      "documented": 100
+    },
+    "lensFX": {
+      "description": "Lens flare positioned near the course light source.",
+      "status": "documented",
+      "documented": 100
+    },
+    "venice_nami": {
+      "description": "Sea level effect from Delfino Pier, with several rising and falling stages.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Rising speed (odd stages)",
+          "description": "Speed of the water in stages 1, 3 and 5."
+        },
+        "2": {
+          "label": "Final height (stage 5)",
+          "description": "Height the water reaches at the end."
+        },
+        "3": {
+          "label": "Stage 1 target height",
+          "description": "Height of the water after stage 1."
+        },
+        "4": {
+          "label": "Stage 2 duration",
+          "description": "Length of stage 2, in frames (60 frames = one second)."
+        },
+        "5": {
+          "label": "Stage 3 target height",
+          "description": "Height of the water after stage 3."
+        },
+        "6": {
+          "label": "Stage 4 duration",
+          "description": "Length of stage 4, in frames."
+        },
+        "7": {
+          "label": "Rising speed (even stages)",
+          "description": "Speed of the water in stages 2 and 4."
+        }
+      }
+    },
+    "flagBlend": {
+      "description": "Animated course flag.",
+      "status": "documented",
+      "documented": 100
+    },
+    "MashBalloonGC": {
+      "description": "Mushroom balloon decoration.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Speed",
+          "description": "Speed of the balloon's up and down movement."
+        },
+        "2": {
+          "label": "Maximum height difference",
+          "description": "How far it rises above its position."
+        }
+      }
+    },
+    "kinoko_ud": {
+      "description": "Moving bouncy mushroom from Mushroom Gorge.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Dark stem",
+          "description": "Texture of the stem.",
+          "options": {
+            "0": "Normal stem"
+          },
+          "otherValues": true,
+          "values": "Any nonzero value gives the dark stem."
+        },
+        "2": {
+          "label": "Up-down amplitude",
+          "description": "How far the mushroom moves up and down."
+        },
+        "3": {
+          "label": "Cycle time",
+          "description": "Length of one up-down cycle, in frames (60 frames = one second)."
+        },
+        "4": {
+          "label": "Cycle shift",
+          "description": "Offset of the cycle, to make mushrooms move out of step."
+        },
+        "5": {
+          "label": "Pause at the lowest point",
+          "description": "Frames the mushroom waits at the bottom."
+        }
+      }
+    },
+    "puchi_pakkun": {
+      "description": "Small Piranha Plant obstacle from N64 Mario Raceway.",
+      "status": "documented",
+      "documented": 100
+    },
+    "Press": {
+      "description": "Moving press obstacle.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "2": {
+          "label": "Start delay",
+          "description": "Frames before the first press."
+        },
+        "3": {
+          "label": "Sleep time",
+          "description": "Frames between two presses.",
+          "values": "0 presses only once."
+        }
+      }
+    },
+    "airblock": {
+      "description": "Invisible box used as a barrier in tournaments.",
+      "status": "documented",
+      "documented": 100
+    },
+    "coin": {
+      "description": "Collectible coin used in battle arenas.",
+      "status": "documented",
+      "documented": 100,
+      "settings": {
+        "1": {
+          "label": "Mode",
+          "description": "Where the coin is used.",
+          "options": {
+            "0": "Battle",
+            "1": "Tournament or mission"
+          },
+          "otherValues": true
+        },
+        "2": {
+          "label": "Start or respawn place",
+          "description": "Whether the coin is there at the start or appears later at this place."
+        },
+        "3": {
+          "label": "Spawn behaviour",
+          "description": "How the coin appears."
+        }
+      }
+    }
+  }
+}

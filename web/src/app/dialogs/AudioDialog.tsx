@@ -1,5 +1,5 @@
 // Sounds and music: the game's music streams (sound/strm/*.brstm) and the sound effects and voices
-// of sound/revo_kart.brsar. Listen, export (WAV, FLAC, Ogg Opus, BRSTM) and replace them with any
+// of sound/revo_kart.brsar. Listen, export (WAV, MP3, M4A, Ogg Opus, FLAC, AIFF, BRSTM) and replace them with any
 // audio file; replacements are kept until Save, which writes the game files (optionally with a .bak copy).
 
 import * as React from "react";
@@ -14,6 +14,8 @@ import { buildBRSTM, decodeBRSTM, parseBRSTM, setBRSTMLoop } from "../../../js/f
 import { listWaves, parseBRSAR, readWave, replaceWave } from "../../../js/formats/brsar.js";
 import { encodeFLAC, encodeWAV, isolateTrack, musicLabel, toFloat32, toInt16 } from "../../../js/editor/audio.js";
 import { encodeOggOpus } from "../../../js/editor/ogg-opus.js";
+import { AAC_RATE, aacSupported, encodeAIFF, encodeM4A, encodeMP3, mp3Rate } from "../../../js/editor/audio-export.js";
+import { audioContext, decodeFile, resample, suspendAudio } from "../audio-convert";
 import { editor, winPath } from "../editor";
 import { dialogs } from "../dialogs-store";
 import { WorkspaceCard } from "../panels/WorkspaceCard";
@@ -26,8 +28,37 @@ interface Item { key: string; label: string; detail: string; kind: "music" | "wa
 // Decoded audio: Int16 channels, rate, loop and (music) the stereo tracks.
 interface Clip { sampleRate: number; channels: Int16Array[]; loop: boolean; loopStart: number; tracks?: { volume: number; pan: number; channels: number[] }[]; trackType?: number }
 
-let context: AudioContext | null = null;
-const audioContext = () => (context ||= new AudioContext());
+// Export formats, in the order of the Export menu.
+type ExportFormat = "wav" | "mp3" | "m4a" | "ogg" | "flac" | "aiff" | "brstm";
+const EXPORT_FORMATS: { id: ExportFormat; label: string; detail: string; extension: string; fileType: string }[] = [
+  { id: "wav", label: "WAV", detail: "Uncompressed, opens in every program", extension: "wav", fileType: "WAV audio" },
+  { id: "mp3", label: "MP3", detail: "192 kbps, plays on every device", extension: "mp3", fileType: "MP3 audio" },
+  { id: "m4a", label: "M4A (AAC)", detail: "192 kbps, phones, iTunes and video editors", extension: "m4a", fileType: "M4A audio (AAC)" },
+  { id: "ogg", label: "Ogg Opus", detail: "Small files, good quality", extension: "ogg", fileType: "Ogg Opus audio" },
+  { id: "flac", label: "FLAC", detail: "Lossless, smaller than WAV", extension: "flac", fileType: "FLAC audio (lossless)" },
+  { id: "aiff", label: "AIFF", detail: "Uncompressed, for Mac and audio editors", extension: "aiff", fileType: "AIFF audio" },
+  { id: "brstm", label: "BRSTM", detail: "The game's own format, with its loop", extension: "brstm", fileType: "BRSTM stream (game format)" },
+];
+
+function ExportMenu({ onExport }: { onExport: (format: ExportFormat) => void }) {
+  // AAC needs the system's encoder (WebCodecs); the item explains when it is missing.
+  const [aac, setAac] = React.useState<boolean | null>(null);
+  React.useEffect(() => { void aacSupported().then(setAac); }, []);
+  return (
+    <DropdownMenuContent className="w-72">
+      {EXPORT_FORMATS.map((f) => {
+        const off = f.id === "m4a" && aac === false;
+        return (
+          <DropdownMenuItem key={f.id} disabled={off} onSelect={() => onExport(f.id)} className="flex-col items-start gap-0">
+            <span className="text-[13px]">{f.label}</span>
+            <span className="text-[11px] text-muted-foreground">{off ? "Not available: this computer has no AAC encoder" : f.detail}</span>
+          </DropdownMenuItem>
+        );
+      })}
+    </DropdownMenuContent>
+  );
+}
+
 
 // Two channels to listen to: each track's pair at its volume, summed.
 function stereo(clip: Clip, trackIndex: number | null = null) {
@@ -80,28 +111,6 @@ function TrackWaveform({ clip, index, elapsed, active, onPlay }: { clip: Clip; i
       {active && <span className="pointer-events-none absolute inset-y-0 w-px bg-primary" style={{ left: `${Math.min(100, elapsed / duration * 100)}%` }} />}
     </button>
   );
-}
-
-async function resample(channels: Float32Array[], from: number, to: number) {
-  if (from === to) return channels;
-  const length = Math.max(1, Math.round(channels[0].length * to / from));
-  const offline = new OfflineAudioContext(channels.length, length, to);
-  const buffer = offline.createBuffer(channels.length, channels[0].length, from);
-  channels.forEach((c, i) => buffer.copyToChannel(c as Float32Array<ArrayBuffer>, i));
-  const source = offline.createBufferSource();
-  source.buffer = buffer; source.connect(offline.destination); source.start();
-  const out = await offline.startRendering();
-  return Array.from({ length: out.numberOfChannels }, (_, i) => out.getChannelData(i).slice());
-}
-
-// Any audio file the browser can decode (WAV, MP3, Ogg, FLAC, AAC…) or a BRSTM.
-async function decodeFile(name: string, data: Uint8Array): Promise<{ rate: number; channels: Float32Array[] }> {
-  if (/\.brstm$/i.test(name)) {
-    const s = parseBRSTM(data);
-    return { rate: s.sampleRate, channels: decodeBRSTM(s).map(toFloat32) };
-  }
-  const buffer = await audioContext().decodeAudioData(data.slice().buffer);
-  return { rate: buffer.sampleRate, channels: Array.from({ length: buffer.numberOfChannels }, (_, i) => buffer.getChannelData(i).slice()) };
 }
 
 const seconds = (n: number, rate: number) => `${(n / rate).toFixed(n / rate < 10 ? 2 : 1)} s`;
@@ -190,7 +199,7 @@ export function AudioDialog({ file, loose, close }: { file?: string; loose?: { n
         <div className="flex shrink-0 items-center gap-1.5">
           <Button size="icon" variant="ghost" title="Close" aria-label="Close" disabled={saving} onClick={async () => {
             if (pendingCount && !(await dialogs.confirm({ title: "Unsaved sounds", description: `${pendingCount} unsaved sound change${pendingCount === 1 ? "" : "s"} will be lost.`, confirmLabel: "Close without saving", destructive: true }))) return;
-            context?.suspend();
+            suspendAudio();
             close(null);
           }}><X /></Button>
         </div>
@@ -370,12 +379,22 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
   };
 
   const baseName = item.kind === "music" ? item.detail.replace(/\.brstm$/i, "") : item.label;
-  const exportAs = async (format: "wav" | "flac" | "ogg" | "brstm", trackIndex: number | null = null) => {
+  const exportAs = async (format: ExportFormat, trackIndex: number | null = null) => {
     if (!clip) return;
-    setBusy(`Encoding ${format.toUpperCase()}…`);
+    const spec = EXPORT_FORMATS.find((f) => f.id === format)!;
+    setBusy(`Encoding ${spec.label}…`);
     try {
       let bytes: Uint8Array;
-      if (format === "brstm") {
+      if (format === "mp3" || format === "m4a" || format === "aiff") {
+        const pair = trackIndex !== null || clip.channels.length > 2 ? stereo(clip, trackIndex).map(toInt16) : clip.channels;
+        if (format === "aiff") bytes = encodeAIFF(pair, clip.sampleRate);
+        else if (format === "mp3") {
+          // MP3 stores only some sample rates (the game's 32 kHz is one of them); others are resampled.
+          const rate = mp3Rate(clip.sampleRate);
+          const pcm = rate === clip.sampleRate ? pair : (await resample(pair.map(toFloat32), clip.sampleRate, rate)).map(toInt16);
+          bytes = encodeMP3(pcm, rate, 192);
+        } else bytes = await encodeM4A(await resample(pair.map(toFloat32), clip.sampleRate, AAC_RATE));
+      } else if (format === "brstm") {
         if (trackIndex === null && item.kind === "music" && !pending) bytes = await musicBytes();
         else {
           const part = trackIndex === null ? clip : isolateTrack(clip, trackIndex);
@@ -388,9 +407,9 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
         else if (format === "flac") bytes = encodeFLAC(pair, clip.sampleRate);
         else bytes = await encodeOggOpus(await resample(pair.map(toFloat32), clip.sampleRate, 48000), { inputRate: clip.sampleRate });
       }
-      const filters = { wav: FILTERS.wav, flac: FILTERS.flac, ogg: FILTERS.ogg, brstm: FILTERS.brstm }[format];
+      const filters = [{ name: spec.fileType, extensions: [spec.extension] }];
       const name = `${baseName}${trackIndex === null ? "" : `_track_${trackIndex + 1}`}`;
-      await editor.exportBytes(`${name}.${format}`, filters, bytes, `Export ${name}`);
+      await editor.exportBytes(`${name}.${spec.extension}`, filters, bytes, `Export ${name}`);
     } catch (e: any) { toast.error("Could not export", { description: e.message }); }
     setBusy("");
   };
@@ -501,12 +520,7 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
             <Button size="sm" variant="secondary" disabled={!!busy || (item.kind === "wave" && !archive)} onClick={replace}><FileAudio /> Replace…</Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button size="sm" variant="secondary" disabled={!!busy}><Download /> Export</Button></DropdownMenuTrigger>
-              <DropdownMenuContent>
-                <DropdownMenuItem onSelect={() => exportAs("wav")}>WAV (uncompressed)</DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => exportAs("flac")}>FLAC (lossless)</DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => exportAs("ogg")}>Ogg Opus (small)</DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => exportAs("brstm")}>BRSTM (game format)</DropdownMenuItem>
-              </DropdownMenuContent>
+              <ExportMenu onExport={(format) => exportAs(format)} />
             </DropdownMenu>
             {pending && <Button size="sm" variant="ghost" onClick={() => onReplaceMusic(null)}><Undo2 /> Undo changes</Button>}
             {hasBackup && !pending && <Button size="sm" variant="ghost" disabled={!!busy} onClick={restore}><RotateCcw /> Restore original</Button>}
@@ -532,12 +546,7 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
                       </Button>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild><Button size="sm" variant="ghost" disabled={!!busy} title={`Export track ${index + 1}`}><Download /> Export</Button></DropdownMenuTrigger>
-                        <DropdownMenuContent>
-                          <DropdownMenuItem onSelect={() => exportAs("wav", index)}>WAV (uncompressed)</DropdownMenuItem>
-                          <DropdownMenuItem onSelect={() => exportAs("flac", index)}>FLAC (lossless)</DropdownMenuItem>
-                          <DropdownMenuItem onSelect={() => exportAs("ogg", index)}>Ogg Opus (small)</DropdownMenuItem>
-                          <DropdownMenuItem onSelect={() => exportAs("brstm", index)}>BRSTM (game format)</DropdownMenuItem>
-                        </DropdownMenuContent>
+                        <ExportMenu onExport={(format) => exportAs(format, index)} />
                       </DropdownMenu>
                       <TrackWaveform clip={clip} index={index} elapsed={elapsed} active={playing && playingTrack === index}
                         onPlay={(at) => { setElapsed(at); void play(index, at); }} />

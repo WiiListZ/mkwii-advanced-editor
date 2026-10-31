@@ -71,15 +71,31 @@ try {
   const seeked = await page.$eval('input[aria-label="Playback position"]', (x) => { const input = x as HTMLInputElement; return Number(input.value) / Number(input.max); });
   if (seeked < 0.28 || seeked > 0.34) throw new Error(`Waveform seek landed at ${seeked}`);
   await click("Stop");
-  for (const [label, ext] of [["WAV", "wav"], ["FLAC", "flac"], ["Ogg Opus", "ogg"], ["BRSTM", "brstm"]]) {
+  const aac = await page.evaluate(() => AudioEncoder.isConfigSupported({ codec: "mp4a.40.2", sampleRate: 48000, numberOfChannels: 2, bitrate: 192000 }).then((r) => !!r.supported).catch(() => false));
+  const formats = [["WAV", "wav"], ["MP3", "mp3"], ...(aac ? [["M4A (AAC)", "m4a"]] : []), ["FLAC", "flac"], ["Ogg Opus", "ogg"], ["AIFF", "aiff"], ["BRSTM", "brstm"]];
+  if (!aac) console.log("AAC encoder not available in this browser: M4A export skipped");
+  for (const [label, ext] of formats) {
     saveName = `farm.${ext}`;
-    await click("Export");
+    await click("Export", '[role="dialog"] button');
     await page.waitForSelector('[role="menuitem"]');
     await click(label, '[role="menuitem"]');
-    for (let i = 0; i < 120 && !existsSync(join(exports, saveName)); i++) await wait(250);
+    for (let i = 0; i < 240 && !existsSync(join(exports, saveName)); i++) await wait(250);
     if (!existsSync(join(exports, saveName))) throw new Error(`${label} export missing`);
+    await wait(300);
     console.log("exported", saveName, Bun.file(join(exports, saveName)).size, "bytes");
   }
+  // The compressed exports decode back to the length of the WAV export (within 0.2 s of encoder delay).
+  const seconds = await page.evaluate(async (paths: string[]) => {
+    const token = new URLSearchParams(location.search).get("t")!;
+    const out: Record<string, number> = {};
+    for (const path of paths) {
+      const data = await (await fetch(`/api/read?path=${encodeURIComponent(path)}`, { headers: { "x-token": token } })).arrayBuffer();
+      out[path.split(/[\\/]/).pop()!] = (await new OfflineAudioContext(2, 1, 48000).decodeAudioData(data)).duration;
+    }
+    return out;
+  }, ["wav", "mp3", ...(aac ? ["m4a"] : []), "flac"].map((ext) => join(exports, `farm.${ext}`)));
+  for (const [name, duration] of Object.entries(seconds)) if (Math.abs(duration - seconds["farm.wav"]) > 0.2) throw new Error(`${name} decodes to ${duration} s, WAV is ${seconds["farm.wav"]} s`);
+  console.log("decoded lengths", seconds);
   await click("Koopa Cape · normal");
   await page.waitForFunction(() => document.body.innerText.includes("4 tracks"));
   await click("Separate tracks", "button");

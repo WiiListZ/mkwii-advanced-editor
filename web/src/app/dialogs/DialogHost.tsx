@@ -1,6 +1,6 @@
 import * as React from "react";
 import {
-  BookOpen, BrickWall, CircleCheck, Download, FileJson, FilePlus2, FolderOpen, GraduationCap, Keyboard, Package, Puzzle, Replace, Rocket, Trash2,
+  BookOpen, BrickWall, CircleCheck, MessagesSquare, Download, FileJson, FilePlus2, FolderOpen, GraduationCap, Keyboard, Package, Puzzle, Replace, Rocket, Trash2, Trophy,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -28,6 +28,8 @@ import { dialogs, useDialogStack, type DialogEntry, type FormOptions } from "../
 import { editor, hex, DEFAULT_SETTINGS } from "../editor";
 import { KIND_ICON, SectionTitle } from "../common";
 import { TrackGeneratorDialog } from "./TrackGeneratorDialog";
+import { CupsDialog, CupsApplyDialog } from "./CupsDialog";
+import { ThpDialog } from "./ThpDialog";
 import { ModelPartsDialog } from "./ModelPartsDialog";
 import { GameObjectsDialog } from "./GameObjectsDialog";
 import { GameTextDialog } from "./GameTextDialog";
@@ -40,6 +42,8 @@ import { SettingsPanel } from "../panels/SettingsPanel";
 import { TextureEditorDialog, TrackSettingsEditor } from "../panels/Inspector";
 import { ObjectPreview } from "../panels/ObjectPreview";
 import { ObjectDocumentationView } from "../panels/ObjectDocumentationView";
+import { ObjectDocumentationEditor } from "./ObjectDocumentationEditor";
+import { documentationStatus, STATUS_LABELS } from "../../../js/data/object-documentation.js";
 import { ObjectAppearanceDialog, ObjectTextureEditorDialog } from "../panels/ObjectAppearance";
 import { SkyDialog } from "./SkyDialog";
 import { ArchiveDialog } from "./ArchiveDialog";
@@ -48,10 +52,10 @@ import { EffectsDialog } from "./EffectsDialog";
 import { ParamsDialog } from "./ParamsDialog";
 import { SkeletonEditorDialog } from "./SkeletonEditorDialog";
 import { NumberField } from "../number-field";
-import { APP_VERSION, useUpdates } from "../updates";
+import { APP_VERSION, DISCORD_URL, useUpdates } from "../updates";
 
 // Windows that can hold unsaved work: they close only through their own buttons, which ask first.
-const GUARDED = ["gameText", "audio", "assetEditor", "assetTextureEditor", "riivolution", "archive", "textureEditor", "objectTextureEditor", "sky", "effects", "params", "skeletonEditor"];
+const GUARDED = ["thp", "cups", "objectDocsEditor", "gameText", "audio", "assetEditor", "assetTextureEditor", "riivolution", "archive", "textureEditor", "objectTextureEditor", "sky", "effects", "params", "skeletonEditor"];
 
 export function DialogHost() {
   const stack = useDialogStack();
@@ -78,7 +82,7 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
     );
   }
   const sizes: Record<string, string> = {
-    generator: "max-w-[1100px]", help: "max-w-[920px]", preferences: "max-w-[760px]", szs: "max-w-[760px]", modelParts: "max-w-[1180px]", gameObjects: "max-w-[1180px]", settings: "max-w-[620px] p-0 gap-0", trackSettings: "max-w-[520px]", importDrop: "max-w-[480px]", gameText: "flex h-[min(1100px,95vh)] max-w-[min(1640px,97vw)] flex-col overflow-hidden", riivolution: "flex h-[min(1000px,94vh)] max-w-[min(1400px,96vw)] flex-col overflow-hidden", audio: "flex h-[min(900px,92vh)] max-w-[min(1100px,95vw)] flex-col overflow-hidden", assetEditor: "flex h-[min(1100px,95vh)] max-w-[min(1640px,97vw)] flex-col overflow-hidden", assetTextureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", workspace: "max-w-[560px]", textureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", objectTextureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", objectAppearance: "max-w-[860px]", archive: "flex h-[min(820px,90vh)] max-w-[min(1000px,94vw)] flex-col overflow-hidden", menuResource: "flex h-[min(800px,92vh)] max-w-[min(1150px,96vw)] flex-col overflow-hidden", effects: "flex h-[min(900px,92vh)] max-w-[min(1300px,96vw)] flex-col overflow-hidden", params: "flex h-[min(900px,92vh)] max-w-[min(1300px,96vw)] flex-col overflow-hidden", skeletonEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", sky: "flex h-[min(900px,92vh)] max-w-[min(1300px,95vw)] flex-col overflow-hidden", animationChoice: "max-w-[480px]", importObj: "max-w-[680px]", objectPicker: "max-w-[820px] p-0 gap-0",
+    generator: "max-w-[1180px]", cups: "flex h-[min(860px,94vh)] max-w-[min(1180px,96vw)] flex-col overflow-hidden", cupsApply: "max-w-[600px]", objectDocsEditor: "flex h-[min(900px,92vh)] max-w-[min(1100px,95vw)] flex-col overflow-hidden", thp: "flex h-[min(940px,95vh)] max-w-[min(1500px,97vw)] flex-col overflow-hidden", help: "max-w-[920px]", preferences: "max-w-[760px]", szs: "max-w-[760px]", modelParts: "max-w-[1180px]", gameObjects: "max-w-[1180px]", settings: "max-w-[620px] p-0 gap-0", trackSettings: "max-w-[520px]", importDrop: "max-w-[480px]", gameText: "flex h-[min(1100px,95vh)] max-w-[min(1640px,97vw)] flex-col overflow-hidden", riivolution: "flex h-[min(1000px,94vh)] max-w-[min(1400px,96vw)] flex-col overflow-hidden", audio: "flex h-[min(900px,92vh)] max-w-[min(1100px,95vw)] flex-col overflow-hidden", assetEditor: "flex h-[min(1100px,95vh)] max-w-[min(1640px,97vw)] flex-col overflow-hidden", assetTextureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", workspace: "max-w-[560px]", textureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", objectTextureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", objectAppearance: "max-w-[860px]", archive: "flex h-[min(820px,90vh)] max-w-[min(1000px,94vw)] flex-col overflow-hidden", menuResource: "flex h-[min(800px,92vh)] max-w-[min(1150px,96vw)] flex-col overflow-hidden", effects: "flex h-[min(900px,92vh)] max-w-[min(1300px,96vw)] flex-col overflow-hidden", params: "flex h-[min(900px,92vh)] max-w-[min(1300px,96vw)] flex-col overflow-hidden", skeletonEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", sky: "flex h-[min(900px,92vh)] max-w-[min(1300px,95vw)] flex-col overflow-hidden", animationChoice: "max-w-[480px]", importObj: "max-w-[680px]", objectPicker: "max-w-[820px] p-0 gap-0",
   };
   const body = (() => {
     switch (entry.kind) {
@@ -92,7 +96,11 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
       case "szs": return <SzsDialog close={close} />;
       case "modelParts": return <ModelPartsDialog close={close} />;
       case "gameObjects": return <GameObjectsDialog close={close} />;
-      case "gameText": return <GameTextDialog search={p.search} folder={p.folder} language={p.language} file={p.file} loose={p.loose} close={close} />;
+      case "cups": return <CupsDialog initialFile={p.initialFile} close={close} />;
+      case "cupsApply": return <CupsApplyDialog {...p} close={close} />;
+      case "objectDocsEditor": return <ObjectDocumentationEditor close={close} />;
+      case "thp": return <ThpDialog initialPath={p.initialPath} close={close} />;
+      case "gameText": return <GameTextDialog search={p.search} folder={p.folder} language={p.language} file={p.file} loose={p.loose} saveLoose={p.saveLoose} close={close} />;
       case "audio": return <AudioDialog file={p.file} loose={p.loose} close={close} />;
       case "riivolution": return <RiivolutionDialog initialFile={p.initialFile} close={close} />;
       case "assetEditor": return <AssetEditorDialog {...p} close={close} />;
@@ -135,7 +143,7 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
   })();
   return (
     <Dialog open={!entry.closing} onOpenChange={(o) => !o && !GUARDED.includes(entry.kind) && close(null)}>
-      <DialogContent className={sizes[entry.kind]} onEscapeKeyDown={GUARDED.includes(entry.kind) ? (e) => e.preventDefault() : undefined} onPointerDownOutside={GUARDED.includes(entry.kind) ? (e) => e.preventDefault() : undefined} hideClose={["objectPicker", "textureEditor", "objectTextureEditor", "archive", "menuResource", "skeletonEditor", "sky", "effects", "params", "gameText", "audio", "assetEditor", "assetTextureEditor", "riivolution"].includes(entry.kind)}>{body}</DialogContent>
+      <DialogContent className={sizes[entry.kind]} onEscapeKeyDown={GUARDED.includes(entry.kind) ? (e) => e.preventDefault() : undefined} onPointerDownOutside={GUARDED.includes(entry.kind) ? (e) => e.preventDefault() : undefined} hideClose={["thp", "cups", "objectDocsEditor", "objectPicker", "textureEditor", "objectTextureEditor", "archive", "menuResource", "skeletonEditor", "sky", "effects", "params", "gameText", "audio", "assetEditor", "assetTextureEditor", "riivolution"].includes(entry.kind)}>{body}</DialogContent>
     </Dialog>
   );
 }
@@ -362,7 +370,10 @@ function HelpDialog({ tab = "start", tutorial, close }: { tab?: string; tutorial
             <div className="rounded-lg border bg-muted/20 p-3">
               <b>Make a new track.</b> File › Create new track lets you draw the layout from above. The editor builds the road, walls, collision, checkpoints, CPU and item routes, respawns and item boxes. Export the model as OBJ and turn it into course_model.brres with BrawlCrate.
             </div>
-            <Button variant="secondary" className="self-start" onClick={() => { close(null); editor.cmd("tour"); }}><BookOpen /> Start the guided tour</Button>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => { close(null); editor.cmd("tour"); }}><BookOpen /> Start the guided tour</Button>
+              <Button variant="ghost" onClick={() => api.openUrl(DISCORD_URL)}><MessagesSquare /> Ask on Discord</Button>
+            </div>
           </TabsContent>
           <TabsContent value="tutorials" className="mt-0"><Tutorials initial={tutorial} /></TabsContent>
           <TabsContent value="elements" className="mt-0 flex flex-col gap-2">
@@ -415,6 +426,7 @@ function AboutDialog() {
       </DialogHeader>
       <p className="m-0 text-[13px] text-muted-foreground">Reads and writes SZS (Yaz0 + U8), KMP, KCL and BRRES models natively. Built with Bun, React, shadcn/ui, Three.js and WebView2.</p>
       <p className="m-0 text-[13px]"><span className="font-semibold">Credits</span> · WiiListZ</p>
+      <p className="m-0 text-[13px]">Help, questions and news: <button type="button" className="cursor-pointer text-primary underline-offset-4 hover:underline" onClick={() => api.openUrl(DISCORD_URL)}>the editor's Discord server</button></p>
       <div className="space-y-2 rounded-md border p-3 text-xs">
         <div className="flex items-center justify-between gap-2"><span className="font-semibold">Updates from GitHub Releases</span><Button size="sm" variant="secondary" onClick={() => updates.check()} disabled={updates.phase === "checking" || updates.phase === "downloading" || updates.phase === "installing"}>Check now</Button></div>
         {updates.phase === "checking" ? <p className="m-0 text-muted-foreground">Checking for updates…</p>
@@ -434,10 +446,11 @@ function AboutDialog() {
 function ObjectPicker({ current, purpose, close }: { current: number; purpose?: "add" | "change"; close: (v: any) => void }) {
   const entries = [...new Set([
     ...Object.keys(editor.objectNames),
-    ...Object.keys(editor.importedObjectDocumentation).filter((key) => /^\d+$/.test(key)),
+    ...Object.keys(editor.customObjectDocumentation).filter((key) => /^\d+$/.test(key)),
   ])].map((key) => {
     const id = Number(key), name = editor.objectNames[id] || `object_${id.toString(16)}`;
-    return { id, name, label: editor.objectLabel(id), cat: categorizeObject(name), description: editor.getObjectDocumentation(id).description || "" };
+    const documentation = editor.getObjectDocumentation(id);
+    return { id, name, label: editor.objectLabel(id), cat: categorizeObject(name), description: documentation.description || "", status: documentationStatus(documentation) };
   });
   const cats = ["All", ...new Set(entries.map((e) => e.cat))].sort((a, b) => a === "All" ? -1 : b === "All" ? 1 : a.localeCompare(b));
   const [category, setCategory] = React.useState("All");
@@ -475,6 +488,7 @@ function ObjectPicker({ current, purpose, close }: { current: number; purpose?: 
                 <span className="min-w-0 flex-1"><span className="block truncate">{e.label}{e.label !== e.name && <span className="ml-2 text-xs text-muted-foreground">{e.name}</span>}</span>
                   {e.description && <span className="block truncate text-[11px] text-muted-foreground">{e.description}</span>}
                 </span>
+                {e.status.status !== "documented" && <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground" title={`${(STATUS_LABELS as any)[e.status.status]}, ${e.status.estimated ? "about " : ""}${e.status.percent}% documented`}>{e.status.status === "unknown" ? "Unknown" : `${e.status.estimated ? "~" : ""}${e.status.percent}%`}</span>}
                 <span className="font-mono text-[11px] text-muted-foreground">{hex(e.id)}</span>
               </CommandItem>
             ))}
@@ -612,8 +626,12 @@ function TrackCreatedDialog({ length, tris, keptSzs, close }: { length: number; 
         <li>Adjust anything you like: move objects, add item boxes, paint collision (boost, off-road…).</li>
         <li>File › Export › Track model (OBJ), then turn it into course_model.brres with BrawlCrate.</li>
         <li>{keptSzs ? "Save: the other files of the original SZS were kept." : "Add course_model.brres and vrcorn_model.brres with File › SZS contents (copy them from any track), then save as .szs."}</li>
+        <li>To race on it in the game, put it in a cup: <b>Tools › Cups and tracks</b>, then <b>Replace › Track open in the editor</b> on the track it should take the place of.</li>
       </ol>
-      <DialogFooter><Button onClick={() => close(true)}>Start editing</Button></DialogFooter>
+      <DialogFooter>
+        <Button variant="secondary" onClick={() => { close(true); void dialogs.open("cups", {}); }}><Trophy /> Cups and tracks…</Button>
+        <Button onClick={() => close(true)}>Start editing</Button>
+      </DialogFooter>
     </>
   );
 }

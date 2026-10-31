@@ -1,4 +1,4 @@
-import { ShapeUtils, Vector2, Vector3 } from 'three';
+import { ShapeUtils, Triangle, Vector2, Vector3 } from 'three';
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -312,6 +312,47 @@ export function duplicateCollisionTriangles(kcl, selected, offsetY = 100) {
     flags[kcl.count + i] = kcl.flags[tri];
   });
   return { ...kcl, verts, flags, count: kcl.count + tris.length, valid: null };
+}
+
+// Course collision made from an object's model by Generate collision, found again from the model
+// placed where the object is (\`placed\`: its triangles in course space). A KCL triangle belongs to it
+// when all its corners lie inside the model's bounds and on its surface (within \`tolerance\`), facing
+// the same way as the model there — model surfaces and their simplified version — or when its
+// corners are corners of the model's collision box (\`box\` triangles). Road and walls under or around
+// the object have corners outside its bounds, or face another way, and are left alone.
+export function collisionOfModel(kcl, placed, box = [], tolerance = 20) {
+  if (!kcl?.count || !placed.length) return [];
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (const tri of [...placed, ...box]) for (const p of tri) for (let a = 0; a < 3; a++) { min[a] = Math.min(min[a], p[a]); max[a] = Math.max(max[a], p[a]); }
+  const inside = (x, y, z) => x >= min[0] - tolerance && x <= max[0] + tolerance && y >= min[1] - tolerance && y <= max[1] + tolerance && z >= min[2] - tolerance && z <= max[2] + tolerance;
+  const model = placed.map((tri) => {
+    const [a, b, c] = tri.map((p) => new Vector3(...p));
+    const n = new Vector3().subVectors(b, a).cross(new Vector3().subVectors(c, a));
+    return { a, b, c, n: n.lengthSq() > 0 ? n.normalize() : n, lo: [0, 1, 2].map((k) => Math.min(a.getComponent(k), b.getComponent(k), c.getComponent(k)) - tolerance), hi: [0, 1, 2].map((k) => Math.max(a.getComponent(k), b.getComponent(k), c.getComponent(k)) + tolerance) };
+  });
+  const corners = box.flat().map((p) => new Vector3(...p));
+  const closest = new Vector3(), point = new Vector3(), triangle = new Triangle();
+  const out = [];
+  const v = kcl.verts;
+  for (let t = 0; t < kcl.count; t++) {
+    const pts = [0, 1, 2].map((k) => [v[t * 9 + k * 3], v[t * 9 + k * 3 + 1], v[t * 9 + k * 3 + 2]]);
+    if (!pts.every((p) => inside(p[0], p[1], p[2]))) continue;
+    if (corners.length && pts.every((p) => corners.some((c) => c.distanceTo(point.set(p[0], p[1], p[2])) <= tolerance))) { out.push(t); continue; }
+    const [a, b, c] = pts.map((p) => new Vector3(...p));
+    const normal = new Vector3().subVectors(b, a).cross(new Vector3().subVectors(c, a));
+    if (normal.lengthSq() === 0) continue;
+    normal.normalize();
+    const onSurface = pts.every((p) => {
+      point.set(p[0], p[1], p[2]);
+      return model.some((m) => {
+        if (p[0] < m.lo[0] || p[0] > m.hi[0] || p[1] < m.lo[1] || p[1] > m.hi[1] || p[2] < m.lo[2] || p[2] > m.hi[2]) return false;
+        triangle.set(m.a, m.b, m.c).closestPointToPoint(point, closest);
+        return closest.distanceTo(point) <= tolerance && m.n.dot(normal) > -0.3;
+      });
+    });
+    if (onSurface) out.push(t);
+  }
+  return out;
 }
 
 export function deleteCollisionTriangles(kcl, selected) {

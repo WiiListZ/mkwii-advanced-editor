@@ -37,7 +37,7 @@ export function parseBMG(data) {
     const id = mid ? dv.getUint32(mid.offset + 16 + i * 4) : i;
     messages.push({ id, attributes: data.slice(e + 4, e + entrySize), text: decodeString(data, dv, datStart + offset, dat.offset + dat.size) });
   }
-  return { data, sections, entrySize, infHeader: data.slice(inf.offset + 8, inf.offset + 16), messages };
+  return { data, header: data.slice(0, 0x20), sections, entrySize, infHeader: data.slice(inf.offset + 8, inf.offset + 16), messages };
 }
 
 function decodeString(data, dv, p, end) {
@@ -73,10 +73,20 @@ function encodeString(text) {
   return out;
 }
 
-// Rebuilds the file with new texts ({ id: text }); everything else is kept as it was.
-export function buildBMG(bmg, changes) {
+// Rebuilds the file with new texts ({ id: text }); everything else is kept as it was. With
+// `{ add: true }`, IDs the file does not have yet become new messages, kept in ID order (the game
+// looks messages up by ID); their attributes are zero.
+export function buildBMG(bmg, changes, { add = false } = {}) {
+  const has = new Set(bmg.messages.map((m) => m.id));
+  const extra = add ? Object.keys(changes).map(Number).filter((id) => !has.has(id)) : [];
+  if (extra.length) {
+    if (!bmg.sections.some((s) => s.magic === 'MID1')) throw new Error('This BMG has no message IDs: messages cannot be added');
+    const blank = new Uint8Array(bmg.entrySize - 4);
+    const messages = [...bmg.messages, ...extra.map((id) => ({ id, attributes: blank, text: '' }))].sort((a, b) => a.id - b.id);
+    bmg = { ...bmg, messages, data: null };
+  }
   const texts = bmg.messages.map((m) => (Object.prototype.hasOwnProperty.call(changes, m.id) ? changes[m.id] : m.text));
-  if (texts.every((t, i) => t === bmg.messages[i].text)) return bmg.data;
+  if (bmg.data && texts.every((t, i) => t === bmg.messages[i].text)) return bmg.data;
 
   // DAT1: an empty string first (shared by every empty message), then each text once.
   const dat = [0, 0], offsets = [], seen = new Map();
@@ -94,7 +104,16 @@ export function buildBMG(bmg, changes) {
       const b = new Uint8Array(size), v = new DataView(b.buffer);
       b.set(s.bytes.subarray(0, 16));
       v.setUint32(4, size);
+      v.setUint16(8, bmg.messages.length);
       bmg.messages.forEach((m, i) => { v.setUint32(16 + i * bmg.entrySize, offsets[i]); b.set(m.attributes, 16 + i * bmg.entrySize + 4); });
+      sections.push(b);
+    } else if (s.magic === 'MID1' && extra.length) {
+      const size = align(16 + bmg.messages.length * 4, 32);
+      const b = new Uint8Array(size), v = new DataView(b.buffer);
+      b.set(s.bytes.subarray(0, 16));
+      v.setUint32(4, size);
+      v.setUint16(8, bmg.messages.length);
+      bmg.messages.forEach((m, i) => v.setUint32(16 + i * 4, m.id));
       sections.push(b);
     } else if (s.magic === 'DAT1') {
       const size = align(8 + dat.length, 32);
@@ -107,10 +126,46 @@ export function buildBMG(bmg, changes) {
   }
   const total = 0x20 + sections.reduce((n, b) => n + b.length, 0);
   const out = new Uint8Array(total);
-  out.set(bmg.data.subarray(0, 0x20));
+  out.set(bmg.header ?? bmg.data.subarray(0, 0x20));
   new DataView(out.buffer).setUint32(8, total);
   let o = 0x20;
   for (const b of sections) { out.set(b, o); o += b.length; }
+  return out;
+}
+
+// A new BMG (UTF-16, message IDs) from [[id, text]] sorted by ID, laid out like the files Wiimm's
+// tools write: INF1 entries of 8 bytes with attribute 01000000, MID1 format 0x10.
+export function createBMG(messages) {
+  const sections = [];
+  const section = (magic, body) => {
+    const size = align(8 + body.length, 32);
+    const b = new Uint8Array(size);
+    b.set([...magic].map((c) => c.charCodeAt(0)));
+    new DataView(b.buffer).setUint32(4, size);
+    b.set(body, 8);
+    sections.push(b);
+  };
+  const dat = [0, 0], offsets = [], seen = new Map();
+  for (const [, text] of messages) {
+    if (!text) { offsets.push(0); continue; }
+    if (!seen.has(text)) { seen.set(text, dat.length); dat.push(...encodeString(text)); }
+    offsets.push(seen.get(text));
+  }
+  const inf = new Uint8Array(8 + messages.length * 8), iv = new DataView(inf.buffer);
+  iv.setUint16(0, messages.length); iv.setUint16(2, 8);
+  offsets.forEach((o, i) => { iv.setUint32(8 + i * 8, o); inf[8 + i * 8 + 4] = 1; });
+  section('INF1', inf);
+  section('DAT1', Uint8Array.from(dat));
+  const mid = new Uint8Array(8 + messages.length * 4), mv = new DataView(mid.buffer);
+  mv.setUint16(0, messages.length); mid[2] = 0x10;
+  messages.forEach(([id], i) => mv.setUint32(8 + i * 4, id));
+  section('MID1', mid);
+  const total = 0x20 + sections.reduce((n, s) => n + s.length, 0);
+  const out = new Uint8Array(total), v = new DataView(out.buffer);
+  out.set([...'MESGbmg1'].map((c) => c.charCodeAt(0)));
+  v.setUint32(8, total); v.setUint32(12, sections.length); out[16] = 2;
+  let at = 0x20;
+  for (const s of sections) { out.set(s, at); at += s.length; }
   return out;
 }
 

@@ -9,6 +9,7 @@
 // data (count header, row size, decimal or whole numbers).
 
 import { CHARACTERS, VEHICLES } from './params.js';
+import { isKmg, isKrm, isKrt, kmgTable, krmTable, krtTable, raceDataDescription } from './racedata.js';
 
 export const BIN_TYPES = { f32: 4, s32: 4, u32: 4, s16: 2, u16: 2, u8: 1 };
 export const BIN_LIMITS = { s32: [-2147483648, 2147483647], u32: [0, 4294967295], s16: [-32768, 32767], u16: [0, 65535], u8: [0, 255] };
@@ -489,6 +490,9 @@ export function binTable(name, data, { objectNames = null, override = null } = {
   if (isBlight(name, data)) return blightTable(data);
   if (isBlmap(name, data)) return blmapTable(data);
   if (isBsp(name, data)) return bspTable(name, data);
+  if (isKmg(name, data)) return kmgTable(data);
+  if (isKrt(name, data)) return krtTable(data);
+  if (isKrm(name, data)) return krmTable(data);
   const schema = SCHEMAS.find((s) => s.test(name, data));
   if (schema) return schema.table(data);
   return genericTable(name, data, override);
@@ -513,6 +517,7 @@ export function binDescription(name, data) {
   if (isBlight(name, data)) return 'Lights';
   if (isBlmap(name, data)) return 'Light maps';
   if (isBsp(name, data)) return `Vehicle physics${bspVehicle(name) ? ` · ${bspVehicle(name)}` : ''}`;
+  if (raceDataDescription(name, data)) return raceDataDescription(name, data);
   if (isGeoHitTable(name, data)) {
     const items = /Item/i.test(name), onObject = /Obj\.bin$/i.test(name);
     return items ? onObject ? 'Items acting on objects' : 'Objects acting on items' : onObject ? 'Players acting on objects' : 'Objects acting on players';

@@ -73,6 +73,19 @@ export class ReleaseUpdater {
       notes: String(record.notes || ""), url: String(record.url || "") };
   }
 
+  // Notes of the running version for Help › Release notes: the ones kept by the updater, otherwise
+  // the GitHub release of this version's tag (also for a version downloaded by hand).
+  async versionNotes() {
+    const installed = await this.installedNotes();
+    if (installed.available) return { available: true, version: installed.version, title: installed.title, notes: installed.notes, url: installed.url };
+    const url = this.source.releasesUrl.replace(/\/latest$/, `/tags/v${this.currentVersion}`);
+    const response = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+    if (response.status === 404) return { available: false, version: this.currentVersion };
+    if (!response.ok) throw new Error(`GitHub returned HTTP ${response.status}`);
+    const raw = await response.json() as Release;
+    return { available: true, version: this.currentVersion, title: raw.name || raw.tag_name, notes: raw.body || "No release notes provided.", url: raw.html_url };
+  }
+
   // After the notes were shown once they only open on request (Help › About).
   async markNotesShown() {
     const record = JSON.parse(await readFile(this.notesFile, "utf8").catch(() => "null"));

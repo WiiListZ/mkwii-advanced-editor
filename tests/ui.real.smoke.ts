@@ -114,7 +114,8 @@ for (const t of tracks) {
         throw new Error("Object setting documentation or vertical layout failed: " + JSON.stringify(settingsRows));
       await page.evaluate(() => {
         const a = (window as any).app;
-        a.importedObjectDocumentation = { ...a.importedObjectDocumentation, 101: { notes: "Object picker note check" } };
+        // A chosen JSON replaces the default documentation: here the default plus one note by ID.
+        a.customObjectDocumentation = { ...a.objectDocumentationInUse, 101: { notes: "Object picker note check" } };
         void a.pickObject(0x65);
       });
       await page.waitForSelector("[cmdk-item]");

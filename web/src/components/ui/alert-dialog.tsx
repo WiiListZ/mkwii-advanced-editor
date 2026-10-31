@@ -7,7 +7,7 @@ const AlertDialog = AlertDialogPrimitive.Root;
 const AlertDialogPortal = AlertDialogPrimitive.Portal;
 
 const AlertDialogOverlay = React.forwardRef<React.ElementRef<typeof AlertDialogPrimitive.Overlay>, React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Overlay>>(
-  ({ className, ...props }, ref) => <AlertDialogPrimitive.Overlay className={cn("fixed inset-0 z-50 bg-black/60 animate-[fade-in_150ms_ease-out] data-[state=closed]:animate-[fade-out_140ms_ease-in_forwards] data-[state=closed]:pointer-events-none!", className)} {...props} ref={ref} />,
+  ({ className, ...props }, ref) => <AlertDialogPrimitive.Overlay data-modal-overlay className={cn("fixed inset-0 z-50 bg-black/60 animate-[fade-in_150ms_ease-out] data-[state=closed]:animate-[fade-out_140ms_ease-in_forwards] data-[state=closed]:pointer-events-none!", className)} {...props} ref={ref} />,
 );
 AlertDialogOverlay.displayName = AlertDialogPrimitive.Overlay.displayName;
 
@@ -19,6 +19,11 @@ const AlertDialogContent = React.forwardRef<React.ElementRef<typeof AlertDialogP
         ref={ref}
         className={cn("fixed left-1/2 top-1/2 z-50 grid w-full max-w-md -translate-x-1/2 -translate-y-1/2 animate-in data-[state=closed]:animate-out data-[state=closed]:pointer-events-none! gap-4 rounded-xl border bg-card p-5 shadow-2xl", className)}
         {...props}
+        // The title bar stays usable above the dialog (move, minimize, close the window).
+        onFocusOutside={(event) => {
+          if ((event.target as Element | null)?.closest?.("[data-window-chrome]")) event.preventDefault();
+          props.onFocusOutside?.(event);
+        }}
       />
     </AlertDialogPortal>
   ),

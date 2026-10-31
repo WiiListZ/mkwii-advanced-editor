@@ -15,13 +15,13 @@ import { isU8, parseU8, buildU8, findFile, setFile, setFilePath, newSzsTree, lis
 import { parseKMP, buildKMP, make } from "../../js/formats/kmp.js";
 import { introChain, introIndex, introPose, introTimeline, selectionIndex, setCameraHeader, setIntroChain, simulateCamera } from "../../js/editor/cameras.js";
 import { appendShot, fixIntroShots, introKeyframes, introShotIssues, moveKey, removeKey, setKeyPose, shotSpeedLimits, splitShot } from "../../js/editor/intro-keys.js";
-import { COLLISION_SHAPES, KCL_MAX_TRIANGLES, appendCollisionTriangles, buildCollisionShape, collisionBoxFromTriangles, collisionCoverage, deleteCollisionTriangles, duplicateCollisionTriangles, flipCollisionTriangles, isFloorTriangle, modelCollisionTriangles, simplifyCollisionTriangles, transformCollisionTriangles } from "../../js/editor/collision.js";
+import { COLLISION_SHAPES, KCL_MAX_TRIANGLES, appendCollisionTriangles, buildCollisionShape, collisionBoxFromTriangles, collisionCoverage, collisionOfModel, deleteCollisionTriangles, duplicateCollisionTriangles, flipCollisionTriangles, isFloorTriangle, modelCollisionTriangles, simplifyCollisionTriangles, transformCollisionTriangles } from "../../js/editor/collision.js";
 import { parseKCL, buildKCL, patchKCLFlags } from "../../js/formats/kcl.js";
 import { parseOBJ, kclToOBJ, modelToOBJ } from "../../js/formats/obj.js";
 import { clearBRRESPolygon, isBRRES, parseBRRES, polygonPieces, resetPieceMemory, replaceBRRESTexture, setCHR0Loop, transformBRRESPart, translateBRRESPart } from "../../js/formats/brres.js";
 import { BrresModelBuilder, mainModel } from "../../js/editor/brresmodel.js";
 import { BUILTIN_OBJECTS, KCL_TYPES, OBJECT_DISPLAY, OBJECT_INFO, makeFlag, objectDisplayY, parseObjFlow, trackKind, trackLabel } from "../../js/data/defs.js";
-import { objectDocumentation, parseObjectDocumentation } from "../../js/data/object-documentation.js";
+import { BUILTIN_OBJECT_DOCUMENTATION, OBJECT_INFO_URL, defaultDocumentation, mergeDocumentationUpdate, objectDocumentation, parseObjectDocumentation, useDefaultDocumentation } from "../../js/data/object-documentation.js";
 import { externalPath, parseRiivolution } from "../../js/formats/riivolution.js";
 import { findRiivolutionWorkspace, findWorkspaceRoot, resolveRiivolutionPath } from "../../js/editor/workspace.js";
 import { dialogs } from "./dialogs-store";
@@ -80,7 +80,7 @@ export function looseKind(name: string, data: Uint8Array): LooseKind | null {
   if (magic.startsWith("RSTM")) return "music";
   if (magic.startsWith("RSAR")) return "sounds";
   if (/\.xml$/i.test(name) && /<wiidisc[\s>]/i.test(new TextDecoder().decode(data.subarray(0, 4096)))) return "riivolution";
-  if (isStatsFile(name, data) || isItemSlot(name, data) || /\.(bin|bcp|bsp)$/i.test(name)) return "params";
+  if (isStatsFile(name, data) || isItemSlot(name, data) || /\.(bin|bcp|bsp|kmg|krt|krm)$/i.test(name)) return "params";
   if (/\.(blight|blmap)$/i.test(name) && /^(LGHT|LMAP)$/.test(magic.slice(0, 4))) return "lighting";
   return null;
 }
@@ -110,7 +110,8 @@ export class Editor {
     viewCenter: () => this.viewport?.viewCenterPoint() ?? [0, 0, 0],
   };
   objectNames: Record<number, string> = { ...BUILTIN_OBJECTS };
-  importedObjectDocumentation: Record<string, any> = {};
+  customObjectDocumentation: Record<string, any> = {};
+  customObjectDocumentationName = "";
   commonPath: string | null = null;
   library: { folder: string; tracks: number; models: number; loading: boolean; error?: string } | null = null;
   trackFiles: { folder: string; files: string[] } | null = null; // .szs of the tracks folder, for the track switcher
@@ -320,10 +321,20 @@ export class Editor {
       }
       applyUiFont(this.settings.uiFont);
       if (s.objectNames) this.objectNames = { ...BUILTIN_OBJECTS, ...Object.fromEntries(Object.entries(s.objectNames).map(([k, v]) => [Number(k), v as string])) };
-      if (s.objectDocumentation && Object.keys(s.objectDocumentation).length) {
-        try { this.importedObjectDocumentation = parseObjectDocumentation({ version: 1, objects: s.objectDocumentation }); }
-        catch (error) { console.warn("Object documentation could not be loaded:", error); }
+      if (s.customObjectDocumentation?.objects) {
+        try {
+          this.customObjectDocumentation = parseObjectDocumentation({ version: 1, objects: s.customObjectDocumentation.objects });
+          this.customObjectDocumentationName = s.customObjectDocumentation.name || "";
+          // The default it started from (the shipped one, for documentation saved before the base was kept).
+          this.customObjectDocumentationBase = s.customObjectDocumentation.base
+            ? parseObjectDocumentation({ version: 1, objects: s.customObjectDocumentation.base }) : BUILTIN_OBJECT_DOCUMENTATION;
+        } catch (error) { console.warn("Object documentation could not be loaded:", error); }
+      } else if (s.objectDocumentation && Object.keys(s.objectDocumentation).length) {
+        // Entries imported before 1.0.5 (added to the old built-in documentation) give way to the new
+        // default documentation; a JSON of the person's can be chosen again with Replace with JSON….
+        this.saveSettings({ objectDocumentation: {} });
       }
+      void this.updateDefaultObjectDocumentation(s.objectDocumentationOnline);
       if (s.objectResources) this.assets.setObjectInfo(Object.fromEntries(Object.entries(s.objectResources).map(([k, v]) => [Number(k), { name: this.objectNames[Number(k)], resources: v }])));
       this.applyViewSettings();
       this.bump("settings", "doc");
@@ -435,28 +446,105 @@ export class Editor {
   }
 
   getObjectDocumentation(id: number) {
-    return objectDocumentation(id, this.objectNames[id] || "", this.importedObjectDocumentation);
+    return objectDocumentation(id, this.objectNames[id] || "", this.customObjectDocumentation);
   }
 
-  async importObjectDocumentation() {
-    const file = await api.openFile(FILTERS.json, "Import object documentation");
+  // The object documentation in use: the editor's default JSON (object-documentation.json), or a JSON
+  // chosen by the person, which replaces it entirely until Restore default.
+  get usesCustomObjectDocumentation() { return Object.keys(this.customObjectDocumentation).length > 0; }
+  get objectDocumentationInUse(): Record<string, any> { return this.usesCustomObjectDocumentation ? this.customObjectDocumentation : defaultDocumentation().objects; }
+
+  // The default documentation is kept up to date from data/objects.json of the object-info repository:
+  // the copy downloaded last is used at start (offline too), then a newer one is downloaded. When it
+  // cannot be reached or is not valid, the copy shipped with the editor stays in use.
+  objectDocumentationUpdated: string | null = null;
+  async updateDefaultObjectDocumentation(cached?: { fetched: string; json: any } | null) {
+    if (cached?.json) {
+      try {
+        useDefaultDocumentation(cached.json, { kind: "online", fetched: cached.fetched });
+        this.objectDocumentationUpdated = cached.fetched;
+        this.bringInDefaultUpdate();
+        this.bump("settings", "doc");
+      } catch (error) { console.warn("Saved object documentation is not valid:", error); }
+    }
+    try {
+      const response = await fetch(OBJECT_INFO_URL, { cache: "no-store", signal: AbortSignal.timeout(10000) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const text = await response.text();
+      if (text.length > 2_000_000) throw new Error("larger than 2 MB");
+      const json = JSON.parse(text);
+      const fetched = new Date().toISOString();
+      useDefaultDocumentation(json, { kind: "online", fetched });
+      this.objectDocumentationUpdated = fetched;
+      this.saveSettings({ objectDocumentationOnline: { fetched, json } });
+      this.bringInDefaultUpdate();
+      this.bump("settings", "doc");
+    } catch (error) { console.info("Object documentation not updated from GitHub:", error); }
+  }
+
+  // With a documentation of the person's in use, a newer default reaches it object by object: entries
+  // they did not change take the new version and new objects are added, while the objects they
+  // changed, added or removed stay as they are (mergeDocumentationUpdate).
+  customObjectDocumentationBase: Record<string, any> = BUILTIN_OBJECT_DOCUMENTATION;
+  bringInDefaultUpdate() {
+    if (!this.usesCustomObjectDocumentation) return;
+    const next = defaultDocumentation().objects;
+    if (JSON.stringify(next) === JSON.stringify(this.customObjectDocumentationBase)) return;
+    const result = mergeDocumentationUpdate(this.customObjectDocumentation, this.customObjectDocumentationBase, next);
+    this.customObjectDocumentation = result.objects;
+    this.customObjectDocumentationBase = next;
+    this.saveSettings({ customObjectDocumentation: { name: this.customObjectDocumentationName, objects: result.objects, base: next } });
+    if (result.updated || result.added || result.removed) {
+      toast.info("Object documentation updated", {
+        description: `From GitHub: ${[result.updated && `${result.updated} updated`, result.added && `${result.added} new`, result.removed && `${result.removed} removed`].filter(Boolean).join(", ")}. ${result.kept ? `Your ${result.kept} own or changed ${result.kept === 1 ? "entry was" : "entries were"} kept as ${result.kept === 1 ? "it is" : "they are"}.` : "Your own entries are kept as they are."}`,
+      });
+    }
+  }
+
+  async replaceObjectDocumentation() {
+    const file = await api.openFile(FILTERS.json, "Replace object documentation with a JSON file");
     if (!file) return;
     try {
       if (file.data.length > 2_000_000) throw new Error("The JSON file is larger than 2 MB");
-      const imported = parseObjectDocumentation(JSON.parse(new TextDecoder().decode(file.data)));
-      this.importedObjectDocumentation = { ...this.importedObjectDocumentation, ...imported };
-      this.saveSettings({ objectDocumentation: this.importedObjectDocumentation });
-      this.bump("settings", "doc");
-      toast.success(`${Object.keys(imported).length} object documentation entries imported`, { description: "Descriptions and setting labels are available immediately and remembered for the next launch." });
-    } catch (error: any) { toast.error("Could not import documentation", { description: error.message }); }
+      const objects = parseObjectDocumentation(JSON.parse(new TextDecoder().decode(file.data)));
+      if (!(await dialogs.confirm({
+        title: "Replace the object documentation?",
+        description: `${file.name} (${Object.keys(objects).length} entries) will be used instead of the ${this.usesCustomObjectDocumentation ? "JSON in use now" : "editor's default documentation"}. Objects it does not describe show as Unknown. Restore default brings the editor's documentation back at any time.`,
+        confirmLabel: "Replace",
+      }))) return;
+      this.useObjectDocumentation(objects, file.name);
+    } catch (error: any) { toast.error("Could not use this JSON", { description: error.message }); }
   }
 
-  async clearImportedObjectDocumentation() {
-    if (!Object.keys(this.importedObjectDocumentation).length) return;
-    if (!(await dialogs.confirm({ title: "Remove imported object documentation?", description: "Built-in object descriptions stay available.", confirmLabel: "Remove", destructive: true }))) return;
-    this.importedObjectDocumentation = {};
-    this.saveSettings({ objectDocumentation: {} });
+  // Uses parsed documentation (`objects`, from a file or the JSON editor) in place of the default
+  // one, remembered in the settings; null goes back to the default documentation.
+  useObjectDocumentation(objects: Record<string, any> | null, name = "") {
+    this.customObjectDocumentation = objects || {};
+    this.customObjectDocumentationName = objects ? name : "";
+    // Kept with it: the default documentation it starts from, so later updates of the default reach
+    // the entries the person did not change (see bringInDefaultUpdate).
+    this.customObjectDocumentationBase = defaultDocumentation().objects;
+    this.saveSettings({ objectDocumentation: {}, customObjectDocumentation: objects ? { name, objects, base: this.customObjectDocumentationBase } : null });
     this.bump("settings", "doc");
+    if (objects) toast.success(`Object documentation: ${name}`, { description: `${Object.keys(objects).length} entries in use in place of the default documentation, remembered for the next launch.` });
+    else toast.success("Default object documentation restored");
+  }
+
+  async restoreDefaultObjectDocumentation() {
+    if (!this.usesCustomObjectDocumentation) return;
+    if (!(await dialogs.confirm({ title: "Restore the default object documentation?", description: `The editor's own documentation is used again in place of ${this.customObjectDocumentationName || "the chosen JSON"}. A JSON file of yours on disk is not changed.`, confirmLabel: "Restore default" }))) return;
+    this.useObjectDocumentation(null);
+  }
+
+  // Saves the documentation in use as a JSON file, a starting point to edit and choose with Replace.
+  async exportObjectDocumentation() {
+    const path = await api.chooseSavePath("object-documentation.json", FILTERS.json, "Export object documentation");
+    if (!path) return;
+    const objects = this.usesCustomObjectDocumentation ? this.customObjectDocumentation : defaultDocumentation().json.objects;
+    try {
+      await api.writeFile(path, new TextEncoder().encode(JSON.stringify({ version: 1, objects }, null, 2) + "\n"));
+      toast.success("Object documentation exported", { description: path });
+    } catch (error: any) { toast.error("Could not export the documentation", { description: error.message }); }
   }
 
   // ---- UI state -------------------------------------------------------------------------
@@ -1531,6 +1619,35 @@ export class Editor {
 
   // Static course collision from the selected model part, or from every selected object that has a
   // loaded model. Surfaces can be copied as they are, simplified, or replaced by one box each.
+  // Course collision that belongs to the selected objects: what Generate collision made from their
+  // models (surfaces, simplified surfaces or box) where they stand, and collision the track itself
+  // has on an object's model. Found from the model, as the KCL does not record where it came from.
+  collisionOfSelectedObjects(): number[] {
+    const d = this.doc;
+    if (!d.kcl?.count) return [];
+    const objects = d.selectedInfos().filter((info: any) => info.kind === "GOBJ").map((info: any) => info.item);
+    const local = new Map<number, number[][][]>();
+    const found = new Set<number>();
+    for (const object of objects) {
+      if (!local.has(object.objectId)) {
+        const template = this.assets?.objectModel(object.objectId)?.template;
+        local.set(object.objectId, template ? modelCollisionTriangles(template) : []);
+      }
+      const tris = local.get(object.objectId)!;
+      if (!tris.length) continue;
+      const transform = this.objectModelTransform(object);
+      const placed = transformCollisionTriangles(tris, transform);
+      let size = 0;
+      const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (const tri of placed) for (const p of tri) for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], p[a]); hi[a] = Math.max(hi[a], p[a]); }
+      size = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+      // Simplified collision moves corners by a fraction of the model's size.
+      const tolerance = Math.max(10, size * 0.03);
+      for (const t of collisionOfModel(d.kcl, placed, collisionBoxFromTriangles(tris, transform), tolerance)) found.add(t);
+    }
+    return [...found];
+  }
+
   async generateCollisionForSelection() {
     if (!this.doc.szs) return toast.error("Open a track SZS to add collision");
     const part = this.geometrySelection?.type === "model" ? this.geometrySelection : null;
@@ -1850,8 +1967,13 @@ export class Editor {
         if (this.geometrySelection?.type === "collision") this.deleteCollisionTriangle();
         else if (this.geometrySelection?.type === "model") await this.deleteSelectedModel();
         else {
-          const n = ops.deleteSelection();
-          if (n) toast(`Deleted ${n} element${n > 1 ? "s" : ""}`, { duration: 1500 });
+          // The collision made for the deleted objects goes with them, in the same undo step.
+          const collision = this.collisionOfSelectedObjects();
+          let removed = 0;
+          const n = ops.deleteSelection(collision.length ? () => {
+            try { d.setKCL(deleteCollisionTriangles(d.kcl, collision), true); removed = collision.length; } catch { /* the KCL would be empty: keep it */ }
+          } : null);
+          if (n) toast(`Deleted ${n} element${n > 1 ? "s" : ""}`, { duration: removed ? 6000 : 1500, description: removed ? `${removed.toLocaleString()} collision triangle${removed === 1 ? "" : "s"} of the deleted object${n > 1 ? "s" : ""} removed too. Ctrl+Z brings both back.` : undefined });
         }
         break;
       }
@@ -1956,6 +2078,8 @@ export class Editor {
       case "preferences": return this.cmd("settingsDialog");
       case "settingsDialog": return dialogs.open("settings");
       case "gameText": return dialogs.open("gameText", { search: "" });
+      case "cups": return dialogs.open("cups", {});
+      case "thp": return dialogs.open("thp", {});
       case "trackNameText": {
         // The name of the open track in the game's text (Common.bmg), found by its English name.
         const file = this.currentTrackFile() || this.doc.fileName || "";

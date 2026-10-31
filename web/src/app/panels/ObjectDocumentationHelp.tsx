@@ -13,6 +13,8 @@ const SKELETON = `{
       "label": "…",
       "description": "…",
       "notes": "…",
+      "status": "partial",
+      "documented": 60,
       "settings": {
         "1": { "label": "…", "description": "…", "min": 0, "max": 100, "limits": "…" },
         "2": { "label": "…", "options": { "0": "…", "1": "…" }, "otherValues": true },
@@ -38,12 +40,18 @@ export function ObjectDocumentationHelp() {
       <section className="flex flex-col gap-1.5">
         <h3 className="m-0 text-sm font-semibold">What it is</h3>
         <p className="m-0 text-muted-foreground">
-          A JSON file that adds or corrects the description of game objects and the names of their eight settings. The editor shows them in the Inspector,
-          in the Objects catalogue and in the Add / Change object picker. The built-in documentation stays: imported entries are laid over it, field by field.
+          A JSON file with the description of the game objects and the names of their eight settings. The editor shows it in the Inspector,
+          in the Objects catalogue and in the Add / Change object picker. The editor's own documentation is such a file too (object-documentation.json).
         </p>
         <p className="m-0 text-muted-foreground">
-          Import it with <b>Import JSON…</b> on the Home screen, in Settings › Game files or in the Objects catalogue. A new import adds its entries to those
-          already imported (an entry for the same object replaces the old one); <b>Remove imported</b> deletes them all. Imported entries are saved in the editor settings.
+          <b>Replace with JSON…</b> (on the Home screen, in Settings › Game files or in the Objects catalogue) uses your file instead of the default
+          documentation, entirely: objects your file does not describe show as Unknown. <b>Restore default</b> brings the editor's documentation back.
+          <b> Export JSON…</b> saves the documentation in use, the easiest start for your own file: export, edit, then choose it with Replace.
+        </p>
+        <p className="m-0 text-muted-foreground">
+          Each object is labelled <b>Documented</b>, <b>Partially documented</b> or <b>Unknown</b>, with a percentage. Give them with
+          <code className="font-mono text-[12px]"> status</code> and <code className="font-mono text-[12px]">documented</code>; without them the editor
+          estimates both (shown with ~): half for a description, half for the eight settings, by how many have a name.
         </p>
       </section>
 
@@ -66,6 +74,8 @@ export function ObjectDocumentationHelp() {
           <Field name="label" rule="up to 120 characters">The name shown for the object.</Field>
           <Field name="description" rule="up to 2000 characters">What the object is and does.</Field>
           <Field name="notes" rule="up to 2000 characters">A remark shown highlighted under the description (requirements, known problems…).</Field>
+          <Field name="status" rule='"documented", "partial" or "unknown"'>The label of the object: Documented, Partially documented or Unknown.</Field>
+          <Field name="documented" rule="whole number, 0 to 100">How much of the object is documented, in percent. With "documented" it must be 100.</Field>
           <Field name="settings" rule='keys "1" to "8"'>The KMP settings 1 to 8 of the object, each with the fields below.</Field>
         </div>
       </section>

@@ -159,17 +159,20 @@ if ($path) { [Console]::Out.Write($path) }
 `);
 }
 
-// The project's own GitHub pages are the only web addresses the UI may open in the browser.
-export function isRepoUrl(value: string) {
+// The only web addresses the UI may open in the browser: the project's GitHub pages (the editor and
+// its object-info repository) and its Discord invitation.
+export function isAllowedUrl(value: string) {
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && url.host === "github.com" && /^\/WiiListZ\/mkwii-advanced-editor(\/|$)/i.test(url.pathname);
+    if (url.protocol !== "https:") return false;
+    if (url.host === "github.com") return /^\/WiiListZ\/mkwii-advanced-editor(-object-info)?(\/|$)/i.test(url.pathname);
+    return url.host === "discord.gg" && url.pathname === "/wrDyU9E7zs";
   } catch { return false; }
 }
 
 // Opens a page in the default browser (arguments are passed as an array: no shell parsing).
 export function openInBrowser(url: string) {
-  if (process.platform !== "win32" || !isRepoUrl(url)) return false;
+  if (process.platform !== "win32" || !isAllowedUrl(url)) return false;
   Bun.spawn(["rundll32.exe", "url.dll,FileProtocolHandler", url], { stdout: "ignore", stderr: "ignore", windowsHide: true });
   return true;
 }

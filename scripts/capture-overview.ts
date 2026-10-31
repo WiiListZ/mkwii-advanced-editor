@@ -8,7 +8,10 @@ import { join, resolve, sep } from "node:path";
 const game = process.env.MKWII_GAME_DIR;
 if (!game || !existsSync(join(game, "sound", "strm"))) throw new Error("Set MKWII_GAME_DIR to the extracted game's files directory");
 const settings = mkdtempSync(join(tmpdir(), "mkwii-overview-"));
-await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true, workspace: game }));
+// A few recent files of the game folder, so Home shows its list (they are only listed, not opened).
+const recent = ["Race/Course/castle_course.szs", "Race/Course/shopping_course.szs", "Race/Course/farm_course.szs", "Scene/UI/MenuSingle_E.szs"]
+  .map((p) => join(game, ...p.split("/"))).filter((p) => existsSync(p));
+await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true, workspace: game, recent }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
 try {

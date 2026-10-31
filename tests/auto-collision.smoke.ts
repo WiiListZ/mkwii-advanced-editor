@@ -101,6 +101,35 @@ try {
   if (kcl.count !== initial.count + initial.partTriangles + 12) throw new Error(`Saved KCL has ${kcl.count} triangles instead of ${initial.count + initial.partTriangles + 12}`);
   const reopened = await page.evaluate(async (path) => { const app = (window as any).app; await app.openPath(path); return app.doc.kcl?.count; }, track);
   if (reopened !== kcl.count) throw new Error("Generated collision was not retained after reopening the track");
+  // Deleting the object removes the collision generated for it (found again from its model after
+  // reopening), and Undo brings both back.
+  const deletion = await page.evaluate(async (partTriangles) => {
+    const app = (window as any).app;
+    await app.loadTrackAssets?.();
+    const before = app.doc.kcl.count;
+    const object = app.doc.kmp.GOBJ.find((item: any) => app.assets.objectModel(item.objectId)?.template);
+    app.doc.select([String(object.uid)]);
+    const found = app.collisionOfSelectedObjects().length;
+    await app.cmd("delete");
+    const after = app.doc.kcl.count;
+    app.doc.undo();
+    return { before, found, after, undone: app.doc.kcl.count, objects: app.doc.kmp.GOBJ.length, partTriangles };
+  }, initial.partTriangles);
+  if (deletion.found < 12 || deletion.after !== deletion.before - deletion.found || deletion.undone !== deletion.before) throw new Error(`Deleting the object did not remove its collision: ${JSON.stringify(deletion)}`);
+  console.log(`Deleting the object removed ${deletion.found} collision triangles (its generated box), undo restored them`);
+  // Objects without generated collision take none of the track's collision with them.
+  const others = await page.evaluate(() => {
+    const app = (window as any).app;
+    const out: Record<string, number> = {};
+    app.doc.kmp.GOBJ.forEach((item: any, i: number) => {
+      if (!app.assets.objectModel(item.objectId)?.template) return;
+      app.doc.select([String(item.uid)]);
+      const found = app.collisionOfSelectedObjects().length;
+      if (found) out[`${app.objectNames[item.objectId] || item.objectId}#${i}`] = found;
+    });
+    return { out, objects: app.doc.kmp.GOBJ.length };
+  });
+  console.log(`Other objects of the track with collision found: ${JSON.stringify(others.out)} (of ${others.objects} objects)`);
   if (errors.length) throw new Error(errors.join("\n"));
   console.log("Model-part and object collision generation, undo/redo, save/reopen passed");
 } finally {

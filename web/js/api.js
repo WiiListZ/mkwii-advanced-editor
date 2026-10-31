@@ -28,12 +28,12 @@ export const FILTERS = {
   track: [{ name: 'Track files', extensions: ['szs', 'wlz', 'wbz', 'wu8', 'kmp', 'kcl'] }],
   // File › Open: everything the editor can open, change and save back.
   editable: [
-    { name: 'All supported files', extensions: ['szs', 'wlz', 'wbz', 'wu8', 'arc', 'carc', 'kmp', 'kcl', 'brres', 'bmg', 'breff', 'breft', 'bin', 'bcp', 'bsp', 'brstm', 'brsar', 'xml'] },
+    { name: 'All supported files', extensions: ['szs', 'wlz', 'wbz', 'wu8', 'arc', 'carc', 'kmp', 'kcl', 'brres', 'bmg', 'breff', 'breft', 'bin', 'bcp', 'bsp', 'kmg', 'krt', 'krm', 'brstm', 'brsar', 'xml'] },
     { name: 'Tracks and archives', extensions: ['szs', 'wlz', 'wbz', 'wu8', 'arc', 'carc', 'kmp', 'kcl'] },
     { name: 'Models (BRRES)', extensions: ['brres'] },
     { name: 'Game text (BMG)', extensions: ['bmg'] },
     { name: 'Effects (BREFF / BREFT)', extensions: ['breff', 'breft'] },
-    { name: 'Game data (BIN, BCP, BSP)', extensions: ['bin', 'bcp', 'bsp'] },
+    { name: 'Game data (BIN, BCP, BSP, KMG, KRT, KRM)', extensions: ['bin', 'bcp', 'bsp', 'kmg', 'krt', 'krm'] },
     { name: 'Music and sounds (BRSTM / BRSAR)', extensions: ['brstm', 'brsar'] },
     { name: 'Riivolution XML', extensions: ['xml'] },
   ],
@@ -117,6 +117,38 @@ export const api = {
 
   async markReleaseNotesShown() {
     if (hasBackend) await call('release-notes', { method: 'POST' });
+  },
+
+  // Notes of the running version, from the updater's record or its GitHub release: { available, version, title, notes, url }.
+  async versionReleaseNotes() {
+    if (!hasBackend) throw new Error('Release notes are read by the desktop app.');
+    return call('version-notes');
+  },
+
+  // Copies of game files taken before a change that touches many of them (cups), so the change can
+  // be undone later. Kept in the editor's settings folder: { id, created, label, files: [{ path, existed, size }] }.
+  async createSnapshot(label, files, details = {}) {
+    if (!hasBackend) throw new Error('Backups require the desktop app');
+    return call('snapshots', { method: 'POST', body: { label, files, details } });
+  },
+
+  async listSnapshots() {
+    if (!hasBackend) return [];
+    return (await call('snapshots')).snapshots;
+  },
+
+  // Puts every file of the snapshot back (files that did not exist then are removed).
+  async restoreSnapshot(id) {
+    return call('snapshot-restore', { method: 'POST', query: { id } });
+  },
+
+  async deleteFile(path) {
+    if (!hasBackend) throw new Error('Deleting files requires the desktop app');
+    return call('delete', { method: 'POST', query: { path } });
+  },
+
+  async deleteSnapshot(id) {
+    return call('snapshot-delete', { method: 'POST', query: { id } });
   },
 
   // Asks for a file and reads it. Returns { path, name, data } or null.

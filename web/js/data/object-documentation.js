@@ -1,8 +1,10 @@
+// Object documentation: what each object does and what its eight settings mean. The editor's own
+// documentation is the JSON file object-documentation.json, in the same format a person can write;
+// a JSON chosen with "Replace with JSON…" is used instead of it, until "Restore default".
 // Object behaviour and setting names are paraphrased from the Custom Mario Kart object table:
 // https://mkwiiki.org/wiki/Object . Unknown settings are deliberately left unnamed.
-// Keys are ObjFlow.bin internal names; imported records may also use decimal or hex IDs.
-const doc = (description, settings = {}, notes = '') => ({ description, settings, ...(notes ? { notes } : {}) });
-const field = (label, description = '', options = {}) => ({ label, description, ...options });
+// Keys are ObjFlow.bin internal names, decimal IDs or hex IDs.
+import DEFAULT_JSON from './object-documentation.json' with { type: 'json' };
 
 // KMP stores every GOBJ setting as an unsigned 16-bit integer. This is the file
 // limit, not a promise that the game's object logic accepts every such value.
@@ -34,134 +36,6 @@ export function settingGuidance(setting) {
   };
 }
 
-const ITEM_TYPES = {
-  0: 'Default', 1: 'Banana', 2: 'Mushroom', 3: 'Triple Mushrooms', 4: 'Star', 5: 'Triple Green Shells', 6: 'Banana or Mushroom', 7: 'Green Shell',
-  8: 'Bob-omb', 9: 'Red Shell', 10: 'Mega Mushroom', 11: 'Thunder Cloud', 12: 'Star or Mushroom', 13: 'Empty (gives a Mushroom)', 14: 'Empty (gives a Mushroom)',
-  15: 'Empty (gives a Mushroom)', 16: 'Empty (gives a Mushroom)', 597: 'Default (0x255)',
-};
-const ITEM_TYPE_LIMIT = 'Other codes are not documented.';
-const LOTTERY = { 0: 'Normal roulette, respawn after 150 frames', 2: 'Shorter roulette, respawn after 150 frames', 3: 'Shorter roulette, respawn after 150 frames',
-  4: 'Shorter roulette, respawn after 600 frames', 5: 'Normal roulette, respawn after 600 frames', 6: 'Normal roulette, respawn after 900 frames' };
-const ROTATION = { signed: true, values: 'Positive: counterclockwise; negative: clockwise; 0: stationary.' };
-
-export const BUILTIN_OBJECT_DOCUMENTATION = {
-  itembox: doc('Touching this rotating box starts an item lottery. Its item pools and timing can be changed per placement.', {
-    2: field('Player item type', 'Item box item type for human players.', { options: ITEM_TYPES, otherValues: true, limits: ITEM_TYPE_LIMIT }),
-    3: field('CPU item type', 'Item box item type for computer players.', { options: ITEM_TYPES, otherValues: true, limits: ITEM_TYPE_LIMIT }),
-    4: field('Disable shadow', 'Hides the box shadow when set; any nonzero value hides it.', { options: { 0: 'Shadow visible', 1: 'Shadow hidden' }, otherValues: true }),
-    6: field('Lottery timing', 'Changes roulette duration and item-box respawn time. Short roulette does not work online.', { options: LOTTERY, otherValues: true, limits: 'Other codes unverified.' }),
-    7: field('Height offset', 'Signed offset from the object position.', { signed: true }),
-  }),
-  DummyPole: doc('Controls solidity of a pole already present in the course model.', { 1: field('Wall variant', 'KCL wall variant used for the pole.') }),
-  kuribo: doc('Goomba that walks along a route and reappears after being hit.', {
-    1: field('Respawn time', 'Time before the Goomba reappears after being hit; the game range is not documented.'),
-    2: field('Speed', 'Route movement speed. A value of 32 (0x20) is a documented working example.'),
-    3: field('Animation speed', 'Movement animation speed; the game range is not documented.'),
-  }),
-  choropu: doc('Moving Monty Mole from Moo Moo Meadows. Its route determines where it burrows or emerges.', {
-    1: field('Speed'), 2: field('Start delay', 'Delay in frames (60 frames = one second).'),
-  }, 'Do not use choropu and choropu2 together; they share a model resource.'),
-  choropu2: doc('Alternate Monty Mole that appears at a fixed position.', {}, 'Do not use choropu and choropu2 together.'),
-  cow: doc('A leader cow follows a route while other cows begin near the object position.', {
-    1: field('Following cows', 'Number of cows behind the leader; the supported maximum is not documented.'),
-    3: field('Follower delay', 'Start delay of the following cows, in frames (60 frames = one second).'),
-    4: field('Leader lead time', 'How much earlier the leader cow starts, in frames.'),
-  }),
-  dossunc: doc('Thwomp obstacle that stomps in place or uses a route for more complex motion.', {
-    1: field('Route speed', 'Set to 0 when no route is assigned.'),
-    2: field('Route behaviour', 'Set to 0 when no route is assigned.', { options: { 0: 'No route', 1: 'Stomps at route points', 2: 'Paired Thwomps moving sideways, then down', 3: 'Grounded side-to-side Thwomp' }, otherValues: true, limits: 'Other values unverified.' }),
-    3: field('Start delay', 'Frames after countdown starts; 240 (0xF0) starts immediately after GO.'),
-    4: field('Sleep time', 'Time asleep after countdown starts, in frames.'),
-  }, 'Without a route, settings 1 and 2 should be zero.'),
-  pakkun_f: doc('Attacking Piranha Plant, normally paired with its pipe.', {
-    1: field('Idle time', 'Frames between attacks in Time Trial and online races.'),
-  }),
-  pakkun_dokan: doc('Pipe used with the attacking Piranha Plant.'),
-  wanwan: doc('Chained Chain Chomp that lunges toward a target area.', {
-    1: field('Chain length', 'Chain length in game units.'),
-    4: field('Target X', 'Signed target X coordinate divided by 10.', { signed: true }),
-    5: field('Target Z', 'Signed target Z coordinate divided by 10.', { signed: true }),
-    6: field('Wander time', 'Frames spent wandering. Zero uses about 5 seconds; add about 3.5 seconds for the full cycle.', { values: '0=about 5 seconds; positive values specify frames.' }),
-    7: field('Lunge angle', 'Encoded as (wedge width in degrees − 35) / 2; the supported angular range is not documented.'),
-  }),
-  Hwanwan: doc('Route-following Chain Chomp from DS Peach Gardens.', {
-    1: field('Speed'), 2: field('Carried item boxes', 'Number of item boxes carried.'),
-  }, 'Use a curved route for this object.'),
-  poihana: doc('Cataquack that flings players upward. In races it can seek nearby players.', {
-    1: field('Colour', 'PAT0 body colour frame; a custom PAT0 may provide more colours.', { options: { 0: 'Blue', 1: 'Red', 2: 'Violet', 3: 'Green' }, otherValues: true, limits: 'A custom PAT0 may have more frames.' }),
-    2: field('Detection distance', 'Distance at which it starts seeking players.'),
-  }),
-  DKrockGC: doc('Rolling rock from GCN DK Mountain that follows a route.', {
-    1: field('Second-rock delay', 'A nonzero value introduces an approximately 1.5-second delay for the second rock.', { options: { 0: 'No extra delay', 1: 'Extra delay' }, otherValues: true, limits: 'Any nonzero value adds the delay.' }),
-    2: field('Minimum cycle', 'Minimum cycle time in frames (60 frames = one second).'),
-    3: field('Speed'), 4: field('Bounce factor'),
-    5: field('Additional flag', 'Only value 1 is documented on GCN DK Mountain.', { values: '1=original-track value.', limits: 'Other values have no documented effect.' }),
-  }, 'The route must use back-and-forth motion for the rock to respawn.'),
-  sanbo: doc('Pokey from Dry Dry Ruins and DS Desert Hills that follows a route.', { 1: field('Speed', 'Movement speed along the route.') }, 'Route setting 1 controls the pause at each point in frames.'),
-  sanbo_big: doc('Large Pokey variant used in a tournament.'),
-  hanachan: doc('Wiggler from Maple Treeway that follows a route.', { 1: field('Speed') }, 'Route setting 1 controls pauses. Keep the route at suitable heights.'),
-  basabasa: doc('Flying Swoopers that cross the course.'),
-  FireSnake: doc('Ground-level fire enemy associated with DS Desert Hills.', {
-    1: field('Sun route', 'Route used by the sun that releases it.'),
-    2: field('Lifetime', 'Time before disappearing, in frames.'),
-  }),
-  crab: doc('Crab obstacle from GBA Shy Guy Beach that follows a route.', {
-    1: field('Speed', 'Units per frame (60 frames = one second).'),
-    2: field('Facing direction', 'Direction of the crab along the route.', { options: { 0: 'Left', 1: 'Right' }, otherValues: true, limits: 'Other values unverified.' }),
-  }),
-  Crab: doc('Crab obstacle found near beaches.'),
-  car_body: doc('Traffic car from Moonview Highway. Its route controls the path and blink direction.', {
-    1: field('Route start'), 2: field('Speed mode 0', 'Speed for route setting 2 = 0.'),
-    3: field('Speed mode 1', 'Speed for route setting 2 = 1.'),
-    4: field('Car colour', 'Original car colour variant.', { options: { 0: 'Blue', 1: 'Red', 2: 'Yellow' }, otherValues: true, limits: 'Other values unverified.' }),
-  }),
-  kart_truck: doc('Traffic truck from Moonview Highway that follows a route.', {
-    1: field('Route start'), 2: field('Speed mode 0'), 3: field('Speed mode 1'),
-    4: field('Truck texture', 'Original truck texture variant.', { options: { 0: 'Moo Moo', 1: 'Fruit', 2: 'Factory' }, otherValues: true, limits: 'Other values unverified.' }),
-  }),
-  CarA2: doc('Moving car from Coconut Mall.', { 1: field('Speed'), 2: field('Acceleration'), 3: field('Pause time') }),
-  CarA3: doc('Moving car from Coconut Mall.', { 1: field('Speed'), 2: field('Acceleration'), 3: field('Pause time') }),
-  TruckWagon: doc('Mine cart obstacle that moves along the track.'),
-  seagull: doc('Seagull that flies along a route.', {
-    1: field('Speed', 'Flight speed along the route.'), 2: field('Seagull count', 'Number of birds; the supported maximum is not documented.'),
-  }),
-  Epropeller: doc('Electric propeller obstacle from Koopa Cape.', {
-    1: field('Rotation speed', 'Number of rotations over 12 seconds in the normal game.'),
-    2: field('Direction', 'Direction of rotation.', { options: { 0: 'Clockwise', 1: 'Counterclockwise' }, otherValues: true, limits: 'Other values unverified.' }),
-    8: field('Extended timing factor', 'Unused in the normal game. With LE-CODE or a compatible cheat, multiplies the period used by setting 1.', { values: '0=normal 12-second period; positive values use 12 × setting 8 seconds.', limits: 'Only meaningful with the compatible extension.' }),
-  }),
-  WLfirebarGC: doc('Rotating fire-bar obstacle from GCN Waluigi Stadium.', {
-    1: field('Fireballs per arm'), 2: field('Rotation speed', 'Rotation speed and direction.', ROTATION),
-    3: field('Fireball spacing'), 4: field('Number of arms'),
-  }),
-  koopaFirebar: doc('Rotating fire-bar obstacle from Bowser’s Castle.', {
-    1: field('Fireballs per arm'), 2: field('Rotation speed', 'Rotation speed and direction.', ROTATION),
-    3: field('Fireball spacing'), 4: field('Number of arms'),
-  }),
-  WLfireringGC: doc('Rotating ring of fireballs from GCN Waluigi Stadium.', {
-    1: field('Fireball count'), 2: field('Rotation speed', 'Rotation speed and direction.', ROTATION),
-    3: field('Pulsation', 'Radius pulsation factor.', { values: '0=no pulsation; setting 3 ≥ setting 4 reverses the pulsation.' }),
-    4: field('Radius', 'Ring radius. Zero disables pulsation.', { values: '0=no pulsation; positive values specify radius.' }),
-  }),
-  begoman_spike: doc('Spiked Topman from Galaxy Colosseum; its rings and appearance times are controlled by settings.', {
-    1: field('Topman ID', 'One-based ID used by begoman_manager.', { min: 1, limits: 'The supported count depends on the manager configuration.' }), 2: field('First ring radius'), 3: field('First switch time', 'Frames after race start.'),
-    4: field('Second ring radius'), 5: field('Second switch time', 'Frames after race start.'),
-    6: field('Third ring radius'), 7: field('Third switch time', 'Frames after race start.'),
-    8: field('Fourth ring radius'),
-  }),
-  sun: doc('Sun and lighting effect used by desert courses.'),
-  psea: doc('Animated sea from GCN Peach Beach.'),
-  Psea: doc('Animated sea from GCN Peach Beach.'),
-  lensFX: doc('Lens flare positioned near the course light source.'),
-  venice_nami: doc('Sea level effect from Delfino Pier, with several rising and falling stages.'),
-  flagBlend: doc('Animated course flag.'),
-  MashBalloonGC: doc('Mushroom balloon decoration.'),
-  kinoko_ud: doc('Moving bouncy mushroom from Mushroom Gorge.'),
-  puchi_pakkun: doc('Small Piranha Plant obstacle from N64 Mario Raceway.'),
-  Press: doc('Moving press obstacle.'),
-  airblock: doc('Invisible box used as a barrier in tournaments.'),
-  coin: doc('Collectible coin used in battle arenas.'),
-};
 
 const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const clean = (value, where, max = 2000) => {
@@ -216,6 +90,14 @@ export function parseObjectDocumentation(input) {
     if (value.label !== undefined) entry.label = clean(value.label, `${key}.label`, 120);
     if (value.description !== undefined) entry.description = clean(value.description, `${key}.description`);
     if (value.notes !== undefined) entry.notes = clean(value.notes, `${key}.notes`);
+    if (value.status !== undefined) {
+      if (!STATUSES.includes(value.status)) throw new Error(`${key}.status must be "documented", "partial" or "unknown"`);
+      entry.status = value.status;
+    }
+    if (value.documented !== undefined) {
+      if (!Number.isInteger(value.documented) || value.documented < 0 || value.documented > 100) throw new Error(`${key}.documented must be a whole number from 0 to 100 (a percentage)`);
+      entry.documented = value.documented;
+    }
     if (value.settings !== undefined) {
       if (!plain(value.settings)) throw new Error(`${key}.settings must be an object`);
       entry.settings = Object.create(null);
@@ -230,18 +112,88 @@ export function parseObjectDocumentation(input) {
       }
     }
     if (!Object.keys(entry).length) throw new Error(`${key} has no documentation`);
+    if (entry.status === 'documented' && entry.documented !== undefined && entry.documented < 100) throw new Error(`${key}: "documented" needs 100%, use "partial" below that`);
     objects[normalized] = entry;
   }
   return objects;
 }
 
-export function objectDocumentation(id, internalName, imported = {}) {
-  const built = Object.hasOwn(BUILTIN_OBJECT_DOCUMENTATION, internalName) ? BUILTIN_OBJECT_DOCUMENTATION[internalName] : {};
-  const byName = Object.hasOwn(imported, internalName) ? imported[internalName] : {};
-  const byId = Object.hasOwn(imported, String(id)) ? imported[String(id)] : {};
+const STATUSES = ['documented', 'partial', 'unknown'];
+
+// The documentation of an object: from `custom` (a JSON chosen by the person, which replaces the
+// default one) or else from the default JSON. An entry by ID completes the one by name.
+export function objectDocumentation(id, internalName, custom = null) {
+  const source = custom && Object.keys(custom).length ? custom : defaultObjects;
+  const byName = Object.hasOwn(source, internalName) ? source[internalName] : {};
+  const byId = Object.hasOwn(source, String(id)) ? source[String(id)] : {};
   const settings = {};
-  for (const source of [built.settings, byName.settings, byId.settings]) {
-    for (const [index, setting] of Object.entries(source || {})) settings[index] = { ...settings[index], ...setting };
+  for (const part of [byName.settings, byId.settings]) {
+    for (const [index, setting] of Object.entries(part || {})) settings[index] = { ...settings[index], ...setting };
   }
-  return { ...built, ...byName, ...byId, settings };
+  return { ...byName, ...byId, settings };
+}
+
+// How well an object is documented: { status: 'documented' | 'partial' | 'unknown', percent,
+// estimated }. "status" and "documented" (a percentage) in the JSON are used when given; otherwise
+// both are estimated from what the entry holds: half for a description, half for its eight settings.
+export function documentationStatus(documentation) {
+  const { status: given, documented } = documentation || {};
+  const named = Object.values(documentation?.settings || {}).filter((s) => s?.label).length;
+  const estimate = Math.round((documentation?.description ? 50 : 0) + named / 8 * 50);
+  let percent = documented ?? (given === 'documented' ? 100 : given === 'unknown' ? 0 : estimate);
+  if (given === 'partial' && documented === undefined) percent = Math.min(99, Math.max(1, percent));
+  const status = given ?? (percent >= 100 ? 'documented' : percent <= 0 ? 'unknown' : 'partial');
+  return { status, percent, estimated: given === undefined && documented === undefined };
+}
+export const STATUS_LABELS = { documented: 'Documented', partial: 'Partially documented', unknown: 'Unknown' };
+
+// The default documentation, as shipped with the editor (also offered for export, to start a JSON from).
+export const DEFAULT_OBJECT_DOCUMENTATION_JSON = DEFAULT_JSON;
+export const BUILTIN_OBJECT_DOCUMENTATION = parseObjectDocumentation(DEFAULT_JSON);
+
+// The latest default documentation is published in data/objects.json of this repository; the editor
+// downloads it at start and uses it in place of the copy it was shipped with (useDefaultDocumentation).
+export const OBJECT_INFO_REPO = 'https://github.com/WiiListZ/mkwii-advanced-editor-object-info';
+export const OBJECT_INFO_URL = 'https://raw.githubusercontent.com/WiiListZ/mkwii-advanced-editor-object-info/main/data/objects.json';
+
+// The default documentation in use: the shipped copy, or a newer one from OBJECT_INFO_URL.
+// source: { kind: 'built-in' } or { kind: 'online', fetched: ISO date }.
+let defaultObjects = BUILTIN_OBJECT_DOCUMENTATION, defaultJson = DEFAULT_JSON, defaultSource = { kind: 'built-in' };
+export function useDefaultDocumentation(json, source) {
+  const objects = json ? parseObjectDocumentation(json) : BUILTIN_OBJECT_DOCUMENTATION;
+  defaultObjects = objects;
+  defaultJson = json || DEFAULT_JSON;
+  defaultSource = json ? source : { kind: 'built-in' };
+  return objects;
+}
+export const defaultDocumentation = () => ({ objects: defaultObjects, json: defaultJson, source: defaultSource });
+
+// A newer default documentation brought into the person's own documentation without touching their
+// work. `custom` is their documentation, `base` the default it started from, `next` the newer default
+// (all parsed). Object by object:
+// - an entry they did not change (the same as in `base`) takes the newer one, or goes if it was removed;
+// - an entry they changed, added or removed stays as they left it;
+// - an object new in `next` (not in `base`) is added, unless they already have their own.
+// Returns { objects, updated, added, removed, kept } (kept: their entries that differ from `next`).
+export function mergeDocumentationUpdate(custom, base, next) {
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const has = (o, k) => Object.hasOwn(o, k);
+  const objects = Object.create(null);
+  let updated = 0, added = 0, removed = 0, kept = 0;
+  for (const key of Object.keys(custom)) {
+    const mine = custom[key];
+    if (has(base, key) && same(mine, base[key])) {
+      if (has(next, key)) { objects[key] = next[key]; if (!same(mine, next[key])) updated++; }
+      else removed++;
+    } else {
+      objects[key] = mine;
+      if (!has(next, key) || !same(mine, next[key])) kept++;
+    }
+  }
+  for (const key of Object.keys(next)) {
+    if (has(custom, key) || has(base, key)) continue; // theirs, or removed by them
+    objects[key] = next[key];
+    added++;
+  }
+  return { objects, updated, added, removed, kept };
 }

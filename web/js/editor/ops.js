@@ -217,11 +217,13 @@ export class Ops {
   }
 
   // ---- Deleting ------------------------------------------------------------------
-  deleteSelection() {
+  // `alongside` runs in the same undo step (the editor removes the deleted objects' generated collision there).
+  deleteSelection(alongside = null) {
     const doc = this.doc;
     const infos = doc.selectedInfos();
     if (!infos.length) return 0;
     doc.change('Delete', () => {
+      alongside?.();
       const k = this.k;
       const removePoints = new Set(), removeGroups = { ENPT: new Set(), ITPT: new Set(), CKPT: new Set() };
       const removeFlat = Object.fromEntries(FLAT.map((f) => [f, new Set()]));

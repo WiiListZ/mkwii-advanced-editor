@@ -34,8 +34,8 @@ function defaultFolder() {
 }
 
 // folder / language / file: open on one archive folder, language and BMG (from the archive window).
-export function GameTextDialog({ search: initialSearch = "", folder: initialFolder, language: initialLanguage, file: initialFile, loose, close }: {
-  search?: string; folder?: string; language?: string; file?: string; loose?: LooseFile; close: (v: any) => void;
+export function GameTextDialog({ search: initialSearch = "", folder: initialFolder, language: initialLanguage, file: initialFile, loose, saveLoose, close }: {
+  search?: string; folder?: string; language?: string; file?: string; loose?: LooseFile; saveLoose?: (data: Uint8Array) => Promise<boolean>; close: (v: any) => void;
 }) {
   const [folder, setFolder] = React.useState(() => initialFolder || defaultFolder());
   const [files, setFiles] = React.useState<string[] | null>(null);
@@ -170,7 +170,8 @@ export function GameTextDialog({ search: initialSearch = "", folder: initialFold
         setLoading(`Saving ${a.name}…`);
         if (a.loose) {
           const data = findFile(a.tree, a.loose.name)!.data;
-          const target = await editor.writeLoose(a.loose.path, a.loose.name, data);
+          // A BMG kept inside another file (a Pulsar pack's names) is written back by its owner.
+          const target = saveLoose ? ((await saveLoose(data)) ? a.loose.path || a.loose.name : null) : await editor.writeLoose(a.loose.path, a.loose.name, data);
           if (!target) throw new Error("Not saved");
           a.loose = { ...a.loose, path: target, data };
           a.path = target;

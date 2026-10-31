@@ -1,5 +1,6 @@
 // Run with: bun run tests/ui.track-list.smoke.ts
-// Uses an isolated workspace to verify pagination, search and live folder updates.
+// Uses an isolated workspace to verify the track list (Cups and tracks › All tracks): pagination,
+// search and live folder updates, and the Home notice that the list moved there.
 import puppeteer from "puppeteer-core";
 import { mkdtempSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -26,7 +27,12 @@ try {
   page.on("pageerror", (error) => { throw error; });
   await page.setViewport({ width: 1200, height: 900 });
   await page.goto(`http://127.0.0.1:${port}/?t=tracks-smoke`);
-  await page.waitForFunction(() => document.body.textContent?.includes("100 files"));
+  // Home says once where the track list went; its button opens Cups and tracks.
+  await page.waitForSelector("[data-tracks-moved]");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>("[data-tracks-moved] button")].find((b) => b.textContent?.includes("Open Cups and tracks"))!.click());
+  await page.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => b.textContent?.startsWith("All tracks")));
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.startsWith("All tracks"))!.click());
+  await page.waitForFunction(() => document.body.textContent?.includes("of 100 files"));
   await page.screenshot({ path: join(dir, "track-list.png") });
   if (!(await page.$('button[aria-label="Next track page"]'))) throw new Error("Track pagination is missing");
   await page.click('button[aria-label="Next track page"]');
@@ -34,9 +40,9 @@ try {
   await page.type('input[aria-label="Search tracks"]', "73");
   await page.waitForFunction(() => document.body.textContent?.includes("1 of 1"));
   await page.keyboard.down("Control"); await page.keyboard.press("A"); await page.keyboard.up("Control"); await page.keyboard.press("Backspace");
-  await page.waitForFunction(() => document.body.textContent?.includes("100 shown"));
+  await page.waitForFunction(() => document.body.textContent?.includes("100 of 100 files"));
   await writeFile(join(folder, "100.szs"), new Uint8Array());
-  await page.waitForFunction(() => document.body.textContent?.includes("101 files"), { timeout: 6000 });
+  await page.waitForFunction(() => document.body.textContent?.includes("of 101 files"), { timeout: 6000 });
   const next = join(dir, "next-files");
   await mkdir(join(next, "Race", "Course"), { recursive: true });
   await writeFile(join(next, "Race", "Course", "new.szs"), new Uint8Array());
@@ -52,7 +58,9 @@ try {
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Keep current Common.szs"))?.click());
   const keptCommon = await switchWorkspace;
   if (!keptCommon) throw new Error("Changing workspace discarded the manually loaded Common.szs");
-  await page.waitForFunction(() => document.body.textContent?.includes("1 file"), { timeout: 6000 });
+  await page.waitForFunction(() => document.body.textContent?.includes("of 1 files"), { timeout: 6000 });
+  const noticeGone = await page.evaluate(() => localStorage.getItem("mkwii-tracks-moved-seen") === "1");
+  if (!noticeGone) throw new Error("The Home notice was not marked as read");
   console.log(`Track list updated: ${join(dir, "track-list.png")}`);
 } finally {
   await browser.close();

@@ -1,6 +1,5 @@
 import * as React from "react";
-import { Box, CircleHelp, FolderOpen, Loader2, Package, Search, Star } from "lucide-react";
-import { dialogs } from "../dialogs-store";
+import { Box, FolderOpen, Loader2, Package, Search, Star } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +12,8 @@ import { Hint, SectionTitle } from "../common";
 import { cn } from "@/lib/utils";
 import { ObjectPreview } from "./ObjectPreview";
 import { ObjectDocumentationView } from "./ObjectDocumentationView";
+import { documentationSource, ObjectDocumentationButtons } from "./GameFilesCards";
+import { documentationStatus, STATUS_LABELS } from "../../../js/data/object-documentation.js";
 
 interface Entry { id: number; name: string; label: string; cat: string }
 
@@ -26,6 +27,7 @@ const sourceText = (source: Source) => source === "track" ? "Model from this tra
 function ObjectRow({ e, extra, source, selected, onSelect, onDoubleClick }: { e: Entry; extra?: string; source: Source; selected: boolean; onSelect: () => void; onDoubleClick?: () => void }) {
   const ed = useEditor();
   const documentation = ed.getObjectDocumentation(e.id);
+  const status = documentationStatus(documentation);
   const fromLibrary = !!source && typeof source === "object";
   const favorite = ed.settings.favoriteObjects.includes(e.id);
   return (
@@ -45,6 +47,7 @@ function ObjectRow({ e, extra, source, selected, onSelect, onDoubleClick }: { e:
           <div className="truncate text-[12.5px]">{e.label}</div>
           <div className="truncate font-mono text-[10px] text-muted-foreground">{hex(e.id)} · {e.name}{fromLibrary && <span className="font-sans text-sky-400/90"> · {(source as any).label}</span>}</div>
         </div>
+        {status.status !== "documented" && <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground" title={`${(STATUS_LABELS as any)[status.status]}, ${status.estimated ? "about " : ""}${status.percent}% documented`}>{status.status === "unknown" ? "Unknown" : `${status.estimated ? "~" : ""}${status.percent}%`}</span>}
         {extra && <Badge variant="secondary">{extra}</Badge>}
         <button type="button" aria-label={`${favorite ? "Remove" : "Add"} ${e.label} ${favorite ? "from" : "to"} favorites`} aria-pressed={favorite}
           title={favorite ? "Remove from favorites" : "Add to favorites"}
@@ -66,12 +69,12 @@ export function ObjectsPanel() {
   const [previewId, setPreviewId] = React.useState<number | null>(null);
   const entries: Entry[] = React.useMemo(() => [...new Set([
     ...Object.keys(ed.objectNames),
-    ...Object.keys(ed.importedObjectDocumentation).filter((key) => /^\d+$/.test(key)),
+    ...Object.keys(ed.customObjectDocumentation).filter((key) => /^\d+$/.test(key)),
   ])].map((key) => {
     const id = Number(key);
     const name = ed.objectNames[id] || `object_${id.toString(16)}`;
     return { id, name, label: ed.objectLabel(id), cat: categorizeObject(name) };
-  }).sort((a, b) => a.id - b.id), [ed.objectNames, ed.importedObjectDocumentation]);
+  }).sort((a, b) => a.id - b.id), [ed.objectNames, ed.customObjectDocumentation]);
   const cats = ["All", ...[...new Set(entries.map((e) => e.cat))].sort()];
   const fileSet = (tree: any) => new Set<string>(tree ? listFiles(tree).map((x: any) => x.path.split("/").pop().toLowerCase()) : []);
   const trackFiles = fileSet(ed.doc.szs), commonFiles = fileSet(ed.assets?.common);
@@ -101,10 +104,8 @@ export function ObjectsPanel() {
         <Box className="mx-1 inline size-3.5 text-success" /> means the real game model is shown.
       </p>
       <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/20 p-2">
-        <span className="min-w-0 flex-1 text-[11px] text-muted-foreground">Object documentation: {Object.keys(ed.importedObjectDocumentation).length} imported entries. JSON entries can add descriptions and explain settings 1–8.</span>
-        <Button size="sm" variant="secondary" onClick={() => void ed.importObjectDocumentation()}><FolderOpen /> Import JSON…</Button>
-        <Button size="sm" variant="ghost" onClick={() => void dialogs.open("help", { tab: "objectDocs" })}><CircleHelp /> JSON format</Button>
-        {Object.keys(ed.importedObjectDocumentation).length > 0 && <Button size="sm" variant="ghost" onClick={() => void ed.clearImportedObjectDocumentation()}>Remove imported</Button>}
+        <span className="min-w-0 basis-full text-[11px] text-muted-foreground">Object documentation in use: {documentationSource(ed)}. A JSON you choose replaces it; each object shows how well it is documented.</span>
+        <ObjectDocumentationButtons />
       </div>
       {!loaded && (
         <Card className="border-primary/30 bg-primary/5">

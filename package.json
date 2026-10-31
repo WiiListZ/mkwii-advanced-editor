@@ -1,6 +1,6 @@
 {
   "name": "mkwii-advanced-editor",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "license": "MIT",
   "packageManager": "bun@1.4.3",
   "engines": {
@@ -17,6 +17,7 @@
     "test:server": "bun run tests/server.smoke.ts"
   },
   "dependencies": {
+    "@breezystack/lamejs": "1.2.7",
     "@fontsource-variable/m-plus-1": "5.3.0",
     "@radix-ui/react-alert-dialog": "1.1.2",
     "@radix-ui/react-checkbox": "1.1.2",

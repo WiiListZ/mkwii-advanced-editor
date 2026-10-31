@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator";
 import { AREA_TYPES, AREA_SHAPES, CAMERA_TYPES, CHECKPOINT_TYPE_LABEL } from "../../../js/data/defs.js";
 import { AREA_TYPE_HELP, KIND_HELP, fieldHelp } from "../../../js/data/help.js";
 import { settingDisplayValue, settingGuidance, settingStoredValue } from "../../../js/data/object-documentation.js";
+import { DocumentationStatus } from "./ObjectDocumentationView";
 import { findFile } from "../../../js/formats/u8.js";
 import { useEditor } from "../hooks";
 import { editor, hex, KIND_LABEL, SECTION_LABEL } from "../editor";
@@ -561,6 +562,7 @@ function FieldEditor({ info, f, bulk }: { info: any; f: Field; bulk: boolean }) 
           </div>
           <Button size="sm" variant="secondary" onClick={async () => { const id = await ed.pickObject(it.objectId); if (id != null) commit(info, "objectId", id, bulk, "Change object"); }}>Change…</Button>
           </div>
+          <DocumentationStatus documentation={objectDoc} />
           {objectDoc.description && <p className="text-xs leading-relaxed text-muted-foreground">{objectDoc.description}</p>}
           {objectDoc.notes && <p className="border-l-2 border-amber-400/70 pl-2 text-[11px] leading-relaxed text-muted-foreground">{objectDoc.notes}</p>}
         </div>

@@ -46,6 +46,11 @@ await copyFile(join(font, "LICENSE"), join(dist, "fonts", "OFL.txt"));
 await mkdir(join(dist, "licenses"), { recursive: true });
 await copyFile(join(root, "node_modules", "seek-bzip", "LICENSE"), join(dist, "licenses", "seek-bzip.txt"));
 await copyFile(join(root, "node_modules", "fflate", "LICENSE"), join(dist, "licenses", "fflate.txt"));
+await copyFile(join(root, "node_modules", "@breezystack", "lamejs", "LICENSE"), join(dist, "licenses", "lamejs.txt"));
+
+// Pulsar engine files (MIT), written into a new mod when custom cups are created; see vendor/pulsar/NOTICE.md.
+await mkdir(join(dist, "pulsar"), { recursive: true });
+for (const f of await readdir(join(root, "vendor", "pulsar"))) await copyFile(join(root, "vendor", "pulsar", f), join(dist, "pulsar", f));
 
 const entries = await readdir(dist, { recursive: true });
 const files = (await Promise.all(entries.map(async (f) => (await stat(join(dist, f))).isFile() ? relative(dist, join(dist, f)).replace(/\\/g, "/") : null))).filter((f): f is string => !!f);

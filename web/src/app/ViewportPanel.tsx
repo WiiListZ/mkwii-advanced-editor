@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ArrowRight, AudioLines, Box, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, Flame, FolderOpen, History, Languages, Mouse, PackagePlus, Pause, Play, Search, Settings, SlidersHorizontal, Sparkles, Video, X } from "lucide-react";
+import { ArrowRight, AudioLines, Box, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, Flame, FolderOpen, History, Languages, Mouse, PackagePlus, Pause, Play, Search, Settings, SlidersHorizontal, Sparkles, Trophy, Video, X, Clapperboard } from "lucide-react";
 import { WorkspaceCard } from "./panels/WorkspaceCard";
 import { CommonSzsCard, ObjectDocumentationCard } from "./panels/GameFilesCards";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,8 @@ import { editor, hasBackend, PATH_KINDS } from "./editor";
 import { contextActions } from "./context-actions";
 import { Map2DPanel } from "./Map2DPanel";
 import { IntroTimeline } from "./IntroTimeline";
+import { DISCORD_URL, DiscordIcon } from "./updates";
+import { api } from "../../js/api.js";
 
 export function ViewportPanel() {
   const host = React.useRef<HTMLDivElement>(null);
@@ -113,20 +115,22 @@ function Welcome() {
   const ed = useEditor("settings", "doc", "ui");
   const recent = ed.settings.recent || [];
   // Tools for the rest of the game; the ones that need the game folder appear once it is chosen.
-  const library = !!ed.trackFiles?.files.length;
+  // The track library moved into Cups and tracks: said once on Home, to new and updated users alike.
+  const [movedSeen, setMovedSeen] = React.useState(() => localStorage.getItem("mkwii-tracks-moved-seen") === "1");
+  const dismissMoved = () => { localStorage.setItem("mkwii-tracks-moved-seen", "1"); setMovedSeen(true); };
   const gameTools = [
+    { icon: Clapperboard, title: "Preview videos", text: "Track previews and menu videos (THP)", cmd: "thp", detail: "Play the game's THP videos and replace a track's preview, a cup's picture or a whole menu video with a picture, a video file or another preview" },
     { icon: Languages, title: "Game text", text: "Menu and race messages, with a preview", cmd: "gameText", detail: "Edit menu and race messages with a preview of where they appear in the game" },
     { icon: AudioLines, title: "Sounds and music", text: "Listen to and replace music and effects", cmd: "audio", detail: "Listen to the game's music and sound effects and replace them with your own" },
     { icon: Box, title: "Characters and models", text: "Models, textures and animations", cmd: "assets", detail: "Edit game characters, object models, textures and animations" },
     ...(ed.workspace() ? [{ icon: Flame, title: "Effects", text: "Smoke, fire, sparks of every archive", cmd: "workspaceEffects", detail: "Edit the particle effects (smoke, fire, sparks…) of every track and archive in the game folder" }] : []),
-    ...(ed.workspaceInfo?.common ? [{ icon: SlidersHorizontal, title: "Game data", text: "Stats, items, objects, cameras and physics (.bin, .bcp, .bsp)", cmd: "gameParams", detail: "The data files of Race/Common.szs, every value explained: vehicle and character stats, item chances, object types and reactions, CPU drivers, vehicle parts and cameras (.bin), the camera before the countdown (.bcp) and the physics of each vehicle (.bsp)" }] : []),
+    ...(ed.workspaceInfo?.common ? [{ icon: SlidersHorizontal, title: "Game data", text: "Stats, items, objects, cameras, Battle and GP settings", cmd: "gameParams", detail: "The data files of Race/Common.szs, every value explained: vehicle and character stats, item chances, object types and reactions, CPU drivers, vehicle parts and cameras (.bin), the camera before the countdown (.bcp), the physics of each vehicle (.bsp), the Battle settings (.kmg), the Grand Prix time limits (.krt) and the rumble patterns (.krm)" }] : []),
     { icon: PackagePlus, title: "Riivolution mod", text: "Mod folder for Riivolution or Dolphin", cmd: "riivolution", detail: "Turn your edited files into a mod folder for Riivolution or Dolphin, or edit a Riivolution XML" },
   ];
   return (
-    // With a track library the page fills the window and only the library list scrolls; without one
-    // the content is centred. m-auto (not items-center) keeps the top reachable on very small windows.
+    // The content is centred; m-auto (not items-center) keeps the top reachable on very small windows.
     <div className="absolute inset-0 z-10 flex overflow-y-auto bg-background p-6 short:py-4">
-      <div className={`mx-auto flex w-full max-w-[1040px] flex-col gap-5 short:gap-3 ${library ? "h-full min-h-[520px]" : "my-auto"}`}>
+      <div className="mx-auto my-auto flex w-full max-w-[1040px] flex-col gap-5 short:gap-3">
         <header className="flex items-center gap-3">
           <img src="icon.png" className="size-14 shrink-0 select-none short:size-11" alt="" draggable={false} />
           <div className="min-w-0 flex-1">
@@ -135,6 +139,7 @@ function Welcome() {
           </div>
           <Button variant="ghost" size="sm" aria-label="Settings" onClick={() => ed.cmd("settingsDialog")}><Settings /> Settings</Button>
           <Button variant="ghost" size="sm" onClick={() => ed.cmd("help")}><CircleHelp /> Help</Button>
+          <Button variant="ghost" size="sm" title="Join the editor's Discord server: help, questions and news" onClick={() => api.openUrl(DISCORD_URL)}><DiscordIcon /> Discord</Button>
         </header>
         {!ed.isEmpty && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2.5">
@@ -146,11 +151,23 @@ function Welcome() {
             <Button size="icon" variant="ghost" title="Close track" aria-label="Close track" onClick={() => ed.cmd("closeTrack")}><X /></Button>
           </div>
         )}
+        {!movedSeen && (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-card px-3 py-2.5" role="status" data-tracks-moved>
+            <Trophy className="size-5 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-medium">The track list is now in Cups and tracks</div>
+              <div className="text-[11.5px] text-muted-foreground">Every track of your game folder, by cup, with the search, version and type filters, the tracks that are in no cup and their preview videos. Click a track there to open it in the editor.</div>
+            </div>
+            <Button size="sm" onClick={() => { dismissMoved(); ed.cmd("cups"); }}><Trophy /> Open Cups and tracks</Button>
+            <Button size="sm" variant="ghost" onClick={dismissMoved}>Got it</Button>
+          </div>
+        )}
         <div className="grid min-h-0 flex-1 items-start gap-5 short:gap-3 lg:grid-cols-[minmax(0,1fr)_300px] lg:grid-rows-[minmax(0,1fr)] lg:items-stretch">
           <div className="flex min-h-0 min-w-0 flex-col gap-5 short:gap-3">
             <HomeSection title="Tracks">
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                <HomeTile icon={FolderOpen} title="Open a track" text=".szs, .kmp or .kcl file" shortcut="Ctrl+O" primary detail="A .szs from Race/Course, or a single .kmp / .kcl" onClick={() => ed.cmd("open")} />
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                <HomeTile icon={Trophy} title="Cups and tracks" text="All your tracks, by cup" primary detail="Every track of the game folder by cup (and those in no cup), with search and filters: click one to edit it. Move tracks between cups, put in your own, make new cups" onClick={() => { dismissMoved(); ed.cmd("cups"); }} />
+                <HomeTile icon={FolderOpen} title="Open a track" text=".szs, .kmp or .kcl file" shortcut="Ctrl+O" detail="A .szs from Race/Course, or a single .kmp / .kcl" onClick={() => ed.cmd("open")} />
                 <HomeTile icon={Sparkles} title="New track" text="Draw it from above; the rest is built" shortcut="Ctrl+N" detail="Draw the layout from above — road, walls, routes and checkpoints are built for you" onClick={() => ed.cmd("newTrack")} />
                 <HomeTile icon={FilePlus2} title="Empty project" text="Start from your own collision" detail="Start from scratch and import your own collision" onClick={() => ed.cmd("newEmpty")} />
               </div>
@@ -160,15 +177,10 @@ function Welcome() {
                 {gameTools.map((tool) => <HomeTile key={tool.cmd} icon={tool.icon} title={tool.title} text={tool.text} detail={tool.detail} onClick={() => ed.cmd(tool.cmd)} />)}
               </div>
             </HomeSection>
-            {library ? <WelcomeTracks /> : null}
-          </div>
-          <aside className="flex min-h-0 min-w-0 flex-col gap-5 short:gap-3 lg:overflow-y-auto">
-            <WorkspaceCard brief />
-            <CommonSzsCard className="p-3" brief />
-            <ObjectDocumentationCard className="p-3" brief />
+            {/* Where the track list was: the files opened last, two per row. */}
             <HomeSection title="Recent files">
               {recent.length ? (
-                <div className="flex flex-col gap-0.5 rounded-lg border bg-card p-1">
+                <div className="grid grid-cols-1 gap-0.5 rounded-lg border bg-card p-1 sm:grid-cols-2" data-recent-files>
                   {recent.map((p) => (
                     <button key={p} onClick={() => ed.openPath(p)} title={p} className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent">
                       <History className="size-3.5 shrink-0 text-muted-foreground" />
@@ -179,8 +191,13 @@ function Welcome() {
                     </button>
                   ))}
                 </div>
-              ) : <p className="m-0 text-xs text-muted-foreground">Files you open appear here.</p>}
+              ) : <p className="m-0 rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">Files you open appear here.</p>}
             </HomeSection>
+          </div>
+          <aside className="flex min-h-0 min-w-0 flex-col gap-5 short:gap-3 lg:overflow-y-auto">
+            <WorkspaceCard brief />
+            <CommonSzsCard className="p-3" brief />
+            <ObjectDocumentationCard className="p-3" brief />
             {!hasBackend && (
               <CardDescription>Running in a plain browser: files are opened from disk and saved as downloads. Start the desktop app for direct saving.</CardDescription>
             )}
@@ -254,84 +271,6 @@ function IntroPlayer() {
         <button className="shrink-0 cursor-pointer rounded px-2 py-1 text-xs text-white/85 hover:bg-white/15" onClick={() => ed.stopIntro()}>Back to editing (Esc)</button>
       </div>
     </div>
-  );
-}
-
-// The folder list is independent of the model index, so even very large mods appear immediately.
-function WelcomeTracks() {
-  const ed = useEditor("settings", "doc");
-  const t = ed.trackFiles!;
-  const [query, setQuery] = React.useState("");
-  const [mode, setMode] = React.useState<"solo" | "multi" | "all">("solo");
-  const [kind, setKind] = React.useState<"race" | "battle" | "both">("both");
-  const [page, setPage] = React.useState(0);
-  const q = query.trim().toLowerCase();
-  const files = t.files.filter((f) =>
-    (mode === "all" || (mode === "multi" ? /_d\.(szs|wlz|wbz|wu8)$/i.test(f) : !/_d\.(szs|wlz|wbz|wu8)$/i.test(f))) &&
-    (kind === "both" || trackKind(f) === kind) &&
-    (!q || `${trackLabel(f)} ${f}`.toLowerCase().includes(q)));
-  const pageSize = 48, pages = Math.max(1, Math.ceil(files.length / pageSize));
-  const currentPage = Math.min(page, pages - 1);
-  const shown = files.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
-  const current = ed.currentTrackFile();
-  const changeMode = (next: typeof mode) => { setMode(next); setPage(0); };
-  const changeKind = (next: typeof kind) => { setKind(next); setPage(0); };
-  return (
-    <Card className="flex min-h-[200px] w-full flex-1 flex-col overflow-hidden">
-      <CardHeader className="border-b bg-muted/20 p-3 short:py-2">
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <FolderOpen className="size-4 text-primary" /> Track library
-          <span className="ml-auto rounded-full border bg-background px-2 py-0.5 text-[11px] font-normal tabular-nums text-muted-foreground">{t.files.length.toLocaleString()} {t.files.length === 1 ? "file" : "files"}</span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex min-h-0 flex-1 flex-col gap-2 p-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-[200px] flex-1">
-            <Search className="pointer-events-none absolute left-2.5 top-2 size-4 text-muted-foreground" />
-            <Input value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} onKeyDown={(e) => e.stopPropagation()} placeholder="Search by name or file number…" aria-label="Search tracks" className="h-8 pl-8 text-xs" />
-          </div>
-          <span className="text-[11px] text-muted-foreground">Version</span>
-          <Select value={mode} onValueChange={(value) => changeMode(value as typeof mode)}>
-            <SelectTrigger aria-label="Track version" className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="solo">Single player</SelectItem>
-              <SelectItem value="multi">Multiplayer</SelectItem>
-              <SelectItem value="all">All files</SelectItem>
-            </SelectContent>
-          </Select>
-          <span className="ml-1 text-[11px] text-muted-foreground">Type</span>
-          <Select value={kind} onValueChange={(value) => changeKind(value as typeof kind)}>
-            <SelectTrigger aria-label="Track type" className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="race">Race tracks</SelectItem>
-              <SelectItem value="battle">Battle tracks</SelectItem>
-              <SelectItem value="both">Both</SelectItem>
-            </SelectContent>
-          </Select>
-          <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{files.length.toLocaleString()} shown</span>
-        </div>
-        <div className="grid min-h-0 flex-1 grid-cols-1 content-start gap-1 overflow-y-auto max-lg:max-h-80 sm:grid-cols-2">
-          {shown.map((f) => {
-            const label = trackLabel(f), number = f.replace(/\.(szs|wlz|wbz|wu8)$/i, "");
-            return <button key={f} onClick={() => ed.openPath(`${t.folder}\\${f}`)} title={`${t.folder}\\${f}`}
-              className={`group flex min-w-0 cursor-pointer items-center gap-2 rounded-md border px-2 py-1.5 text-left transition-colors ${f === current ? "border-primary/50 bg-primary/10" : "border-transparent bg-muted/30 hover:border-primary/30 hover:bg-accent"}`}>
-              <span className="flex size-8 shrink-0 items-center justify-center rounded bg-background font-mono text-[10px] text-muted-foreground">{/^\d+$/.test(number) ? number : f.split(".").pop()!.toUpperCase()}</span>
-              <span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{/^\d+$/.test(label) ? `Track ${label}` : label}</span><span className="block truncate font-mono text-[10px] text-muted-foreground">{f}</span></span>
-              <ArrowRight className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-            </button>
-          })}
-          {!files.length && <p className="col-span-2 m-0 py-8 text-center text-xs text-muted-foreground">No tracks match this search.</p>}
-        </div>
-        <div className="flex items-center justify-between border-t pt-2 text-[11px] text-muted-foreground">
-          <span className="tabular-nums">{files.length ? `${currentPage * pageSize + 1}–${Math.min(files.length, (currentPage + 1) * pageSize)} of ${files.length.toLocaleString()}` : "0 tracks"}</span>
-          <div className="flex items-center gap-1">
-            <Button size="icon-sm" variant="ghost" aria-label="Previous track page" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}><ChevronLeft /></Button>
-            <span className="min-w-12 text-center tabular-nums">{currentPage + 1} / {pages}</span>
-            <Button size="icon-sm" variant="ghost" aria-label="Next track page" disabled={currentPage + 1 >= pages} onClick={() => setPage(currentPage + 1)}><ChevronRight /></Button>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 

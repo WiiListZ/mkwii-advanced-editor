@@ -5,6 +5,7 @@ import {
   FolderCog, FolderOpen, Github, GraduationCap, History, House, Image as ImageIcon, ImageOff, ImagePlus, Import, Info, Keyboard, Languages, Layers,
   Lightbulb, Link, ListChecks, ListOrdered, MapPin, Maximize, Minus, Mountain, PackageOpen, PackagePlus, Paintbrush, Pencil, Play, Plus, Puzzle, Redo2, Route, Save, SaveAll,
   Settings as SettingsIcon, Shapes, SlidersHorizontal, ShieldCheck, Sparkles, Square, SquareX, StretchHorizontal, Trash2, Undo2, Video, X,
+  ScrollText, Download, Trophy, MessagesSquare,
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -17,8 +18,9 @@ import { useEditor } from "./hooks";
 import { LAYER_LABEL, LAYERS, KIND_LABEL } from "./editor";
 import { KIND_ICON } from "./common";
 import { cn } from "@/lib/utils";
-import { APP_VERSION, REPO_URL, newIssueUrl } from "./updates";
+import { APP_VERSION, DISCORD_URL, REPO_URL, newIssueUrl, useUpdates } from "./updates";
 import { api } from "../../js/api.js";
+import { toast } from "sonner";
 
 const ADD_KINDS = ["KTPT", "ENPT", "ITPT", "CKPT", "POTI", "AREA", "CAME", "JGPT", "CNPT", "MSPT"];
 
@@ -108,6 +110,20 @@ function TrackSwitcher() {
   );
 }
 
+// Whether a modal window is open anywhere: the dialogs of the dialog store, and also those rendered
+// directly (the update offer, the release notes). Their dark overlays are marked data-modal-overlay.
+function useModalOverlay() {
+  const [open, setOpen] = React.useState(false);
+  React.useEffect(() => {
+    const check = () => setOpen(!!document.querySelector('[data-modal-overlay][data-state="open"]'));
+    const observer = new MutationObserver(check);
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-state"] });
+    check();
+    return () => observer.disconnect();
+  }, []);
+  return open;
+}
+
 export function TitleBar() {
   const ed = useEditor("doc", "ui", "settings", "selection");
   const d = ed.doc;
@@ -118,7 +134,21 @@ export function TitleBar() {
   const cmd = (name: string) => () => ed.cmd(name);
   // With a window (dialog) open the title bar stays above its dark overlay, so the window can still be
   // moved, maximized, minimized and closed; the menus stay inactive until the dialog closes.
-  const modal = useDialogStack().some((entry) => !entry.closing);
+  const stackOpen = useDialogStack().some((entry) => !entry.closing);
+  const overlayOpen = useModalOverlay();
+  const modal = stackOpen || overlayOpen;
+  const updates = useUpdates();
+  // Help › Release notes: the notes of the running version, from GitHub (or kept by the updater).
+  const versionNotes = async () => {
+    const releases = () => api.openUrl(`${REPO_URL}/releases`);
+    try {
+      const notes = await api.versionReleaseNotes();
+      if (notes.available) updates.showNotes(notes);
+      else toast.info(`No release notes for version ${APP_VERSION}`, { description: "This version has no release on GitHub (for example a build from source).", action: { label: "All releases", onClick: releases } });
+    } catch (e: any) {
+      toast.error("Could not load the release notes", { description: e.message, action: { label: "Open on GitHub", onClick: releases } });
+    }
+  };
 
   const dragStart = React.useRef<{ x: number; y: number } | null>(null);
   const onPointerDown = (e: React.PointerEvent) => {
@@ -275,6 +305,8 @@ export function TitleBar() {
         <MenubarMenu>
           <MenubarTrigger>Tools</MenubarTrigger>
           <MenubarContent>
+            <MenubarItem onSelect={cmd("cups")}><Trophy /> Cups and tracks…</MenubarItem>
+            <MenubarItem onSelect={cmd("thp")}><Clapperboard /> Preview videos (THP)…</MenubarItem>
             <MenubarItem onSelect={cmd("gameText")}><Languages /> Game text (menus, names)…</MenubarItem>
             <MenubarItem onSelect={cmd("audio")}><AudioLines /> Sounds and music…</MenubarItem>
             <MenubarItem onSelect={cmd("assets")}><Box /> Characters and models…</MenubarItem>
@@ -283,7 +315,7 @@ export function TitleBar() {
             {!home && <MenubarItem onSelect={cmd("effects")} disabled={!d.szs}><Sparkles /> Effects of this track…</MenubarItem>}
             {!home && <MenubarItem onSelect={cmd("lighting")} disabled={!d.szs}><Lightbulb /> Lighting of this track…</MenubarItem>}
             <MenubarItem onSelect={cmd("workspaceEffects")} disabled={!ed.workspace()}><Flame /> Effects in the game folder…</MenubarItem>
-            <MenubarItem onSelect={cmd("gameParams")}><SlidersHorizontal /> Game data (.bin, .bcp, .bsp)…</MenubarItem>
+            <MenubarItem onSelect={cmd("gameParams")}><SlidersHorizontal /> Game data…</MenubarItem>
             <MenubarItem onSelect={cmd("riivolution")}><PackagePlus /> Riivolution mod…</MenubarItem>
             {!home && <>
               <MenubarItem onSelect={() => ed.watchIntro(0)} disabled={!d.kmp.CAME.length}><Clapperboard /> Watch intro</MenubarItem>
@@ -339,6 +371,10 @@ export function TitleBar() {
             <MenubarItem onSelect={() => dialogs.open("help", { tab: "keys" })}><Keyboard /> Mouse &amp; keyboard</MenubarItem>
             {!home && <MenubarItem onSelect={cmd("tour")}><BookOpen /> Guided tour</MenubarItem>}
             <MenubarSeparator />
+            <MenubarItem onSelect={() => void versionNotes()}><ScrollText /> Release notes (version {APP_VERSION})</MenubarItem>
+            {updates.status?.available && <MenubarItem onSelect={() => updates.showNotes({ version: updates.status?.version || "", title: updates.status?.title, notes: updates.status?.notes || "", url: updates.status?.url })}><Download /> Release notes of the update ({updates.status.version})</MenubarItem>}
+            <MenubarSeparator />
+            <MenubarItem onSelect={() => api.openUrl(DISCORD_URL)}><MessagesSquare /> Discord server (help and questions)</MenubarItem>
             <MenubarItem onSelect={() => api.openUrl(REPO_URL)}><Github /> GitHub page</MenubarItem>
             <MenubarItem onSelect={() => api.openUrl(newIssueUrl())}><Bug /> Report an issue on GitHub…</MenubarItem>
             <MenubarSeparator />

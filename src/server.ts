@@ -16,6 +16,7 @@ import { associationStatus, migrateLegacyAssociation, registerAssociations, unre
 import { tmpdir } from "node:os";
 import packageJson from "../package.json" with { type: "json" };
 import { ReleaseUpdater } from "./updater.ts";
+import { createSnapshot, deleteSnapshot, listSnapshots, restoreSnapshot } from "./snapshots.ts";
 // @ts-ignore - plain JS module shared with the UI
 import { yaz0Compress } from "../web/js/formats/yaz0.js";
 
@@ -105,6 +106,10 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     case "release-notes":
       return json(req.method === "POST" ? await updater.markNotesShown() : await updater.installedNotes());
 
+    // Notes of the running version (Help › Release notes).
+    case "version-notes":
+      return json(await updater.versionNotes());
+
     case "open-dialog": {
       const body = (await req.json()) as { filters?: FileFilter[]; title?: string };
       return json({ path: await openDialog(body.filters || [], body.title) });
@@ -143,6 +148,31 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       await cp(from, to, { recursive: true, force: true });
       return json({ ok: true });
     }
+
+    case "snapshots": {
+      if (req.method === "POST") {
+        const body = (await req.json()) as { label?: string; files?: string[]; details?: unknown };
+        return json(await createSnapshot(settingsDir, String(body.label || "Backup"), (body.files || []).map(String), body.details ?? {}));
+      }
+      return json({ snapshots: await listSnapshots(settingsDir) });
+    }
+
+    // Removes one file (cups: an expert ghost of a track that is no longer there). Never a folder.
+    case "delete": {
+      if (req.method !== "POST" || !filePath) return json({ error: "POST with a path required" }, 400);
+      if (!existsSync(filePath)) return json({ ok: true, removed: false });
+      if (!(await stat(filePath)).isFile()) return json({ error: "Only files can be deleted" }, 400);
+      await rm(filePath);
+      return json({ ok: true, removed: true });
+    }
+
+    case "snapshot-restore":
+      if (req.method !== "POST") return json({ error: "POST required" }, 405);
+      return json(await restoreSnapshot(settingsDir, url.searchParams.get("id") || ""));
+
+    case "snapshot-delete":
+      if (req.method !== "POST") return json({ error: "POST required" }, 405);
+      return json(await deleteSnapshot(settingsDir, url.searchParams.get("id") || ""));
 
     case "list-dir": {
       if (!filePath || !existsSync(filePath)) return json({ error: "Folder not found: " + filePath }, 404);
@@ -303,7 +333,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       return json({ ok: true });
 
     case "open-url":
-      // Only the project's GitHub pages (see isRepoUrl); anything else is refused.
+      // Only the project's GitHub pages and Discord (see isAllowedUrl); anything else is refused.
       return openInBrowser(url.searchParams.get("url") || "") ? json({ ok: true }) : json({ error: "This address cannot be opened" }, 400);
 
     case "settings": {

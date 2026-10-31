@@ -10,7 +10,7 @@ const DialogClose = DialogPrimitive.Close;
 
 const DialogOverlay = React.forwardRef<React.ElementRef<typeof DialogPrimitive.Overlay>, React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>>(
   ({ className, ...props }, ref) => (
-    <DialogPrimitive.Overlay ref={ref} className={cn("fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] animate-[fade-in_150ms_ease-out] data-[state=closed]:animate-[fade-out_140ms_ease-in_forwards] data-[state=closed]:pointer-events-none!", className)} {...props} />
+    <DialogPrimitive.Overlay ref={ref} data-modal-overlay className={cn("fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] animate-[fade-in_150ms_ease-out] data-[state=closed]:animate-[fade-out_140ms_ease-in_forwards] data-[state=closed]:pointer-events-none!", className)} {...props} />
   ),
 );
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;

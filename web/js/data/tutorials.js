@@ -160,11 +160,47 @@ export const TUTORIALS = [
     title: 'Creating a track from scratch',
     summary: 'The generator builds a complete, drivable track from a drawn layout.',
     steps: [
-      'File › Create new track (Ctrl+N). Shape the layout seen from above: drag a point to move it, click on the line to add one, right-click a point to remove it. Middle-drag moves the view.',
-      'On the right set the road and off-road width, wall height, boost panels, laps, item box rows, key checkpoints and respawn spacing.',
+      'File › Create new track (Ctrl+N). Step 1 · Shape: pick a ready shape, or Draw by hand and trace the whole track in one stroke (where you start is the finish line).',
+      'Edit points: drag a point to move it, click the road where the yellow + appears to add one, right-click or Delete removes one. Height and Width × of the selected point make hills, bridges and wider parts; the height profile under the drawing shows the result.',
+      'Watch the Check box: red marks where the road runs into itself (move the points apart or raise one side into a bridge), orange marks turns that are too tight and slopes that are too steep. Ctrl+Z undoes a change to the layout.',
+      'Step 2 · Road: road and off-road width, walls and boost panels. Step 3 · Race: laps, item box rows, key checkpoints and respawns. Every value is explained under its box.',
       'Generate track: the road, walls, collision, checkpoints, CPU and item routes, respawns and item boxes are built, and the track opens in the editor.',
-      'Leave "Keep the other files of the open SZS" off for a completely new track; turn it on to reuse the models and effects of the open archive.',
-      'Export the model as OBJ (File › Export) and build course_model.brres with BrawlCrate, or import 3D models directly.',
+      'Export the model as OBJ (File › Export) and build course_model.brres with BrawlCrate, or import 3D models directly. Then Tools › Cups and tracks › Replace puts the saved track in a cup of the game.',
+    ],
+  },
+  {
+    id: 'cups',
+    title: 'Changing the cups',
+    summary: 'Move tracks between cups or put your own track in a cup.',
+    steps: [
+      'Choose the game folder (Settings › Game files), then Tools › Cups and tracks (also on Home).',
+      'Pick a cup on the left or with the arrows beside its name. Each row is a position of the cup with the track the game loads there.',
+      'Move a track with ↑ ↓ (up and down, into the next cup at the ends) or ← → (same place in another cup), or use Swap with… to exchange it with any track. The track that was there takes its old place.',
+      'Replace › Track file… puts your own track archive in a position; it is checked first. Rename a track or a cup by clicking its name or with Replace › Rename only….',
+      'Apply changes… shows a summary and backs up every file it rewrites, then writes the tracks, their music and their names in every language.',
+      'Changed your mind? Backups at the top of the window puts the files back as they were before a change.',
+    ],
+    tips: [
+      'With .bak backups turned off in Settings, Apply still asks whether to make this backup: keep it unless you have your own copy of the game.',
+      'Luigi Circuit and Mario Circuit share one music file: when only one of them moves, the music stays with the position.',
+      'With "Preview videos follow the tracks" on, a moved track takes its preview video with it. A track from a file keeps the preview of its position: change it in Tools › Preview videos.',
+      'The Time Trial staff ghosts stay with the position.',
+      'Mods with their own cups (beta; Pulsar packs such as Insane Kart Wii, LE-CODE distributions): choose them under "Cups of" or with Open a mod…. There you can also add new cups with their own icon and new tracks, move whole cups and search hundreds of cups.',
+    ],
+  },
+  {
+    id: 'thp',
+    title: 'Changing preview videos',
+    summary: 'The videos of the menus, such as the preview of each track in the cup selection.',
+    steps: [
+      'Tools › Preview videos (THP) (also on Home). Choose a video on the left: Mushroom Cup tracks, Cup selection, Title screen…',
+      'One video often holds several previews: the Mushroom Cup video has its four tracks one above the other. Click a part on the video, or in the list on the right.',
+      'Replace it with a Picture, a Video file (MP4 or WebM) or a part From another preview. Fill crops the source to the part\'s shape, Stretch squeezes it in.',
+      'Play to check the result, then Save video…: every frame is encoded again, after a backup. Backups puts the old video back.',
+    ],
+    tips: [
+      'For a custom track, record a lap in Dolphin, cut a few seconds and use it as the video file of its part.',
+      'Frames are kept within the size of the original\'s largest frame, because the game reserves memory for that size.',
     ],
   },
   {
@@ -174,7 +210,7 @@ export const TUTORIALS = [
     steps: [
       'Open the Check tab: it lists problems that crash the game or break laps, and fixes many of them with one click.',
       'Save with Ctrl+S. With backups enabled in Settings, the first save keeps a .bak copy of the original file.',
-      'Copy the .szs into your game (Race/Course) under the name of the track it replaces, or use it in a custom track distribution.',
+      'Put the .szs in the game with Tools › Cups and tracks › Replace (it is copied under the name of the track it replaces, with a backup), or use it in a custom track distribution.',
     ],
   },
 ];
