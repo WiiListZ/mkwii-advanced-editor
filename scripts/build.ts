@@ -1,9 +1,23 @@
 // Builds the standalone Windows executable: release/MKWiiAdvancedEditor.exe
 
 import { join } from "node:path";
+import { closeSync, existsSync, openSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 
 const root = join(import.meta.dir, "..");
+const exePath = join(root, "release/MKWiiAdvancedEditor.exe");
+if (existsSync(exePath)) {
+  try {
+    closeSync(openSync(exePath, "r+"));
+  } catch (err: any) {
+    console.error(
+      `Cannot overwrite ${exePath} (${err?.code || "locked"}): MKWiiAdvancedEditor.exe is still running.\n` +
+      `Close all open editor windows first, or run: taskkill /F /IM MKWiiAdvancedEditor.exe`,
+    );
+    process.exit(1);
+  }
+}
+
 const run = async (cmd: string[]) => {
   const p = Bun.spawn(cmd, { cwd: root, stdout: "inherit", stderr: "inherit" });
   if ((await p.exited) !== 0) process.exit(1);
@@ -55,7 +69,6 @@ await run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "s
   "-Exe", "release/MKWiiAdvancedEditor.exe", "-Icon", "web/icon.ico"]);
 // Mark the executable as a GUI application (PE subsystem 2) so no console window appears.
 // Bun's --windows-hide-console alone still leaves a terminal window open with Windows Terminal.
-const exePath = join(root, "release/MKWiiAdvancedEditor.exe");
 const exe = new Uint8Array(await Bun.file(exePath).arrayBuffer());
 const view = new DataView(exe.buffer);
 const peOffset = view.getUint32(0x3c, true);

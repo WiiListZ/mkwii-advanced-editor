@@ -18,6 +18,10 @@ bpy.ops.object.delete(use_global=False)
 bpy.ops.mesh.primitive_cube_add()
 mesh = bpy.context.object
 mesh.name = 'WeightedCube'
+material = bpy.data.materials.new('Paint')
+material.use_nodes = True
+material.node_tree.nodes.get('Principled BSDF').inputs['Base Color'].default_value = (1, 0, 0, 1)
+mesh.data.materials.append(material)
 mesh.shape_key_add(name='Basis')
 shape = mesh.shape_key_add(name='Wide')
 for point in shape.data:
@@ -61,6 +65,12 @@ bpy.ops.wm.save_as_mainfile(filepath=sys.argv[-1])
   if (!model.weights.size) throw new Error("No blended vertex weights survived import");
   if (!Buffer.from(converted).includes(Buffer.from("SHP0"))) throw new Error("SHP0 was lost during combined skin/shape import");
   console.log(`ok ${model.weights.size} weighted matrices and SHP0 imported together`);
+  const twice = parseBRRES(await import3DModel(converted, source, [1000, 100, 0]));
+  const next = twice.models.find((m: any) => m.name === model.name);
+  if (next.weights.size <= model.weights.size || twice.chr.size <= parsed.chr.size || twice.textures.size <= parsed.textures.size)
+    throw new Error('Repeated animated import lost weights, an animation or its own texture');
+  if (new Set(next.materials.map((m: any) => m.name)).size !== next.materials.length) throw new Error('Repeated animated import duplicated material names');
+  console.log('ok repeated animated imports keep independent materials, textures and animations');
 } finally {
   if (!resolve(dir).startsWith(resolve(tmpdir()) + sep)) throw new Error("Unsafe temporary cleanup path");
   rmSync(dir, { recursive: true, force: true });

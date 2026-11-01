@@ -20,30 +20,120 @@ function filterString(filters: FileFilter[]): string {
     .join("|");
 }
 
+const SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002;
+const HWND_TOPMOST = -1n;
+
+let win32Lib: ReturnType<typeof loadWin32> | null | undefined;
+function loadWin32() {
+  const { dlopen, FFIType, ptr } = require("bun:ffi") as typeof import("bun:ffi");
+  const lib = dlopen("user32.dll", {
+    AllowSetForegroundWindow: { args: [FFIType.u32], returns: FFIType.i32 },
+    FindWindowExW: { args: [FFIType.u64, FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.u64 },
+    GetWindowThreadProcessId: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.u32 },
+    IsWindowVisible: { args: [FFIType.u64], returns: FFIType.i32 },
+    SetWindowPos: { args: [FFIType.u64, FFIType.i64, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.u32], returns: FFIType.i32 },
+    BringWindowToTop: { args: [FFIType.u64], returns: FFIType.i32 },
+    SetForegroundWindow: { args: [FFIType.u64], returns: FFIType.i32 },
+  });
+  const dialogClassBuf = Buffer.from("#32770\0", "utf16le");
+  const outPid = new Uint32Array(1);
+  const bringToFront = (hwnd: bigint) => {
+    lib.symbols.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE);
+    lib.symbols.BringWindowToTop(hwnd);
+    lib.symbols.SetForegroundWindow(hwnd);
+  };
+  return {
+    lib,
+    allowForeground(pid: number) { lib.symbols.AllowSetForegroundWindow(pid); },
+    raiseDialogForPid(pid: number): bigint {
+      let hwnd = 0n;
+      for (let i = 0; i < 250; i++) {
+        hwnd = BigInt(lib.symbols.FindWindowExW(0n, hwnd, ptr(dialogClassBuf), null));
+        if (!hwnd) break;
+        lib.symbols.GetWindowThreadProcessId(hwnd, ptr(outPid));
+        if (outPid[0] === pid && lib.symbols.IsWindowVisible(hwnd)) {
+          bringToFront(hwnd);
+          return hwnd;
+        }
+      }
+      return 0n;
+    },
+    isVisible(hwnd: bigint) { return !!hwnd && !!lib.symbols.IsWindowVisible(hwnd); },
+    bringToFront,
+  };
+}
+
+function getWin32() {
+  if (win32Lib !== undefined) return win32Lib;
+  if (process.platform !== "win32") return (win32Lib = null);
+  try { win32Lib = loadWin32(); } catch { win32Lib = null; }
+  return win32Lib;
+}
+
 async function runPowerShell(script: string): Promise<string | null> {
   const sourceIcon = join(process.cwd(), "web", "icon.ico");
   const iconPath = existsSync(sourceIcon) ? sourceIcon : process.execPath;
+  // A shown, zero-opacity TopMost owner placed at the cursor ensures the modal dialog inherits
+  // WS_EX_TOPMOST on the active monitor instead of opening behind the WebView2 editor window.
   const full = `
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
+$pos = [System.Windows.Forms.Cursor]::Position
 $owner = New-Object System.Windows.Forms.Form
-$owner.TopMost = $true
+$owner.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $owner.ShowInTaskbar = $false
-$owner.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon(${psQuote(iconPath)})
+$owner.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+$owner.Location = New-Object System.Drawing.Point($pos.X, $pos.Y)
+$owner.Size = New-Object System.Drawing.Size(1, 1)
+$owner.Opacity = 0
+$owner.TopMost = $true
+try { $owner.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon(${psQuote(iconPath)}) } catch {}
+$owner.Show()
+$owner.Activate()
+try {
 ${script}
-$owner.Dispose()
+} finally {
+  $owner.Close()
+  $owner.Dispose()
+}
 `;
   const proc = Bun.spawn(["powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-Command", full], {
     stdout: "pipe",
     stderr: "pipe",
     windowsHide: true,
   });
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited,
-  ]);
+  let finished = false;
+  const w32 = getWin32();
+  if (w32 && proc.pid) {
+    w32.allowForeground(proc.pid);
+    void (async () => {
+      for (let i = 0; i < 1200 && !finished; i++) {
+        await Bun.sleep(25);
+        if (finished) return;
+        const dlg = w32.raiseDialogForPid(proc.pid);
+        if (dlg) {
+          // Common Item Dialogs run their own SetWindowPos pass shortly after becoming visible;
+          // re-apply TopMost over the first ~300ms so neither SaveFileDialog nor WebView2 drops it behind.
+          for (let k = 0; k < 6 && !finished; k++) {
+            await Bun.sleep(50);
+            if (!finished && w32.isVisible(dlg)) w32.bringToFront(dlg);
+          }
+          return;
+        }
+      }
+    })();
+  }
+  let stdout = "", stderr = "", code = 1;
+  try {
+    [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited,
+    ]);
+  } finally {
+    finished = true;
+  }
   if (code !== 0) throw new Error(stderr.trim() || "Windows dialog could not be opened");
   const out = stdout.trim();
   return out || null;

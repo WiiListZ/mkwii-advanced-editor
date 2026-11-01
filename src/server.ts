@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import packageJson from "../package.json" with { type: "json" };
 import { ReleaseUpdater } from "./updater.ts";
 import { EditorWindows } from "./editor-windows.ts";
+import { DiscordPresence, type EditorActivity } from "./discord-presence.ts";
 import { CupTrackDrafts } from "./cup-track-drafts.ts";
 import { createSnapshot, deleteSnapshot, listSnapshots, restoreSnapshot } from "./snapshots.ts";
 // @ts-ignore - plain JS module shared with the UI
@@ -43,8 +44,9 @@ let settingsDir = join(process.env.APPDATA || process.env.HOME || ".", "MKWiiAdv
 let settingsFile = join(settingsDir, "settings.json");
 let updater: ReleaseUpdater;
 let editorWindows = new EditorWindows();
+const discordPresence = new DiscordPresence();
 let cupTracks = new CupTrackDrafts(settingsDir);
-const windowDocuments = new Map<string, { name: string; data: Uint8Array }>();
+const windowDocuments = new Map<string, { name: string; data: Uint8Array; created?: { length: number; tris: number; keptSzs: boolean } }>();
 let settingsWrite: Promise<unknown> = Promise.resolve();
 
 async function readSettings(): Promise<Record<string, unknown>> {
@@ -96,6 +98,19 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     case "info":
       return json({ version: packageJson.version, bun: Bun.version, platform: process.platform, settingsDir });
 
+    case "discord-activity": {
+      if (req.method === "GET") return json(discordPresence.status);
+      if (req.method !== "POST" && req.method !== "DELETE") return json({ error: "POST or DELETE required" }, 405);
+      const body = await req.json() as EditorActivity;
+      if (typeof body.id !== "string" || !/^[a-zA-Z0-9-]{1,80}$/.test(body.id)) return json({ error: "Invalid activity window" }, 400);
+      if (req.method === "DELETE") discordPresence.remove(body.id);
+      else {
+        if (body.mode !== "home" && body.mode !== "editing") return json({ error: "Invalid activity" }, 400);
+        discordPresence.update({ id: body.id, mode: body.mode, file: String(body.file || ""), detail: String(body.detail || ""), focused: body.focused === true });
+      }
+      return json(discordPresence.status);
+    }
+
     case "cup-track": {
       if (req.method === "GET") return json(await cupTracks.info(filePath));
       if (req.method !== "POST") return json({ error: "POST required" }, 405);
@@ -117,7 +132,10 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       let documentId: string | null = null;
       if (req.headers.get("content-type") === "application/octet-stream") {
         documentId = crypto.randomUUID();
-        windowDocuments.set(documentId, { name: basename(url.searchParams.get("name") || "Custom Track.szs"), data: new Uint8Array(await req.arrayBuffer()) });
+        const raw = url.searchParams.get("created");
+        const created = raw ? JSON.parse(raw) : null;
+        windowDocuments.set(documentId, { name: basename(url.searchParams.get("name") || "Custom Track.szs"), data: new Uint8Array(await req.arrayBuffer()),
+          ...(created ? { created: { length: Number(created.length) || 0, tris: Number(created.tris) || 0, keptSzs: created.keptSzs === true } } : {}) });
         const pendingId = documentId;
         setTimeout(() => windowDocuments.delete(pendingId), 300000).unref();
         target.searchParams.set("document", documentId);
@@ -138,7 +156,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       const id = url.searchParams.get("id") || "", doc = windowDocuments.get(id);
       if (!doc) return json({ error: "This track transfer is no longer available" }, 404);
       windowDocuments.delete(id);
-      return new Response(doc.data, { headers: { "content-type": "application/octet-stream", "x-file-name": encodeURIComponent(doc.name) } });
+      return new Response(doc.data, { headers: { "content-type": "application/octet-stream", "x-file-name": encodeURIComponent(doc.name),
+        ...(doc.created ? { "x-track-created": encodeURIComponent(JSON.stringify(doc.created)) } : {}) } });
     }
 
     case "updates":
@@ -406,6 +425,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         try {
           await Bun.write(temporary, JSON.stringify(next, null, 2));
           await rename(temporary, settingsFile);
+          if ("discordActivity" in patch) discordPresence.setEnabled(next.discordActivity !== false);
         } catch (error) { await rm(temporary, { force: true }); throw error; }
         return next;
       });
@@ -428,6 +448,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
 self.onmessage = async (e: MessageEvent) => {
   if (e.data?.type === "owner-closed") {
     await editorWindows.whenIdle();
+    discordPresence.dispose();
     self.postMessage({ type: "windows-closed" });
     return;
   }
@@ -439,6 +460,8 @@ self.onmessage = async (e: MessageEvent) => {
     }
     cupTracks = new CupTrackDrafts(settingsDir);
     updater = new ReleaseUpdater(packageJson.version, e.data.updateExecutable || null, settingsDir);
+    void updater.cleanup();
+    discordPresence.setEnabled((await readSettings()).discordActivity !== false);
     void migrateLegacyAssociation();
     try {
       await prepareBundledTools(settingsDir);

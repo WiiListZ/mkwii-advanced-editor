@@ -96,12 +96,17 @@ function download(name, data) {
 }
 
 export const api = {
+  discordActivity(activity) { return hasBackend ? call('discord-activity', { method: 'POST', body: activity }) : Promise.resolve({ enabled: false, status: 'unavailable' }); },
+  closeDiscordActivity(id) {
+    if (!hasBackend) return;
+    void fetch('/api/discord-activity', { method: 'DELETE', headers: { 'x-token': token, 'content-type': 'application/json' }, body: JSON.stringify({ id }), keepalive: true }).catch(() => {});
+  },
   createCupTrack(data, label, destination) {
     return call('cup-track', { method: 'POST', query: { label, ...(destination ? { destination } : {}) }, body: data, contentType: 'application/octet-stream' });
   },
   cupTrackInfo(path) { return call('cup-track', { query: { path } }); },
   cupTracksApplied(files) { return call('cup-tracks-applied', { method: 'POST', body: { files } }); },
-  async openEditorWindow({ path, create, name, data }) {
+  async openEditorWindow({ path, create, name, data, created }) {
     // Reserve a real browser popup before awaiting the server. Native WebViews ask the server
     // for another desktop process, which keeps its own document and rendering context.
     const native = typeof window.__nativeEditorWindow === 'function';
@@ -110,7 +115,7 @@ export const api = {
     try {
       if (popup) { popup.opener = null; popup.document.title = 'Opening track…'; }
       const result = await call('editor-window', data
-        ? { method: 'POST', query: { name }, body: data, contentType: 'application/octet-stream' }
+        ? { method: 'POST', query: { name, ...(created ? { created: JSON.stringify(created) } : {}) }, body: data, contentType: 'application/octet-stream' }
         : { method: 'POST', body: { path, create } });
       if (result.url && popup) popup.location.replace(result.url);
       else popup?.close();
@@ -119,7 +124,8 @@ export const api = {
   },
   async editorDocument(id) {
     const result = await call('editor-document', { query: { id }, raw: true, headers: true });
-    return { path: null, name: decodeURIComponent(result.headers.get('x-file-name') || 'Custom Track.szs'), data: result.data };
+    return { path: null, name: decodeURIComponent(result.headers.get('x-file-name') || 'Custom Track.szs'), data: result.data,
+      created: JSON.parse(decodeURIComponent(result.headers.get('x-track-created') || 'null')) };
   },
   async checkUpdates() {
     return hasBackend ? call('updates') : { supported: false, currentVersion: '0.0.0', available: false };

@@ -10,6 +10,9 @@ import { attachMaterialAnimations, type MaterialAnimation } from "./material-ani
 import { mergeWeightedModel } from "./weighted-model.ts";
 import type { ImportedShape, ShapeController } from "./weighted-model.ts";
 import { attachSHP0 } from "./shp0-import.ts";
+import { needsBRRESPaletteConversion, normalizeBRRESPalettes, transplantBRRESTextures } from "./brres-palettes.ts";
+import { solidTexturePNG } from "./solid-texture.ts";
+import { normalizeOBJFaces, vertexColoredOBJToDAE } from "./obj-geometry.ts";
 // @ts-ignore Shared JavaScript BRRES reader.
 import { parseBRRES, polygonPieces } from "../web/js/formats/brres.js";
 
@@ -17,6 +20,16 @@ export const abmattPath = () => {
   const candidates = [process.env.MKWII_ABMATT, join(homedir(), "Documents", "abmatt", "bin", "abmatt.exe"), Bun.which("abmatt")].filter(Boolean) as string[];
   return candidates.find(existsSync) || null;
 };
+
+async function paletteInput(data: Uint8Array) {
+  if (!needsBRRESPaletteConversion(data)) return data;
+  const dir = await mkdtemp(join(tmpdir(), "mkwii-palettes-"));
+  try { return await normalizeBRRESPalettes(data, dir); }
+  finally {
+    if (!resolve(dir).startsWith(resolve(tmpdir()) + sep)) throw new Error("Unsafe palette temporary directory");
+    await rm(dir, { recursive: true, force: true });
+  }
+}
 
 const MODEL_EXTENSIONS = new Set([".obj", ".fbx", ".gltf", ".glb", ".dae", ".stl", ".ply", ".blend"]);
 
@@ -318,6 +331,11 @@ try:
             else:
                 assign(host, ad.action, slot_for(host, ad.action))
 
+    # Names must remain unique across repeated imports, including animated
+    # materials whose names are referenced by the metadata written below.
+    for material in bpy.data.materials:
+        material.name = unique_prefix + '_' + material.name
+
     shape_hosts = []
     for obj in bpy.context.scene.objects:
         keys = obj.data.shape_keys if obj.type == 'MESH' else None
@@ -396,21 +414,25 @@ try:
             for node_input in node.inputs:
                 yield from linked_images(node_input, visited)
     for index, material in enumerate(bpy.data.materials):
-        if not material.use_nodes or material.node_tree is None:
-            continue
+        legacy_colour = tuple(material.diffuse_color)
+        had_nodes = material.use_nodes and material.node_tree is not None
+        material.use_nodes = True
         nodes = material.node_tree.nodes
         # Principled base colour first; then whatever feeds the output (unlit glTF, Emission,
         # Diffuse BSDF, node groups); then any colour image node of the material.
         bsdf = next((node for node in nodes if node.type == 'BSDF_PRINCIPLED'), None)
         output = next((node for node in nodes if node.type == 'OUTPUT_MATERIAL' and node.is_active_output), None) \\
             or next((node for node in nodes if node.type == 'OUTPUT_MATERIAL'), None)
+        base_colour = tuple(bsdf.inputs['Base Color'].default_value) if had_nodes and bsdf else legacy_colour
+        opacity = float(bsdf.inputs['Alpha'].default_value) if had_nodes and bsdf else float(base_colour[3])
+        alpha_linked = bool(bsdf and bsdf.inputs['Alpha'].is_linked)
         candidates = []
         if bsdf:
             candidates += list(linked_images(bsdf.inputs['Base Color'], set()))
         if output:
             candidates += [image for image in linked_images(output.inputs['Surface'], set()) if colour_image(image)]
         candidates += [node.image for node in nodes if node.type == 'TEX_IMAGE' and colour_image(node.image)]
-        image_path = os.path.join(os.path.dirname(target), 'texture_%d.png' % index)
+        image_path = os.path.join(os.path.dirname(target), 'texture_%s_%d.png' % (unique_prefix, index))
         image = None
         for candidate in dict.fromkeys(candidates):
             # Textures the model file points to but that are missing on this computer have no
@@ -424,7 +446,13 @@ try:
                 image = candidate
                 break
         if not image:
-            continue
+            # ABMatt ignores constant diffuse colours too. Give them a small
+            # image so static, rigged and standalone imports keep each colour.
+            image = bpy.data.images.new('MKWii_Colour_%d' % index, width=8, height=8, alpha=True)
+            image.pixels[:] = list(base_colour[:3] + (opacity,)) * 64
+            image.filepath_raw = image_path
+            image.file_format = 'PNG'
+            image.save()
         image = bpy.data.images.load(image_path, check_existing=False)
         nodes.clear()
         output = nodes.new('ShaderNodeOutputMaterial')
@@ -432,6 +460,12 @@ try:
         texture = nodes.new('ShaderNodeTexImage')
         texture.image = image
         material.node_tree.links.new(texture.outputs['Color'], simple.inputs['Base Color'])
+        if alpha_linked or opacity < 1:
+            material.node_tree.links.new(texture.outputs['Alpha'], simple.inputs['Alpha'])
+            if hasattr(material, 'surface_render_method'):
+                material.surface_render_method = 'DITHERED'
+            elif hasattr(material, 'blend_method'):
+                material.blend_method = 'BLEND'
         material.node_tree.links.new(simple.outputs['BSDF'], output.inputs['Surface'])
 
     def animated(obj):
@@ -675,7 +709,8 @@ try:
             need_collada()
             bpy.ops.wm.collada_export(filepath=target + '.dae', selected=True, include_animations=False, apply_modifiers=False, triangulate=True)
     if hasattr(bpy.ops.wm, 'obj_export'):
-        bpy.ops.wm.obj_export(filepath=target, export_materials=True, export_normals=False, export_triangulated_mesh=True, path_mode='COPY', forward_axis='NEGATIVE_Z', up_axis='Y')
+        colour_options = {'export_colors': True} if 'export_colors' in bpy.ops.wm.obj_export.get_rna_type().properties else {}
+        bpy.ops.wm.obj_export(filepath=target, export_materials=True, export_normals=False, export_triangulated_mesh=True, path_mode='COPY', forward_axis='NEGATIVE_Z', up_axis='Y', **colour_options)
     else:
         bpy.ops.export_scene.obj(filepath=target, use_materials=True, use_normals=False, use_triangles=True, path_mode='COPY', axis_forward='-Z', axis_up='Y')
     if unique_prefix == 'Converted' and not os.path.exists(target + '.dae'):
@@ -717,12 +752,16 @@ export async function import3DModel(data: Uint8Array, modelPath: string, target:
   const extension = extname(modelPath).toLowerCase();
   if (!MODEL_EXTENSIONS.has(extension)) throw new Error(`Unsupported model format: ${extension || "(none)"}`);
   if (extension === ".obj") return importOBJModel(data, modelPath, target, warnings);
+  data = await paletteInput(data);
   if (target.length !== 3 || !target.every(Number.isFinite)) throw new Error("Invalid model position");
   if (!abmattPath()) throw new Error("ABMatt is unavailable. Check the included tools or set MKWII_ABMATT.");
   if (!(await blenderPath())) throw new Error("Blender is required to import BLEND, FBX, glTF, GLB, DAE, STL and PLY models. Install Blender or set MKWII_BLENDER.");
   const current = parseBRRES(data), currentModel = current.models.find((m: any) => m.name === "course") || current.models[0];
   let number = 1;
-  while (currentModel?.objects.some((o: any) => o.name.startsWith(`Imported_${number}_`)) || currentModel?.bones.some((b: any) => b.name.startsWith(`Imported_${number}_`))) number++;
+  while (currentModel?.objects.some((o: any) => o.name.startsWith(`Imported_${number}_`))
+    || currentModel?.bones.some((b: any) => b.name.startsWith(`Imported_${number}_`))
+    || currentModel?.materials.some((m: any) => m.name.startsWith(`Imported_${number}_`))
+    || [...current.textures.keys()].some((name: string) => name.startsWith(`texture_Imported_${number}_`))) number++;
   const uniquePrefix = `Imported_${number}`;
   const dir = await mkdtemp(join(tmpdir(), "mkwii-model-import-"));
   try {
@@ -767,8 +806,8 @@ export async function convert3DToBRRES(modelPath: string, animation = "", name =
     if (!existsSync(geometry)) throw new Error("Blender did not export the model as DAE");
     const output = join(dir, "converted.brres"), commandFile = join(dir, "convert-commands.txt");
     await writeFile(commandFile, `convert ${basename(geometry)} to converted.brres\n`);
-    const process = Bun.spawn([exe, "-f", "convert-commands.txt", "-o"], { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
-    const [code, out, err] = await Promise.all([process.exited, new Response(process.stdout).text(), new Response(process.stderr).text()]);
+    const child = Bun.spawn([exe, "-f", "convert-commands.txt", "-o"], { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
+    const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     if (code || !existsSync(output)) throw new Error(`ABMatt could not create the BRRES: ${(out + "\n" + err).trim().slice(-800)}`);
     let result = new Uint8Array(await readFile(output));
     const parsed = parseBRRES(result), model = parsed.models[0];
@@ -819,8 +858,8 @@ async function importAnimatedModel(data: Uint8Array, objPath: string, target: nu
   const shapeAnimation = hasShapes ? JSON.parse(await readFile(objPath + ".shape.json", "utf8")) as ImportedShape : undefined;
   const standaloneName = "weighted-standalone.brres";
   await writeFile(join(dir, "weighted-commands.txt"), `convert ${basename(dae)} to ${standaloneName}\n`);
-  const process = Bun.spawn([exe, "-f", "weighted-commands.txt", "-o"], { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
-  const [code, out, err] = await Promise.all([process.exited, new Response(process.stdout).text(), new Response(process.stderr).text()]);
+  const child = Bun.spawn([exe, "-f", "weighted-commands.txt", "-o"], { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
+  const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   if (code || !existsSync(join(dir, standaloneName))) throw new Error(`ABMatt could not convert the rigged model: ${(out + "\n" + err).trim().slice(-800)}`);
   const shapeControllers: ShapeController[] = [];
   const patched = await mergeWeightedModel(data, new Uint8Array(await readFile(join(dir, standaloneName))), dir, shapeAnimation, shapeControllers);
@@ -1158,6 +1197,8 @@ export async function importBRRESPart(data: Uint8Array, sourceData: Uint8Array, 
   if (!exe) throw new Error("ABMatt is unavailable. Check the included tools or set MKWII_ABMATT.");
   if (opts.target && (opts.target.length !== 3 || !opts.target.every(Number.isFinite))) throw new Error("Invalid model position");
   if (opts.pieceCenter && (opts.pieceCenter.length !== 3 || !opts.pieceCenter.every(Number.isFinite))) throw new Error("Invalid piece selection");
+  data = await paletteInput(data);
+  sourceData = await paletteInput(sourceData);
   const source = parseBRRES(sourceData), sourceModel = source.models.find((m: any) => m.name === opts.model);
   const part = sourceModel?.objects.find((o: any) => o.name === opts.part);
   if (!part?.triangles) throw new Error("Source model polygon not found");
@@ -1224,7 +1265,8 @@ export async function importBRRESPart(data: Uint8Array, sourceData: Uint8Array, 
     await writeFile(join(work, "part.json"), JSON.stringify(prepared.json, null, 2));
     await writeFile(join(work, "course_model.brres"), data);
     const log = await runAbmatt(exe, work, "convert part.dae to course_model.brres --patch", "course_model.brres");
-    const result = new Uint8Array(await readFile(join(work, "course_model.brres")));
+    const patched = new Uint8Array(await readFile(join(work, "course_model.brres")));
+    const result = await transplantBRRESTextures(sourceData, patched, textureMap, join(dir, "textures"));
     const after = parseBRRES(result), next = after.models.find((m: any) => m.name === model.name);
     const added = next?.objects.find((o: any) => o.name === name);
     if (!next || !added || next.objects.length !== model.objects.length + 1) throw new Error(`ABMatt did not add the model part: ${log.slice(-600)}`);
@@ -1244,10 +1286,10 @@ export async function importBRRESPart(data: Uint8Array, sourceData: Uint8Array, 
   }
 }
 
-async function runAbmatt(exe: string, dir: string, command: string, source: string, overwrite = true) {
+async function runAbmatt(exe: string, dir: string, command: string, source: string | null, overwrite = true) {
   await writeFile(join(dir, "commands.txt"), command + "\n");
   // Exports run without -o so ABMatt never re-saves (and possibly fails to repack) the source file.
-  const child = Bun.spawn([exe, "-b", source, ...(overwrite ? ["-o"] : []), "-f", "commands.txt"], { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
+  const child = Bun.spawn([exe, ...(source ? ["-b", source] : []), ...(overwrite ? ["-o"] : []), "-f", "commands.txt"], { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
   const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   if (code !== 0) throw new Error(`ABMatt failed: ${(out + "\n" + err).trim().slice(-600)}`);
   return (out + "\n" + err).trim();
@@ -1257,6 +1299,7 @@ export async function duplicateBRRESModel(data: Uint8Array, modelName: string, p
   const exe = abmattPath();
   if (!exe) throw new Error("ABMatt is unavailable. Check the included tools or set MKWII_ABMATT.");
   if (![...sourceCenter, ...delta].every(Number.isFinite) || sourceCenter.length !== 3 || delta.length !== 3) throw new Error("Invalid model position");
+  data = await paletteInput(data);
   const before = parseBRRES(data), model = before.models.find((m: any) => m.name === modelName);
   const part = model?.objects.find((o: any) => o.name === partName);
   if (!part?.triangles) throw new Error("Model polygon not found");
@@ -1294,6 +1337,7 @@ export async function deleteBRRESModel(data: Uint8Array, modelName: string, part
   const exe = abmattPath();
   if (!exe) throw new Error("ABMatt is required for model deletion");
   if (sourceCenter.length !== 3 || !sourceCenter.every(Number.isFinite)) throw new Error("Invalid model selection");
+  data = await paletteInput(data);
   const before = parseBRRES(data), model = before.models.find((m: any) => m.name === modelName);
   const part = model?.objects.find((o: any) => o.name === partName);
   if (!part?.triangles) throw new Error("Model polygon not found");
@@ -1333,6 +1377,7 @@ export async function exportBRRESModel(data: Uint8Array, destination: string) {
   if (!exe) throw new Error("ABMatt is unavailable. Check the included tools or set MKWII_ABMATT.");
   const extension = extname(destination).toLowerCase();
   if (extension !== ".dae" && extension !== ".obj") throw new Error("Choose a .dae or .obj file");
+  data = await paletteInput(data);
   const stem = basename(destination, extension).replace(/[^a-zA-Z0-9_-]/g, "_") || "course_model";
   const dir = await mkdtemp(join(tmpdir(), "mkwii-model-export-"));
   try {
@@ -1398,11 +1443,13 @@ export async function importOBJModel(data: Uint8Array, objPath: string, target: 
   const exe = abmattPath();
   if (!exe) throw new Error("ABMatt is unavailable. Check the included tools or set MKWII_ABMATT.");
   if (!objPath || extname(objPath).toLowerCase() !== ".obj" || target.length !== 3 || !target.every(Number.isFinite)) throw new Error("Invalid OBJ import parameters");
+  data = await paletteInput(data);
   const before = parseBRRES(data);
   const model = before.models.find((m: any) => m.name === "course") || before.models[0];
   if (!model) throw new Error("The track model contains no 3D model");
   const source = await readFile(objPath, "utf8");
-  const lines = source.split(/\r?\n/);
+  let lines = source.split(/\r?\n/).map((line) => line.trim());
+  const vertexColors = lines.some((line) => /^v\s/.test(line) && line.split(/\s+#/)[0].split(/\s+/).length >= 7);
   const vertices: number[][] = [];
   for (const line of lines) if (/^v\s/.test(line)) {
     const coords = line.trim().split(/\s+/).slice(1, 4).map(Number);
@@ -1410,6 +1457,7 @@ export async function importOBJModel(data: Uint8Array, objPath: string, target: 
     vertices.push(coords);
   }
   if (!vertices.length || !lines.some((line) => /^f\s/.test(line))) throw new Error("OBJ must contain vertices and faces");
+  lines = normalizeOBJFaces(lines, vertices);
   const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
   for (const vertex of vertices) for (let i = 0; i < 3; i++) { min[i] = Math.min(min[i], vertex[i]); max[i] = Math.max(max[i], vertex[i]); }
   const longest = Math.max(...max.map((v, i) => v - min[i]));
@@ -1433,30 +1481,56 @@ export async function importOBJModel(data: Uint8Array, objPath: string, target: 
       }
     }
     // Only the diffuse image (and its alpha) is used: other maps (bump, specular…) have no Wii equivalent here.
-    const defined = new Set<string>(), copies = new Map<string, string>(), copyNames = new Set<string>();
+    const defined = new Set<string>(), copies = new Map<string, string>();
+    const materialNames = new Set<string>(model.materials.map((m: any) => m.name));
+    const textureNames = new Set<string>(before.textures.keys());
+    const materialMap = new Map<string, string>();
+    const renameMaterial = (name: string) => {
+      if (!materialMap.has(name)) materialMap.set(name, uniqueName(`${unique}_${name.replace(/[^A-Za-z0-9_-]/g, "_")}`, materialNames));
+      return materialMap.get(name)!;
+    };
     for (const [index, materialPath] of materialFiles.entries()) {
       const material: string[] = [];
+      const findMaterialResource = resourceFinder(dirname(materialPath));
+      let color = [1, 1, 1], alpha = 1, diffuse = false, materialName = "";
+      const finishMaterial = async () => {
+        if (!materialName || diffuse) return;
+        const texture = uniqueName(`${renameMaterial(materialName)}_color`, textureNames);
+        await writeFile(join(dir, `${texture}.png`), solidTexturePNG([...color, alpha]));
+        material.push(`map_Kd ${texture}.png`);
+      };
       for (const line of (await readFile(materialPath, "utf8")).split(/\r?\n/)) {
         const newmtl = line.match(/^\s*newmtl\s+(.+?)\s*$/i);
-        if (newmtl) defined.add(newmtl[1]);
+        if (newmtl) {
+          await finishMaterial();
+          materialName = newmtl[1]; defined.add(materialName); color = [1, 1, 1]; alpha = 1; diffuse = false;
+          material.push(`newmtl ${renameMaterial(materialName)}`); continue;
+        }
+        const kd = line.match(/^\s*Kd\s+([\d.eE+-]+)\s+([\d.eE+-]+)\s+([\d.eE+-]+)/i);
+        if (kd && kd.slice(1).map(Number).every(Number.isFinite)) color = kd.slice(1).map(Number);
+        const opacity = line.match(/^\s*(d|Tr)\s+([\d.eE+-]+)/i);
+        if (opacity && Number.isFinite(Number(opacity[2]))) alpha = opacity[1].toLowerCase() === "tr" ? 1 - Number(opacity[2]) : Number(opacity[2]);
         const map = line.match(/^\s*(map_\w+|bump|disp|decal|refl|norm)\s+(.+?)\s*$/i);
         if (!map) { material.push(line); continue; }
         const command = map[1].toLowerCase();
         if (command !== "map_kd" && command !== "map_d") continue;
         const imageName = mtlImageName(map[2]);
-        const imagePath = await findResource(imageName);
+        const imagePath = await findMaterialResource(imageName) || await findResource(imageName);
         if (!imagePath) {
           if (command === "map_kd") warnings.push(`Texture ${imageName} was not found in the model's folder`);
           continue;
         }
         let copy = copies.get(imagePath);
         if (!copy) {
-          copy = uniqueName(basename(imagePath).replace(/[^A-Za-z0-9_.-]/g, "_"), copyNames);
+          const extension = extname(imagePath);
+          copy = uniqueName(`${unique}_${basename(imagePath, extension).replace(/[^A-Za-z0-9_-]/g, "_")}`, textureNames) + extension;
           copies.set(imagePath, copy);
           await copyFile(imagePath, join(dir, copy));
         }
         material.push(`${command === "map_kd" ? "map_Kd" : "map_d"} ${copy}`);
+        if (command === "map_kd") diffuse = true;
       }
+      await finishMaterial();
       await writeFile(join(dir, `material_${index}.mtl`), material.join("\n"));
     }
     const hasMaterial = lines.some((line) => /^usemtl\s+/i.test(line));
@@ -1466,22 +1540,50 @@ export async function importOBJModel(data: Uint8Array, objPath: string, target: 
       const name = line.trim().slice(6).trim();
       if (name && !defined.has(name)) fallback.add(name);
     }
-    if (fallback.size) await writeFile(join(dir, "material_fallback.mtl"), [...fallback].map((name) => `newmtl ${name}\nKd 1 1 1\n`).join(""));
-    let vertexIndex = 0;
+    if (fallback.size) {
+      const white = uniqueName(`${unique}_white`, textureNames) + ".png";
+      await writeFile(join(dir, white), solidTexturePNG([1, 1, 1, 1]));
+      await writeFile(join(dir, "material_fallback.mtl"), [...fallback].map((name) => `newmtl ${renameMaterial(name)}\nKd 1 1 1\nmap_Kd ${white}\n`).join(""));
+    }
+    let vertexIndex = 0, materialGroup = 0;
+    const groupNames = new Set<string>(model.objects.map((o: any) => o.name)); groupNames.add(unique);
     const importedMtls = materialFiles.map((_, i) => `material_${i}.mtl`);
     if (fallback.size) importedMtls.push("material_fallback.mtl");
     const output = [`mtllib ${importedMtls.join(" ")}`, `o ${unique}`];
-    if (!hasMaterial) output.push("usemtl imported");
+    if (!hasMaterial) output.push(`usemtl ${renameMaterial("imported")}`);
     for (const line of lines) {
       if (/^(mtllib|o|g)\s+/i.test(line)) continue;
       if (/^v\s/.test(line)) {
         const v = vertices[vertexIndex++];
-        output.push(`v ${v.map((value, i) => ((value - (min[i] + max[i]) / 2) * scale + target[i]).toFixed(6)).join(" ")}`);
-      } else output.push(line);
+        const color = vertexColors ? line.split(/\s+#/)[0].split(/\s+/).slice(4, 8).map(Number) : [];
+        if (!color.every(Number.isFinite)) throw new Error("OBJ has an invalid vertex colour");
+        output.push(`v ${v.map((value, i) => ((value - (min[i] + max[i]) / 2) * scale + target[i]).toFixed(6)).join(" ")}${color.length >= 3 ? " " + color.join(" ") : ""}`);
+      } else if (/^usemtl\s+/i.test(line)) {
+        // ABMatt assigns one material to an entire OBJ group. Without a new
+        // group here, its last usemtl silently recolours all previous faces.
+        output.push(`o ${materialGroup++ ? uniqueName(`${unique}_${materialGroup}`, groupNames) : unique}`);
+        output.push(`usemtl ${renameMaterial(line.trim().slice(6).trim())}`);
+      }
+      else output.push(line);
     }
     await writeFile(join(dir, "import.obj"), output.join("\n"));
+    if (vertexColors) {
+      const mats: { name: string; texture: string }[] = [];
+      for (const file of importedMtls) for (const line of (await readFile(join(dir, file), "utf8")).split(/\r?\n/)) {
+        if (/^newmtl\s+/.test(line)) mats.push({ name: line.slice(7).trim(), texture: "" });
+        else if (/^map_Kd\s+/.test(line) && mats.length) mats[mats.length - 1].texture = line.slice(7).trim();
+      }
+      await writeFile(join(dir, "import.dae"), vertexColoredOBJToDAE(output, mats, unique));
+    }
     await writeFile(join(dir, "course_model.brres"), data);
-    await runAbmatt(exe, dir, "convert import.obj to course_model.brres --patch", "course_model.brres");
+    // Build/export the imported materials on their own first. The resulting
+    // import.json pins their shaders and texture bindings: ABMatt's patch mode
+    // otherwise copies a similarly named course (or earlier imported) material.
+    const importFile = vertexColors ? "import.dae" : "import.obj";
+    await runAbmatt(exe, dir, `convert ${importFile} to imported.brres`, null);
+    await runAbmatt(exe, dir, "convert imported.brres to prepared.dae", "imported.brres", false);
+    await copyFile(join(dir, "prepared.json"), join(dir, "import.json"));
+    await runAbmatt(exe, dir, `convert ${importFile} to course_model.brres --patch`, "course_model.brres");
     const result = new Uint8Array(await readFile(join(dir, "course_model.brres")));
     const after = parseBRRES(result), next = after.models.find((m: any) => m.name === model.name);
     if (!next || next.objects.length <= model.objects.length) throw new Error("ABMatt did not add the OBJ geometry");

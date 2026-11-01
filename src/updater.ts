@@ -1,6 +1,6 @@
 // Portable Windows release updater. Releases are fetched from the project's GitHub repository.
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export const RELEASES_URL = "https://api.github.com/repos/WiiListZ/mkwii-advanced-editor/releases/latest";
@@ -63,6 +63,22 @@ export class ReleaseUpdater {
   // Release notes of the version this updater installed, kept until the next update. A version
   // installed by hand (downloaded from GitHub) has none, so its notes are not shown at start.
   private get notesFile() { return join(this.settingsDir, "updates", "installed-release.json"); }
+
+  // Removes leftover `.previous` backups (including those left by older updaters) and already
+  // installed update folders once the new executable is running.
+  async cleanup() {
+    if (this.executable) {
+      await rm(`${this.executable}.previous`, { force: true }).catch(() => {});
+    }
+    const updatesDir = join(this.settingsDir, "updates");
+    const entries = await readdir(updatesDir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      let obsolete = false;
+      try { obsolete = compareVersions(entry.name, this.currentVersion) <= 0; } catch { /* leave non-version folders */ }
+      if (obsolete) await rm(join(updatesDir, entry.name), { recursive: true, force: true }).catch(() => {});
+    }
+  }
 
   async installedNotes() {
     const record = JSON.parse(await readFile(this.notesFile, "utf8").catch(() => "null"));
@@ -175,7 +191,7 @@ export class ReleaseUpdater {
     // UTF-8 with BOM: Windows PowerShell reads a script without BOM as ANSI, which breaks
     // paths with accented letters.
     const literal = (value: string) => `'${value.replace(/'/g, "''")}'`;
-    await writeFile(script, `﻿$Current = ${literal(this.executable)}
+    await writeFile(script, `\uFEFF$Current = ${literal(this.executable)}
 $Replacement = ${literal(this.stagedPath)}
 $OldPid = ${process.pid}
 $ErrorActionPreference = 'Stop'
@@ -188,6 +204,8 @@ try {
   Move-Item -LiteralPath $Current -Destination $backup -Force
   try { Copy-Item -LiteralPath $Replacement -Destination $Current -Force }
   catch { Move-Item -LiteralPath $backup -Destination $Current -Force; throw }
+  Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $Replacement -Force -ErrorAction SilentlyContinue
   Start-Process -FilePath $Current
 } catch { $_ | Out-File -LiteralPath "$Current.update-error.txt" }
 `, "utf8");

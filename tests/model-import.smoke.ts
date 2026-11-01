@@ -3,8 +3,8 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import { import3DModel } from "../src/model-operations.ts";
-import { parseBRRES } from "../web/js/formats/brres.js";
+import { import3DModel, convert3DToBRRES } from "../src/model-operations.ts";
+import { parseBRRES, decodeTexture } from "../web/js/formats/brres.js";
 import { findFile, parseU8 } from "../web/js/formats/u8.js";
 import { isYaz0, yaz0Decompress } from "../web/js/formats/yaz0.js";
 
@@ -33,12 +33,26 @@ texture = material.node_tree.nodes.new('ShaderNodeTexImage')
 texture.image = image
 material.node_tree.links.new(texture.outputs['Color'], material.node_tree.nodes.get('Principled BSDF').inputs['Base Color'])
 cube.data.materials.append(material)
+solid = bpy.data.materials.new('SolidRed')
+solid.diffuse_color = (1, 0, 0, 1)
+solid.use_nodes = True
+solid.node_tree.nodes.get('Principled BSDF').inputs['Base Color'].default_value = (1, 0, 0, 1)
+cube.data.materials.append(solid)
+for polygon in cube.data.polygons:
+    polygon.material_index = polygon.index % 2
 bpy.ops.export_scene.fbx(filepath=os.path.join(folder, 'sample.fbx'), use_selection=True)
 bpy.ops.export_scene.gltf(filepath=os.path.join(folder, 'sample.glb'), export_format='GLB', use_selection=True)
 bpy.ops.export_scene.gltf(filepath=os.path.join(folder, 'sample.gltf'), export_format='GLTF_SEPARATE', use_selection=True)
 bpy.ops.wm.collada_export(filepath=os.path.join(folder, 'sample.dae'), selected=True)
 bpy.ops.wm.stl_export(filepath=os.path.join(folder, 'sample.stl'), export_selected_objects=True)
 bpy.ops.wm.ply_export(filepath=os.path.join(folder, 'sample.ply'), export_selected_objects=True)
+bpy.ops.wm.save_as_mainfile(filepath=os.path.join(folder, 'sample.blend'))
+colours = cube.data.color_attributes.new(name='Colours', type='BYTE_COLOR', domain='CORNER')
+cube.data.color_attributes.active_color_index = 0
+for i, value in enumerate(colours.data):
+    value.color = ((1, 0, 0, 1), (0, 1, 0, 1), (0, 0, 1, 1))[i % 3]
+bpy.ops.wm.ply_export(filepath=os.path.join(folder, 'vertex.ply'), export_selected_objects=True)
+bpy.ops.export_scene.gltf(filepath=os.path.join(folder, 'vertex.glb'), export_format='GLB', use_selection=True, export_vertex_color='ACTIVE')
 `);
   const child = Bun.spawn([blender, "--background", "--factory-startup", "--python", script, "--", dir], { stdout: "pipe", stderr: "pipe", windowsHide: true });
   const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
@@ -49,14 +63,39 @@ bpy.ops.wm.ply_export(filepath=os.path.join(folder, 'sample.ply'), export_select
   if (!course?.data) throw new Error("Track has no course_model.brres");
   const before = parseBRRES(course.data);
   const model = before.models.find((entry: any) => entry.name === "course") || before.models[0];
-  for (const extension of ["stl", "ply", "dae", "fbx", "glb", "gltf"]) {
+  for (const extension of ["stl", "ply", "dae", "fbx", "glb", "gltf", "blend"]) {
     const result = await import3DModel(course.data, join(dir, `sample.${extension}`), [0, 0, 0]);
     const after = parseBRRES(result);
     const changed = after.models.find((entry: any) => entry.name === model.name);
     if (!changed || changed.objects.length <= model.objects.length) throw new Error(`${extension} did not add geometry`);
-    if (["dae", "fbx", "glb", "gltf"].includes(extension) && after.textures.size <= before.textures.size)
-      throw new Error(`${extension} did not import its image texture`);
+    if (["dae", "fbx", "glb", "gltf", "blend"].includes(extension)) {
+      const added = changed.materials.filter((m: any) => !model.materials.some((old: any) => old.name === m.name));
+      if (added.length < 2) throw new Error(`${extension} merged the two materials`);
+      const images = added.flatMap((m: any) => m.layers.map((l: any) => after.textures.get(l.texture)));
+      if (!images.some((t: any) => {
+        const pixels = decodeTexture(t);
+        return pixels[0] > 245 && pixels[1] < 10 && pixels[2] < 10;
+      })) throw new Error(`${extension} lost its solid red material`);
+      if (!images.some((t: any) => new Set(Array.from(decodeTexture(t).filter((_: any, i: number) => i % 4 === 0))).size > 1))
+        throw new Error(`${extension} lost the multicolour texture`);
+    }
     console.log(`${extension}: ${model.objects.length} → ${changed.objects.length} model parts`);
+  }
+  const standalone = parseBRRES(await convert3DToBRRES(join(dir, 'sample.blend'), '-', 'converted'));
+  if (standalone.models[0]?.materials.length !== 2 || standalone.textures.size !== 2) throw new Error('Standalone conversion lost materials or textures');
+  console.log('standalone BRRES: both materials and textures retained');
+  for (const extension of ['ply', 'glb']) {
+    if (extension === 'glb') {
+      const bytes = await readFile(join(dir, 'vertex.glb'));
+      const json = JSON.parse(bytes.toString('utf8', 20, 20 + bytes.readUInt32LE(12)));
+      if (!json.meshes.some((m: any) => m.primitives.some((p: any) => p.attributes.COLOR_0 !== undefined))) throw new Error('Vertex-colour GLB fixture has no COLOR_0');
+    }
+    const coloured = parseBRRES(await import3DModel(course.data, join(dir, `vertex.${extension}`), [0, 0, 0]));
+    const mesh = coloured.models.find((m: any) => m.name === model.name);
+    const added = mesh.objects.filter((o: any) => !model.objects.some((old: any) => old.name === o.name));
+    if (!added.some((o: any) => o.colors && new Set(Array.from(o.colors).filter((_, i) => i % 4 === 0)).size > 1))
+      throw new Error(`${extension} lost its vertex colours`);
+    console.log(`${extension}: vertex colours retained`);
   }
 } finally {
   const base = resolve(tmpdir()) + sep;

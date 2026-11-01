@@ -18,7 +18,7 @@ import { appendShot, fixIntroShots, introKeyframes, introShotIssues, moveKey, re
 import { COLLISION_SHAPES, KCL_MAX_TRIANGLES, appendCollisionTriangles, buildCollisionShape, collisionBoxFromTriangles, collisionCoverage, collisionOfModel, deleteCollisionTriangles, duplicateCollisionTriangles, flipCollisionTriangles, isFloorTriangle, modelCollisionTriangles, simplifyCollisionTriangles, transformCollisionTriangles } from "../../js/editor/collision.js";
 import { parseKCL, buildKCL, patchKCLFlags } from "../../js/formats/kcl.js";
 import { parseOBJ, kclToOBJ, modelToOBJ } from "../../js/formats/obj.js";
-import { clearBRRESPolygon, isBRRES, parseBRRES, polygonPieces, resetPieceMemory, replaceBRRESTexture, setCHR0Loop, transformBRRESPart, translateBRRESPart } from "../../js/formats/brres.js";
+import { clearBRRESPolygon, isBRRES, parseBRRES, polygonPieces, resetPieceMemory, replaceBRRESTexture, restBRRESPartsOnPoint, setCHR0Loop, transformBRRESPart, translateBRRESPart } from "../../js/formats/brres.js";
 import { BrresModelBuilder, mainModel } from "../../js/editor/brresmodel.js";
 import { BUILTIN_OBJECTS, KCL_TYPES, OBJECT_DISPLAY, OBJECT_INFO, makeFlag, objectDisplayY, parseObjFlow, trackKind, trackLabel } from "../../js/data/defs.js";
 import { BUILTIN_OBJECT_DOCUMENTATION, OBJECT_INFO_URL, defaultDocumentation, mergeDocumentationUpdate, objectDocumentation, parseObjectDocumentation, useDefaultDocumentation } from "../../js/data/object-documentation.js";
@@ -29,7 +29,7 @@ import { isItemSlot, isStatsFile } from "../../js/formats/params.js";
 
 export const PATH_KINDS = ["ENPT", "ITPT", "CKPT", "POTI"];
 export const LAYER_LABEL: Record<string, string> = { VISUAL: "Track model", SKY: "Sky", KCL: "Collision", MODEL: "Reference model", GRID: "Grid", ...SECTION_LABEL };
-const PERSISTED = ["workspace", "riivolutionXml", "cameraPreview", "hideGrid", "confirmModelDrop", "partsFolder", "favoriteObjects", "favoriteModelSources", "favoriteModelParts", "iconSize", "checkpointWidth", "autoCheckpointWidth", "pathWidth", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "showDescriptions", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "textureBrushSize", "uiFont", "offerCopyUpdates", "keepBackups", "map2DAddSeveral", "introFollow", "introTimelineHeight", "dragToMove", "hideMoveArrows"] as const;
+const PERSISTED = ["workspace", "riivolutionXml", "cameraPreview", "hideGrid", "confirmModelDrop", "partsFolder", "favoriteObjects", "favoriteModelSources", "favoriteModelParts", "iconSize", "checkpointWidth", "autoCheckpointWidth", "pathWidth", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "showDescriptions", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "textureBrushSize", "uiFont", "offerCopyUpdates", "keepBackups", "map2DAddSeveral", "introFollow", "introTimelineHeight", "dragToMove", "hideMoveArrows", "trackVideoPreviews", "discordActivity"] as const;
 const VIEW_SETTINGS = new Set<keyof Settings>(["hideGrid", "iconSize", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "dragToMove", "hideMoveArrows"]);
 const textEncoder = new TextEncoder();
 const sameBytes = (a: Uint8Array, b: Uint8Array) => {
@@ -47,6 +47,7 @@ export interface Settings {
   animations: boolean; showLabels: boolean; selectionBox: boolean; showAreaVolumes: boolean; areaOutlinesThroughWalls: boolean; showEffects: boolean; showDescriptions: boolean; quality: "high" | "medium" | "low";
   flySpeed: number; lookSensitivity: number; hideCursorWhileLooking: boolean; textureBrushSize: number;
   dragToMove: boolean; hideMoveArrows: boolean;
+  trackVideoPreviews: boolean; discordActivity: boolean;
   workspace: string; riivolutionXml: string; partsFolder: string; favoriteObjects: number[]; favoriteModelSources: string[]; favoriteModelParts: string[];
   confirmModelDrop: boolean; hideGrid: boolean; cameraPreview: boolean; offerCopyUpdates: boolean; keepBackups: boolean; map2DAddSeveral: boolean;
   introFollow: boolean; // Cameras tab: the 3D view jumps to the intro camera at the playhead
@@ -57,7 +58,7 @@ export interface Settings {
 
 // Preferences that "Reset to defaults" restores. Recent files, favourites and folders are kept.
 export const DEFAULT_SETTINGS = {
-  iconSize: 150, checkpointWidth: 3000, autoCheckpointWidth: true, pathWidth: 20,
+  iconSize: 150, checkpointWidth: 3000, autoCheckpointWidth: true, pathWidth: 20, trackVideoPreviews: true, discordActivity: true,
   modelMode: "real", displayMode: "visual", modelEditing: true, smartAlignment: false, animations: true, showLabels: true, selectionBox: false, showAreaVolumes: true, areaOutlinesThroughWalls: false, showEffects: true, showDescriptions: true, quality: "high",
   flySpeed: 1, lookSensitivity: 1, hideCursorWhileLooking: true, dragToMove: false, hideMoveArrows: false, textureBrushSize: 8, confirmModelDrop: true, hideGrid: true, cameraPreview: true, uiFont: "default", offerCopyUpdates: true, keepBackups: true, map2DAddSeveral: false, introFollow: true, introTimelineHeight: 118,
 } satisfies Partial<Settings>;
@@ -158,19 +159,8 @@ export class Editor {
   }
 
   // Moves a model part up or down so its lowest point rests on `point` (it was centred there).
-  restPartOnPoint(data: Uint8Array, modelName: string, partIndex: number, point: number[]) {
-    const model = parseBRRES(data).models.find((m: any) => m.name === modelName);
-    const part = model?.objects[partIndex];
-    if (!part?.triangles) return data;
-    let low = Infinity;
-    for (let i = 0; i < part.positions.length / 3; i++) {
-      const rigid = model.boneMatrix.get(part.mtx[i]);
-      const w = rigid !== undefined && part.mtx[i] >= 0 ? model.bones[rigid]?.world : null;
-      const x = part.positions[i * 3], y = part.positions[i * 3 + 1], z = part.positions[i * 3 + 2];
-      low = Math.min(low, w ? w[4] * x + w[5] * y + w[6] * z + w[7] : y);
-    }
-    const dy = point[1] - low;
-    return Number.isFinite(dy) && Math.abs(dy) > 0.01 ? translateBRRESPart(data, modelName, partIndex, [0, dy, 0]) : data;
+  restPartOnPoint(data: Uint8Array, modelName: string, partIndex: number | number[], point: number[]) {
+    return restBRRESPartsOnPoint(data, modelName, Array.isArray(partIndex) ? partIndex : [partIndex], point);
   }
   tab = "outline";
   homeVisible = true;
@@ -331,6 +321,9 @@ export class Editor {
       this.tracksMovedNoticeSeen = this.tracksMovedNoticeSeen === true || s.tracksMovedNoticeSeen === true || legacyTracksMoved;
       if (this.tracksMovedNoticeSeen && s.tracksMovedNoticeSeen !== true) this.saveSettings({ tracksMovedNoticeSeen: true });
       for (const key of PERSISTED) if (s[key] !== undefined) (this.settings as any)[key] = s[key];
+      if (s.trackVideoPreviews === undefined) {
+        try { if (localStorage.getItem("mkwii-library-previews") === "0") { this.settings.trackVideoPreviews = false; this.saveSettings({ trackVideoPreviews: false }); } } catch {}
+      }
       // Hidden Move arrows need dragging to move (see setSetting).
       if (this.settings.hideMoveArrows) this.settings.dragToMove = true;
       // "Auto" was removed: the model view, with the collision over it in the Collision tab (see setTab).
@@ -388,8 +381,10 @@ export class Editor {
       if (!s.tourDone) setTimeout(() => { this.tourActive = true; this.bump("ui"); }, 700);
       if (startupFile) await this.openPath(startupFile);
       else if (startupDocument) {
-        await this.loadFile(await api.editorDocument(startupDocument));
+        const file = await api.editorDocument(startupDocument);
+        await this.loadFile(file);
         this.doc.dirty = true; this.bump("doc");
+        if (file.created) void dialogs.open("trackCreated", file.created);
       } else if (startupCreate === "generator") await this.newTrack();
       else if (startupCreate === "empty") await this.cmd("newEmpty", true);
     } catch (e) {
@@ -410,6 +405,8 @@ export class Editor {
   saveSettings(patch: Record<string, unknown>) {
     this.settingsSave = this.settingsSave.then(() => api.saveSettings(patch)).catch((e: any) => console.warn("Settings not saved", e));
   }
+
+  async flushSettings() { await this.settingsSave; }
 
   setSetting<K extends keyof Settings>(key: K, value: Settings[K]) {
     if (key === "displayMode") this.collisionTabView = false;
@@ -1660,7 +1657,8 @@ export class Editor {
         const partIndex = model.objects.findIndex((o: any) => !oldNames.has(o.name));
         if (partIndex < 0) throw new Error("The imported model object was not found");
         // Static models rest on the chosen point; animated ones keep the placement of their bones.
-        if (point && !importedAnimation) next = this.restPartOnPoint(next, model.name, partIndex, point);
+        if (point && !importedAnimation) next = this.restPartOnPoint(next, model.name,
+          model.objects.flatMap((o: any, i: number) => oldNames.has(o.name) ? [] : [i]), point);
         this.viewport?.selectGeometry(null);
         this.doc.change("Import 3D track model", () => { node.data = next; }, { structural: true });
         this.doc.emit("model");
@@ -2100,7 +2098,7 @@ export class Editor {
         toast("Empty project created", { description: "Import a collision (Collision tab) or start placing elements." });
         break;
       }
-      case "newTrack": return hasBackend && !inPlace ? this.openEditorWindow({ create: "generator" }) : this.newTrack();
+      case "newTrack": return this.newTrack({ inPlace });
       case "importTrackModel": return this.importTrackModel();
       case "modelParts": return this.openModelParts();
       case "gameObjects": return this.openGameObjects();
@@ -2248,15 +2246,23 @@ export class Editor {
     }
   }
 
-  async newTrack({ showCreated = true } = {}): Promise<boolean> {
+  async newTrack({ showCreated = true, inPlace = false } = {}): Promise<boolean> {
     const d = this.doc;
     const res: any = await dialogs.open("generator", { hasSzs: !!d.szs });
     if (!res) return false;
-    if (!res.keepSzs && !(await this.confirmDiscard())) return false;
+    const separate = hasBackend && !inPlace;
+    if (!separate && !res.keepSzs && !(await this.confirmDiscard())) return false;
     return this.withBusy("Building the track…", async () => {
       try {
         const szs = res.keepSzs ? d.szs : null;
         const { out, tree, kclBytes } = await generateTrackArchive(res.points, res.params, szs, (text) => { this.busy = text; this.bump("ui"); });
+        if (separate) {
+          // The generator is a modal here. Only the completed track belongs in a separate 3D
+          // editor; the current document and its unsaved work must stay untouched.
+          await api.openEditorWindow({ name: "New Track.szs", data: buildU8(tree),
+            ...(showCreated ? { created: { length: out.length, tris: kclBytes ? parseKCL(kclBytes).count : 0, keptSzs: !!szs } } : {}) });
+          return true;
+        }
         d.reset();
         d.szs = tree;
         this.diskVersion = null;

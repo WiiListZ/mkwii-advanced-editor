@@ -554,6 +554,33 @@ export function translateBRRESPart(data, modelName, partIndex, delta, positionIn
     (point) => point.map((value, axis) => value + delta[axis]), allowedPartIndices);
 }
 
+// Keep all materials of an imported mesh together when resting it on the track.
+export function restBRRESPartsOnPoint(data, modelName, partIndices, point) {
+  const model = parseBRRES(data).models.find((m) => m.name === modelName);
+  const selected = [...new Set(partIndices)].filter((i) => model?.objects[i]?.triangles);
+  if (!selected.length) return data;
+  let low = Infinity;
+  for (const index of selected) {
+    const part = model.objects[index];
+    for (let i = 0; i < part.positions.length / 3; i++) {
+      const rigid = model.boneMatrix.get(part.mtx[i]);
+      const w = rigid !== undefined && part.mtx[i] >= 0 ? model.bones[rigid]?.world : null;
+      const x = part.positions[i * 3], y = part.positions[i * 3 + 1], z = part.positions[i * 3 + 2];
+      low = Math.min(low, w ? w[4] * x + w[5] * y + w[6] * z + w[7] : y);
+    }
+  }
+  const dy = point[1] - low;
+  if (!Number.isFinite(dy) || Math.abs(dy) <= 0.01) return data;
+  const moved = new Set();
+  for (const index of selected) {
+    const part = model.objects[index], ids = part.positionIndices.filter((id) => !moved.has(`${part.positionArrayId}:${id}`));
+    if (!ids.length) continue;
+    data = transformBRRESPart(data, modelName, index, ids, { center: [0, 0, 0], translation: [0, dy, 0] }, selected);
+    for (const id of ids) moved.add(`${part.positionArrayId}:${id}`);
+  }
+  return data;
+}
+
 const matrixPoint = (m, p) => m
   ? [m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + m[3],
     m[4] * p[0] + m[5] * p[1] + m[6] * p[2] + m[7],
@@ -617,7 +644,7 @@ function parsePLT0(r, o, name) {
   const data = o + r.s32(o + 0x10);
   const colors = new Uint8Array(count * 4);
   for (let i = 0; i < count; i++) colors.set(decode16(r.u16(data + i * 2), format), i * 4);
-  return { name, count, colors };
+  return { name, count, colors, format, dataOffset: data };
 }
 
 // 16-bit palette/texel formats: 0 IA8, 1 RGB565, 2 RGB5A3.

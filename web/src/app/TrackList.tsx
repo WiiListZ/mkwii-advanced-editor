@@ -45,7 +45,7 @@ export function TrackList({ section, onOpen }: { section: "all" | "other"; onOpe
   const [page, setPage] = React.useState(0);
   const icons = useCupIcons();
   // Taller rows with each track's preview video behind it (remembered; off shows the plain list).
-  const [previews, setPreviews] = React.useState(() => localStorage.getItem("mkwii-library-previews") !== "0");
+  const previews = ed.settings.trackVideoPreviews;
   React.useEffect(() => setPage(0), [section]);
   if (!t?.files.length) {
     return <p className="m-0 p-4 text-center text-xs text-muted-foreground">No track files yet: choose the game folder, or a folder of tracks in Settings › Game files.</p>;
@@ -86,7 +86,7 @@ export function TrackList({ section, onOpen }: { section: "all" | "other"; onOpe
           </SelectContent>
         </Select>
         <label className="ml-1 flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground" title="Show the track preview videos of the cup selection behind the tracks of the game's cups">
-          <Checkbox checked={previews} onCheckedChange={(v) => { setPreviews(!!v); localStorage.setItem("mkwii-library-previews", v ? "1" : "0"); }} aria-label="Video previews" />
+          <Checkbox checked={previews} onCheckedChange={(v) => ed.setSetting("trackVideoPreviews", v === true)} aria-label="Video previews" />
           Video previews
         </label>
         <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{files.length.toLocaleString()} of {t.files.length.toLocaleString()} files</span>

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { compareVersions, selectRelease } from "../src/updater.ts";
 import { ReleaseUpdater } from "../src/updater.ts";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
@@ -123,6 +123,34 @@ test("notes of an in-app update are shown once, and never for another version", 
     const later = await new ReleaseUpdater("1.1.0", null, directory).installedNotes();
     expect(later.show).toBe(false);
     expect(later.available).toBe(true);
+  } finally {
+    if (!resolve(directory).startsWith(resolve(tmpdir()) + sep)) throw new Error("Unsafe temporary cleanup path");
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("cleanup removes .previous backup and installed update folders while keeping newer staged downloads", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "mkwii-updater-cleanup-"));
+  try {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const exe = join(directory, "MKWiiAdvancedEditor.exe");
+    const previous = `${exe}.previous`;
+    await writeFile(exe, "current");
+    await writeFile(previous, "old-backup");
+    await mkdir(join(directory, "updates", "1.0.6"), { recursive: true });
+    await mkdir(join(directory, "updates", "1.0.7"), { recursive: true });
+    await mkdir(join(directory, "updates", "1.0.8"), { recursive: true });
+    await writeFile(join(directory, "updates", "installed-release.json"), "{}");
+
+    const updater = new ReleaseUpdater("1.0.7", exe, directory);
+    await updater.cleanup();
+
+    expect(existsSync(exe)).toBe(true);
+    expect(existsSync(previous)).toBe(false);
+    expect(existsSync(join(directory, "updates", "1.0.6"))).toBe(false);
+    expect(existsSync(join(directory, "updates", "1.0.7"))).toBe(false);
+    expect(existsSync(join(directory, "updates", "1.0.8"))).toBe(true);
+    expect(existsSync(join(directory, "updates", "installed-release.json"))).toBe(true);
   } finally {
     if (!resolve(directory).startsWith(resolve(tmpdir()) + sep)) throw new Error("Unsafe temporary cleanup path");
     rmSync(directory, { recursive: true, force: true });

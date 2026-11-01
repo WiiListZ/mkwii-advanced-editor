@@ -72,24 +72,33 @@ if (serverOnly) {
   try {
     const gpuLevel = applyGpuBackend();
     const { Webview, SizeHint } = await import("webview-bun");
-    const webview = new Webview(false, { width: 1600, height: 950, hint: SizeHint.NONE });
-    webview.title = "MKWii Advanced Editor";
-    webview.bind("__nativeEditorWindow", () => true);
+    const { lib } = await import("webview-bun/src/ffi");
+    // Create the window hidden and strip its native frame before webview_set_size shows it,
+    // so WebView2 never measures or flashes a framed client area on startup.
+    const rawHandle = lib.symbols.webview_create(0, null);
+    if (!rawHandle) throw new Error("webview_create returned null");
     // Integrated title bar: the UI draws minimize / maximize / close and calls back here.
     let userClosed: (() => boolean) | null = null;
+    let control: import("./window.ts").WindowControl | null = null;
     try {
       const { makeFrameless, userClosedWindow } = await import("./window.ts");
-      const control = makeFrameless(webview.unsafeWindowHandle);
-      if (control) {
-        webview.bind("__winctl", (action: string, arg?: string) => {
-          if (action === "title") { webview.title = arg || "MKWii Advanced Editor"; return; }
-          return control(action, arg);
-        });
-        userClosed = userClosedWindow;
-      }
+      control = makeFrameless(lib.symbols.webview_get_window(rawHandle), rawHandle, lib.symbols.webview_create.ptr);
+      userClosed = userClosedWindow;
     } catch (err) {
       console.error("Frameless window not available:", err);
     }
+    const webview = new (Webview as unknown as new (handle: typeof rawHandle, size: { width: number; height: number; hint: number }) => InstanceType<typeof Webview>)(
+      rawHandle,
+      { width: 1600, height: 950, hint: SizeHint.NONE },
+    );
+    if (control) {
+      control("title", "MKWii Advanced Editor");
+      webview.bind("__winctl", (action: string, arg?: string) => control!(action, arg));
+      control("show");
+    } else {
+      webview.title = "MKWii Advanced Editor";
+    }
+    webview.bind("__nativeEditorWindow", () => true);
     webview.navigate(url);
     webview.run(); // blocks until the window is closed
     // The window ended by itself: the page crashed (graphics driver). Try another backend.
@@ -104,6 +113,7 @@ if (serverOnly) {
     console.error("Could not open the native window (WebView2):", err);
     explainBrowserFallback(err);
     openInBrowser();
+    if (!worker) process.exit(1);
   }
 }
 
@@ -128,4 +138,3 @@ function explainBrowserFallback(err: unknown) {
     user32.close();
   } catch { /* the console message is enough */ }
 }
-

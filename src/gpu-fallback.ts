@@ -13,8 +13,8 @@ const BACKENDS = [
   { name: "software", flags: "--use-angle=swiftshader --enable-unsafe-swiftshader" },
 ];
 
-const settingsDir = process.env.MKWII_SETTINGS_DIR || join(process.env.APPDATA || process.env.HOME || ".", "MKWiiAdvancedEditor");
-const stateFile = join(settingsDir, "gpu.json");
+const getSettingsDir = () => process.env.MKWII_SETTINGS_DIR || join(process.env.APPDATA || process.env.HOME || ".", "MKWiiAdvancedEditor");
+const getStateFile = () => join(getSettingsDir(), "gpu.json");
 
 // Version of the installed WebView2 runtime (machine-wide or per-user install).
 function runtimeVersion() {
@@ -31,18 +31,20 @@ function runtimeVersion() {
 
 const runtime = process.platform === "win32" ? runtimeVersion() : "";
 const userFlags = process.env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS;
+const userDataFolder = process.env.WEBVIEW2_USER_DATA_FOLDER;
 
 function savedLevel() {
   try {
-    const state = JSON.parse(readFileSync(stateFile, "utf8"));
+    const state = JSON.parse(readFileSync(getStateFile(), "utf8"));
     return state.runtime === runtime ? Math.min(BACKENDS.length - 1, Math.max(0, state.level | 0)) : 0;
   } catch { return 0; }
 }
 
 function saveLevel(level: number) {
   try {
+    const settingsDir = getSettingsDir();
     if (!existsSync(settingsDir)) mkdirSync(settingsDir, { recursive: true });
-    writeFileSync(stateFile, JSON.stringify({ level, backend: BACKENDS[level].name, runtime }, null, 2));
+    writeFileSync(getStateFile(), JSON.stringify({ level, backend: BACKENDS[level].name, runtime }, null, 2));
   } catch { /* the fallback still works for this launch */ }
 }
 
@@ -53,6 +55,13 @@ export function applyGpuBackend() {
   const flags = BACKENDS[level].flags;
   if (flags) {
     process.env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = userFlags ? `${userFlags} ${flags}` : flags;
+  } else if (userFlags === undefined) {
+    delete process.env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS;
+  }
+  // Keep WebView2's profile in our settings folder instead of %APPDATA%\<exe>\EBWebView, and isolate
+  // fallback backends so a restart never collides on ERROR_INVALID_STATE (0x8007139F).
+  if (!userDataFolder) {
+    process.env.WEBVIEW2_USER_DATA_FOLDER = join(getSettingsDir(), level > 0 ? `webview-${level}` : "webview");
   }
   return level;
 }
@@ -65,8 +74,14 @@ export function relaunchWithNextBackend(level: number, args: string[], compiled:
   saveLevel(next);
   console.error(`The window stopped with ${BACKENDS[level].name} graphics; starting again with ${BACKENDS[next].name}.`);
   const command = compiled ? [process.execPath, ...args] : [process.execPath, process.argv[1], ...args];
-  const env: Record<string, string | undefined> = { ...process.env, MKWII_GPU_LEVEL: String(next), WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: userFlags };
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    MKWII_GPU_LEVEL: String(next),
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: userFlags,
+    WEBVIEW2_USER_DATA_FOLDER: userDataFolder,
+  };
   if (userFlags === undefined) delete env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS;
+  if (userDataFolder === undefined) delete env.WEBVIEW2_USER_DATA_FOLDER;
   const child = Bun.spawn(command, { env, stdio: ["ignore", "ignore", "ignore"], windowsHide: true });
   child.unref();
   return child;

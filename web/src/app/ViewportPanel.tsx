@@ -17,6 +17,7 @@ import { Map2DPanel } from "./Map2DPanel";
 import { IntroTimeline } from "./IntroTimeline";
 import { DISCORD_URL, DiscordIcon } from "./updates";
 import { api } from "../../js/api.js";
+import { DiscordActivityControl } from "./discord-activity";
 
 export function ViewportPanel() {
   const host = React.useRef<HTMLDivElement>(null);
@@ -137,9 +138,14 @@ function Welcome() {
             <h1 className="m-0 text-lg font-semibold tracking-tight">MKWii Advanced Editor</h1>
             <p className="m-0 truncate text-xs text-muted-foreground">Edit Mario Kart Wii tracks visually, with the game's real models.</p>
           </div>
-          <Button variant="ghost" size="sm" aria-label="Settings" onClick={() => ed.cmd("settingsDialog")}><Settings /> Settings</Button>
-          <Button variant="ghost" size="sm" onClick={() => ed.cmd("help")}><CircleHelp /> Help</Button>
-          <Button variant="ghost" size="sm" title="Join the editor's Discord server: help, questions and news" onClick={() => api.openUrl(DISCORD_URL)}><DiscordIcon /> Discord</Button>
+          <div className="flex shrink-0 flex-col gap-1.5">
+            <div className="flex items-center justify-end">
+              <Button variant="ghost" size="sm" aria-label="Settings" onClick={() => ed.cmd("settingsDialog")}><Settings /> Settings</Button>
+              <Button variant="ghost" size="sm" onClick={() => ed.cmd("help")}><CircleHelp /> Help</Button>
+              <Button variant="ghost" size="sm" title="Join the editor's Discord server: help, questions and news" onClick={() => api.openUrl(DISCORD_URL)}><DiscordIcon /> Discord</Button>
+            </div>
+            <DiscordActivityControl />
+          </div>
         </header>
         {!ed.isEmpty && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2.5">

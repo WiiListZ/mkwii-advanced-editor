@@ -22,9 +22,10 @@ import { CheckPanel } from "./panels/CheckPanel";
 import { Inspector } from "./panels/Inspector";
 import { DialogHost } from "./dialogs/DialogHost";
 import { UpdateNotice, UpdatesProvider } from "./updates";
+import { DiscordActivityProvider } from "./discord-activity";
 
 export function App() {
-  return <UpdatesProvider><AppContent /></UpdatesProvider>;
+  return <UpdatesProvider><DiscordActivityProvider><AppContent /></DiscordActivityProvider></UpdatesProvider>;
 }
 
 function AppContent() {
@@ -34,6 +35,11 @@ function AppContent() {
     document.title = title;
     if (ed.hasWindowControls) void (window as any).__winctl("title", title);
   }, [ed.doc.fileName, ed.doc.dirty, ed.isEmpty]);
+  React.useEffect(() => {
+    // The native caption is replaced before this page loads. Once the page is mounted, align
+    // WebView2's child bounds and input focus with the final client area as well.
+    if (editor.hasWindowControls) void editor.windowAction("ready");
+  }, []);
   React.useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => { if (editor.doc.dirty && !(window as any).__closingApproved) { event.preventDefault(); event.returnValue = ""; } };
     window.addEventListener("beforeunload", onBeforeUnload);

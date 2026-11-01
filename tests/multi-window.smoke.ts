@@ -93,12 +93,23 @@ try {
   await drop.waitForFunction(() => (window as any).app?.doc.fileName === "Dropped.kmp");
   check(await drop.evaluate(() => (window as any).app.doc.dirty && !(window as any).app.doc.filePath) && await x(b) === 250, "a dropped track opens independently and requests Save as for its own file");
   await drop.close();
+  const windowsBeforeGenerator = (await browser.pages()).length;
+  await change(b, 275);
   await b.evaluate(() => { void (window as any).app.cmd("newTrack"); });
-  const generatorTarget = await browser.waitForTarget((t) => new URL(t.url() || "about:blank").searchParams.get("new") === "generator");
-  const generator = (await generatorTarget.page())!;
-  await generator.waitForFunction(() => document.body.textContent?.includes("Three steps: draw the shape"));
-  await generator.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent === "Cancel")!.click());
-  check(await x(b) === 250, "creating and cancelling a new track never replaces the other editor's track");
+  await b.waitForFunction(() => document.body.textContent?.includes("Three steps: draw the shape"));
+  check((await browser.pages()).length === windowsBeforeGenerator, "New track opens its generator in the current window");
+  await b.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent === "Cancel")!.click());
+  await b.waitForFunction(() => !document.body.textContent?.includes("Three steps: draw the shape"));
+  check(await x(b) === 275 && await b.evaluate(() => (window as any).app.doc.dirty), "cancelling the generator preserves the current track and unsaved work");
+  await b.evaluate(() => { void (window as any).app.cmd("newTrack"); });
+  await b.waitForFunction(() => document.body.textContent?.includes("Three steps: draw the shape"));
+  await b.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent?.trim() === "Generate track")!.click());
+  const generatedTarget = await browser.waitForTarget((t) => !!new URL(t.url() || "about:blank").searchParams.get("document"));
+  const generated = (await generatedTarget.page())!;
+  await generated.waitForFunction(() => (window as any).app?.doc.fileName === "New Track.szs" && (window as any).app.doc.kcl?.count > 0);
+  check((await browser.pages()).length === windowsBeforeGenerator + 1 && await generated.evaluate(() => (window as any).app.doc.dirty && !(window as any).app.doc.filePath) && await x(b) === 275, "only Generate track opens a new 3D editor, without replacing the existing track");
+  await generated.waitForFunction(() => document.body.textContent?.includes("Track created"));
+  check(true, "the completed track's guidance appears in its own 3D window");
   check(errors.length === 0, `no browser errors (${errors.join(", ")})`);
 } finally {
   await browser?.close(); worker.terminate();

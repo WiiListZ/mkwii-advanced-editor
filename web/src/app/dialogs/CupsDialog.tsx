@@ -298,6 +298,12 @@ export function CupsDialog({ initialFile, close }: { initialFile?: string; close
           </Select>
           <Hint title="Open a mod" text="A mod that adds its own cups: the Config.pul in the Binaries folder of a Pulsar pack (such as Insane Kart Wii), or a lecode-*.bin in the rel folder of an LE-CODE distribution. Mods found through the game folder or its Riivolution XML are listed here by themselves."><Button size="sm" variant="ghost" onClick={() => void openMod()}><FolderOpen /> Open a mod…</Button></Hint>
           <Hint title="Beta" text="The cups of mods (Pulsar packs and LE-CODE distributions) and the creation of new cups are in beta: keep the backup and test the mod in Dolphin before sharing it."><Badge variant="outline">Mod cups: beta</Badge></Hint>
+          <Hint title="Background videos" text="Play the tracks’ video previews behind their rows. Turn off to reduce background activity. Your choice is remembered.">
+            <label className="ml-auto flex cursor-pointer items-center gap-2 text-xs">
+              <Checkbox aria-label="Play background videos" checked={ed.settings.trackVideoPreviews} onCheckedChange={(checked) => ed.setSetting("trackVideoPreviews", checked === true)} />
+              Play background videos
+            </label>
+          </Hint>
         </div>
       )}
 
@@ -387,7 +393,7 @@ export function CupsDialog({ initialFile, close }: { initialFile?: string; close
             <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
               {current.slots.map((id: number, position: number) => (
                 <SlotRow key={id} id={id} position={position} arrangement={arrangement} check={fileCheck(id)} name={shownName(id)} gameName={gameName}
-                  preview={previewOf(id)} onOpen={!pendingFile && renaming !== id ? () => void openTrack(id) : null}
+                  preview={previewOf(id)} playPreview={ed.settings.trackVideoPreviews} onOpen={!pendingFile && renaming !== id ? () => void openTrack(id) : null}
                   music={plannedMusic(plan, id, savedMusic)} musicKept={plan.musicKept.some((m: any) => m.slots.includes(id))}
                   musicShared={(() => { const m = plan.musicShared.find((m: any) => m.slots.includes(id)); return m ? m.slots.filter((s: number) => s !== id).map((s: number) => slotById(s).label).join(" and ") : null; })()}
                   onMusic={(choice) => update((a) => setSlotMusic(a, id, choice))} onMusicFile={() => void chooseMusicFile(id)}
@@ -466,10 +472,11 @@ function NameInput({ value, onDone }: { value: string; onDone: (v: string | null
   );
 }
 
-function SlotRow({ id, position, arrangement, check, name, gameName, music, musicKept, musicShared, onMusic, onMusicFile, renaming, setRenaming, pending, onMove, onSwap, onFile, onOpenTrack, onNewTrack, onPlace, onRename, onReset, slotName, preview, onOpen, onRenameRequest }: {
+function SlotRow({ id, position, arrangement, check, name, gameName, music, musicKept, musicShared, onMusic, onMusicFile, renaming, setRenaming, pending, onMove, onSwap, onFile, onOpenTrack, onNewTrack, onPlace, onRename, onReset, slotName, preview, playPreview, onOpen, onRenameRequest }: {
   id: number; position: number; arrangement: Arrangement; check?: Check; name: string; gameName: (id: number) => string;
   music: { stream: string; from: string | null; file: any }; musicKept: boolean; musicShared: string | null; onMusic: (choice: MusicChoice | null) => void; onMusicFile: () => void;
   preview: { path: string; name: string; part: string; label: string; rect: { x: number; y: number; width: number; height: number } } | null; onOpen: (() => void) | null; onRenameRequest: () => void;
+  playPreview: boolean;
   renaming: boolean; setRenaming: (on: boolean) => void; pending: boolean;
   onMove: (dir: number | string) => void; onSwap: (other: number) => void; onFile: () => void; onOpenTrack: () => void; onNewTrack: () => void; onPlace: () => void;
   onRename: (v: string) => void; onReset: () => void; slotName: (id: number) => string;
@@ -502,7 +509,7 @@ function SlotRow({ id, position, arrangement, check, name, gameName, music, musi
         const target = e.target as HTMLElement;
         if (onOpen && e.currentTarget.contains(target) && !target.closest("button, input, a, [role=menuitem], form")) onOpen();
       }}>
-      {preview && <>
+      {preview && playPreview && <>
         <ThpPart key={previewVersion} path={preview.path} rect={preview.rect} className="absolute inset-0 size-full" />
         {/* Keeps the names and buttons readable over the moving picture. */}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-card via-card/80 to-card/30" />
