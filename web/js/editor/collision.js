@@ -355,9 +355,9 @@ export function collisionOfModel(kcl, placed, box = [], tolerance = 20) {
   return out;
 }
 
-export function deleteCollisionTriangles(kcl, selected) {
+export function deleteCollisionTriangles(kcl, selected, { allowEmpty = false } = {}) {
   const removed = new Set(selected.filter((tri) => tri >= 0 && tri < kcl.count));
-  if (removed.size >= kcl.count) throw new Error('A KCL needs at least one collision triangle');
+  if (removed.size >= kcl.count && !allowEmpty) throw new Error('A KCL needs at least one collision triangle');
   const count = kcl.count - removed.size, verts = new Float32Array(count * 9), flags = new Uint16Array(count);
   let next = 0;
   for (let tri = 0; tri < kcl.count; tri++) {

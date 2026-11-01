@@ -17,24 +17,32 @@ export const KIND_COLOR: Record<string, string> = {
 // Wraps any element in a tooltip with a title, an explanation and an optional shortcut.
 // `wrap` puts the tooltip on a wrapper span: needed for Radix elements that use their own
 // data-state (tabs, toggles), otherwise the tooltip's data-state would replace it.
-// Tooltips close on any click and never open while a menu, list or dialog is open
-// (Radix Select/Menu triggers cancel pointerdown, which would otherwise leave the tooltip on top).
-const popupOpen = () => !!document.querySelector("[role=listbox], [role=menu], [role=dialog], [role=alertdialog]");
+// Tooltips close on any click. Menus and lists suppress them; inside a dialog, only controls in
+// the top dialog can show one (so a tooltip from a covered window cannot appear above it).
+const popupOpen = (trigger: Element | null) => {
+  if (document.querySelector("[role=listbox], [role=menu]")) return true;
+  const dialogs = [...document.querySelectorAll('[role=dialog]:not([data-state="closed"]), [role=alertdialog]:not([data-state="closed"])')];
+  const top = dialogs[dialogs.length - 1];
+  return !!top && trigger?.closest("[role=dialog], [role=alertdialog]") !== top;
+};
 
-export function Hint({ title, text, shortcut, side, wrap, children }: { title?: string; text?: string; shortcut?: string; side?: "top" | "bottom" | "left" | "right"; wrap?: boolean; children: React.ReactElement }) {
+export function Hint({ title, text, shortcut, side, wrap, hoverable = true, children }: { title?: string; text?: string; shortcut?: string; side?: "top" | "bottom" | "left" | "right"; wrap?: boolean; hoverable?: boolean; children: React.ReactElement }) {
   const [open, setOpen] = React.useState(false);
+  const trigger = React.useRef<React.ElementRef<typeof TooltipTrigger>>(null);
   React.useEffect(() => {
     if (!open) return;
     const close = () => setOpen(false);
+    const popups = new MutationObserver(() => { if (popupOpen(trigger.current)) close(); });
+    popups.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["role", "data-state"] });
     window.addEventListener("pointerdown", close, true);
     window.addEventListener("keydown", close, true);
-    return () => { window.removeEventListener("pointerdown", close, true); window.removeEventListener("keydown", close, true); };
+    return () => { popups.disconnect(); window.removeEventListener("pointerdown", close, true); window.removeEventListener("keydown", close, true); };
   }, [open]);
   if (!title && !text) return children;
   return (
-    <Tooltip open={open} onOpenChange={(o) => setOpen(o && !popupOpen())}>
-      <TooltipTrigger asChild>{wrap ? <span className="inline-flex">{children}</span> : children}</TooltipTrigger>
-      <TooltipContent side={side}>
+    <Tooltip open={open} disableHoverableContent={!hoverable} onOpenChange={(o) => setOpen(o && !popupOpen(trigger.current))}>
+      <TooltipTrigger ref={trigger} asChild>{wrap ? <span className="inline-flex max-w-full">{children}</span> : children}</TooltipTrigger>
+      <TooltipContent side={side} style={!hoverable ? { pointerEvents: "none" } : undefined}>
         {title && (
           <div className="mb-0.5 flex items-center justify-between gap-3 font-semibold text-foreground">
             {title}

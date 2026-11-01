@@ -13,7 +13,7 @@ import { attachSHP0 } from "./shp0-import.ts";
 // @ts-ignore Shared JavaScript BRRES reader.
 import { parseBRRES, polygonPieces } from "../web/js/formats/brres.js";
 
-const abmattPath = () => {
+export const abmattPath = () => {
   const candidates = [process.env.MKWII_ABMATT, join(homedir(), "Documents", "abmatt", "bin", "abmatt.exe"), Bun.which("abmatt")].filter(Boolean) as string[];
   return candidates.find(existsSync) || null;
 };
@@ -767,7 +767,7 @@ export async function convert3DToBRRES(modelPath: string, animation = "", name =
     if (!existsSync(geometry)) throw new Error("Blender did not export the model as DAE");
     const output = join(dir, "converted.brres"), commandFile = join(dir, "convert-commands.txt");
     await writeFile(commandFile, `convert ${basename(geometry)} to converted.brres\n`);
-    const process = Bun.spawn([exe, "-f", "convert-commands.txt", "-o"], { cwd: dir, stdout: "pipe", stderr: "pipe", windowsHide: true });
+    const process = Bun.spawn([exe, "-f", "convert-commands.txt", "-o"], { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
     const [code, out, err] = await Promise.all([process.exited, new Response(process.stdout).text(), new Response(process.stderr).text()]);
     if (code || !existsSync(output)) throw new Error(`ABMatt could not create the BRRES: ${(out + "\n" + err).trim().slice(-800)}`);
     let result = new Uint8Array(await readFile(output));
@@ -819,7 +819,7 @@ async function importAnimatedModel(data: Uint8Array, objPath: string, target: nu
   const shapeAnimation = hasShapes ? JSON.parse(await readFile(objPath + ".shape.json", "utf8")) as ImportedShape : undefined;
   const standaloneName = "weighted-standalone.brres";
   await writeFile(join(dir, "weighted-commands.txt"), `convert ${basename(dae)} to ${standaloneName}\n`);
-  const process = Bun.spawn([exe, "-f", "weighted-commands.txt", "-o"], { cwd: dir, stdout: "pipe", stderr: "pipe", windowsHide: true });
+  const process = Bun.spawn([exe, "-f", "weighted-commands.txt", "-o"], { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
   const [code, out, err] = await Promise.all([process.exited, new Response(process.stdout).text(), new Response(process.stderr).text()]);
   if (code || !existsSync(join(dir, standaloneName))) throw new Error(`ABMatt could not convert the rigged model: ${(out + "\n" + err).trim().slice(-800)}`);
   const shapeControllers: ShapeController[] = [];
@@ -1247,7 +1247,7 @@ export async function importBRRESPart(data: Uint8Array, sourceData: Uint8Array, 
 async function runAbmatt(exe: string, dir: string, command: string, source: string, overwrite = true) {
   await writeFile(join(dir, "commands.txt"), command + "\n");
   // Exports run without -o so ABMatt never re-saves (and possibly fails to repack) the source file.
-  const child = Bun.spawn([exe, "-b", source, ...(overwrite ? ["-o"] : []), "-f", "commands.txt"], { cwd: dir, stdout: "pipe", stderr: "pipe", windowsHide: true });
+  const child = Bun.spawn([exe, "-b", source, ...(overwrite ? ["-o"] : []), "-f", "commands.txt"], { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
   const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   if (code !== 0) throw new Error(`ABMatt failed: ${(out + "\n" + err).trim().slice(-600)}`);
   return (out + "\n" + err).trim();

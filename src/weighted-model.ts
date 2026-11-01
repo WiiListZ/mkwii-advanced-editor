@@ -10,7 +10,7 @@ export type ImportedShape = { name: string; frames: number; shapes: {
 export type ShapeController = { base: string; target: string; values: number[] };
 
 async function run(exe: string, cwd: string, ...args: string[]) {
-  const child = Bun.spawn([exe, ...args], { cwd, stdout: "pipe", stderr: "pipe", windowsHide: true });
+  const child = Bun.spawn([exe, ...args], { cwd, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
   const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   if (code) throw new Error(`Weighted model conversion failed: ${(out + "\n" + err).trim().slice(-900)}`);
 }

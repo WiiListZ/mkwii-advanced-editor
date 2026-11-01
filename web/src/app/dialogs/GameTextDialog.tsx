@@ -12,11 +12,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { api } from "../../../js/api.js";
 import { buildU8, findFile, listFiles, newSzsTree, parseU8, setFilePath } from "../../../js/formats/u8.js";
-import { buildBMG, escapes, fontSizePercent, messagePlace, parseBMG, plainText, setFontSizePercent, stripFontSizePrefix } from "../../../js/formats/bmg.js";
+import { buildBMG, escapes, fontSizePercent, messagePlace, messageTextLength, parseBMG, plainText, setFontSizePercent, stripFontSizePrefix } from "../../../js/formats/bmg.js";
+import { messageTextError, messageTextLimit } from "../../../js/editor/text-limits.js";
+import { gameTextAssetsFor } from "../game-text-assets";
 import { drawText, parseBRFNT } from "../../../js/formats/brfnt.js";
 import { editor, type LooseFile } from "../editor";
 import { dialogs } from "../dialogs-store";
-import { GameTextPreview } from "./GameTextPreview";
+import { DEFAULT_GAME_SCREEN_VH, GameTextPreview, MAX_GAME_SCREEN_VH, MIN_GAME_SCREEN_VH } from "./GameTextPreview";
 import { cn } from "@/lib/utils";
 
 const LANGUAGES: Record<string, string> = { E: "English", I: "Italian", F: "French", G: "German", S: "Spanish", J: "Japanese", K: "Korean", U: "English (US)", M: "Spanish (Americas)", Q: "French (Canada)" };
@@ -49,9 +51,28 @@ export function GameTextDialog({ search: initialSearch = "", folder: initialFold
   const [fileFilter, setFileFilter] = React.useState(initialFile || "all");
   const [onlyChanged, setOnlyChanged] = React.useState(false);
   const [inGamePreview, setInGamePreview] = React.useState(() => localStorage.getItem("mkwii-in-game-text-preview") !== "false");
+  const [screenVh, setScreenVh] = React.useState(() => {
+    const saved = Number(localStorage.getItem("mkwii-game-screen-vh"));
+    return Number.isFinite(saved) && saved >= MIN_GAME_SCREEN_VH && saved <= MAX_GAME_SCREEN_VH ? saved : DEFAULT_GAME_SCREEN_VH;
+  });
   const [selected, setSelected] = React.useState<string | null>(null);
   const [edits, setEdits] = React.useState<Record<string, string>>({});
   const [saving, setSaving] = React.useState(false);
+  const [limitAssets, setLimitAssets] = React.useState<any>(null);
+  const [limitsReady, setLimitsReady] = React.useState(!folder);
+  const [editError, setEditError] = React.useState("");
+  React.useEffect(() => {
+    let cancelled = false;
+    setLimitAssets(null); setLimitsReady(!folder);
+    if (folder) {
+      const assets = gameTextAssetsFor(folder);
+      assets.load(["MenuSingle.szs", "Race.szs"]).then(() => {
+        if (!cancelled) { setLimitAssets(assets); setLimitsReady(true); }
+      }).catch(() => { if (!cancelled) setLimitsReady(true); });
+    }
+    return () => { cancelled = true; };
+  }, [folder]);
+  React.useEffect(() => setEditError(""), [selected]);
 
   // Archives of the folder and the languages they come in.
   React.useEffect(() => {
@@ -147,7 +168,12 @@ export function GameTextDialog({ search: initialSearch = "", folder: initialFold
   const changedKeys = Object.keys(edits);
 
   const save = async () => {
-    if (!archives || !changedKeys.length) return;
+    if (!archives || !changedKeys.length || !limitsReady) return;
+    for (const key of changedKeys) {
+      const message = messages.find((m) => m.key === key)!;
+      const problem = messageTextError(edits[key], messageTextLimit(limitAssets, message.file, message.id, message.text));
+      if (problem) { setSelected(key); setEditError(problem); toast.error("Text does not fit its game text box", { description: problem }); return; }
+    }
     setSaving(true);
     try {
       const byFile: Record<string, Record<number, string>> = {};
@@ -265,22 +291,33 @@ export function GameTextDialog({ search: initialSearch = "", folder: initialFold
           {current ? (
             <MessageEditor key={current.key} message={current} folder={folder} font={font} iconFont={iconFont} value={edits[current.key] ?? current.text} lookup={lookup}
               inGamePreview={inGamePreview} onInGamePreviewChange={(enabled) => { setInGamePreview(enabled); localStorage.setItem("mkwii-in-game-text-preview", String(enabled)); }}
+              screenVh={screenVh} onScreenVhChange={(vh) => { setScreenVh(vh); localStorage.setItem("mkwii-game-screen-vh", String(vh)); }}
               twins={current.text ? messages.filter((m) => m.key !== current.key && m.text === current.text) : []}
-              onChange={(text, keys = [current.key]) => setEdits((e) => {
-                const next = { ...e };
+              limit={messageTextLimit(limitAssets, current.file, current.id, current.text)} limitsReady={limitsReady} editError={editError}
+              onChange={(text, keys = [current.key]) => {
+                if (!limitsReady) return;
                 for (const key of keys) {
-                  const original = messages.find((m) => m.key === key)!.text;
-                  if (text === original) delete next[key]; else next[key] = text;
+                  const m = messages.find((m) => m.key === key)!;
+                  const problem = text === m.text ? "" : messageTextError(text, messageTextLimit(limitAssets, m.file, m.id, m.text));
+                  if (problem) { setEditError(problem); return; }
                 }
-                return next;
-              })} />
+                setEditError("");
+                setEdits((e) => {
+                  const next = { ...e };
+                  for (const key of keys) {
+                    const original = messages.find((m) => m.key === key)!.text;
+                    if (text === original) delete next[key]; else next[key] = text;
+                  }
+                  return next;
+                });
+              }} />
           ) : (
             <div className="grid flex-1 place-items-center text-xs text-muted-foreground">{loading ? <LoaderCircle className="size-5 animate-spin" /> : "Choose a message on the left."}</div>
           )}
         </div>
       </div>
       <div className="flex shrink-0 justify-end border-t pt-2">
-        <Button size="sm" disabled={!changedKeys.length || saving} onClick={save}>{saving ? <LoaderCircle className="animate-spin" /> : <Save />} Save {changedKeys.length || ""}</Button>
+        <Button size="sm" disabled={!changedKeys.length || saving || !limitsReady} onClick={save}>{saving ? <LoaderCircle className="animate-spin" /> : <Save />} Save {changedKeys.length || ""}</Button>
       </div>
     </div>
   );
@@ -335,7 +372,7 @@ function IconPicker({ font, onInsert }: { font: any; onInsert: (code: string) =>
   );
 }
 
-function MessageEditor({ message, folder, value, font, iconFont, twins, lookup, inGamePreview, onInGamePreviewChange, onChange }: { message: Message; folder: string; value: string; font: any; iconFont: any; twins: Message[]; lookup: (file: string, id: number) => string | null; inGamePreview: boolean; onInGamePreviewChange: (enabled: boolean) => void; onChange: (text: string, keys?: string[]) => void }) {
+function MessageEditor({ message, folder, value, font, iconFont, twins, lookup, inGamePreview, onInGamePreviewChange, screenVh, onScreenVhChange, onChange, limit, limitsReady, editError }: { message: Message; folder: string; value: string; font: any; iconFont: any; twins: Message[]; lookup: (file: string, id: number) => string | null; inGamePreview: boolean; onInGamePreviewChange: (enabled: boolean) => void; screenVh: number; onScreenVhChange: (vh: number) => void; onChange: (text: string, keys?: string[]) => void; limit: { capacity: number; singleLine: boolean; source: string } | null; limitsReady: boolean; editError: string }) {
   const body = stripFontSizePrefix(value);
   const percent = fontSizePercent(value);
   const codes = escapes(body);
@@ -360,15 +397,16 @@ function MessageEditor({ message, folder, value, font, iconFont, twins, lookup, 
         <span className="font-mono text-[11px] text-muted-foreground">{message.file}.bmg · {hex(message.id)}</span>
         <span className="ml-auto text-[11px] text-muted-foreground">{message.copies} {message.copies === 1 ? "copy" : "copies"} in this language</span>
       </div>
-      <GameTextPreview folder={folder} file={message.file} id={message.id} font={font} text={value} originalText={message.text} place={message.place} lookup={lookup} inGamePreview={inGamePreview} onInGamePreviewChange={onInGamePreviewChange} />
+      <GameTextPreview folder={folder} file={message.file} id={message.id} font={font} text={value} originalText={message.text} place={message.place} lookup={lookup} inGamePreview={inGamePreview} onInGamePreviewChange={onInGamePreviewChange} screenVh={screenVh} onScreenVhChange={onScreenVhChange} />
       <div className="flex shrink-0 flex-col gap-1.5">
-        <textarea ref={area} value={body} onChange={(e) => onChange(setFontSizePercent(e.target.value, percent))} onKeyDown={(e) => e.stopPropagation()} spellCheck={false} rows={5}
-          className="min-h-24 w-full resize-y rounded-md border bg-background p-2.5 font-mono text-[13px] leading-relaxed outline-none focus:ring-1 focus:ring-ring" />
+        <textarea ref={area} value={body} onChange={(e) => onChange(setFontSizePercent(e.target.value, percent))} onKeyDown={(e) => e.stopPropagation()} spellCheck={false} rows={limit?.singleLine ? 2 : 4} wrap={limit?.singleLine ? "off" : "soft"} disabled={!limitsReady} aria-label="Message text" aria-invalid={!!editError} aria-describedby="game-text-limit game-text-error"
+          className={cn(limit?.singleLine ? "min-h-16" : "min-h-24", "w-full resize-y rounded-md border bg-background p-2.5 font-mono text-[13px] leading-relaxed outline-none focus:ring-1 focus:ring-ring")} />
         <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
           <IconPicker font={iconFont} onInsert={insert} />
-          <span>{plainText(body).length} characters · {body.split("\n").length} lines</span>
+          <span id="game-text-limit" data-text-limit={limit?.capacity}>{!limitsReady ? "Reading text limits…" : limit ? `${messageTextLength(value)} / ${limit.capacity} characters${limit.singleLine ? " · one line" : ` · ${body.split("\n").length} lines`} (including game codes)` : `${plainText(body).length} characters · limit unavailable for this message`}</span>
           {value !== message.text && <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-[11px]" onClick={() => onChange(message.text)}><RotateCcw /> Original</Button>}
         </div>
+        <p id="game-text-error" role={editError ? "alert" : undefined} className={cn("m-0 text-[11px]", editError ? "text-destructive" : "hidden")}>{editError}</p>
         <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
           <span className="w-16 shrink-0">Font size</span>
           <input type="range" min={20} max={200} step={1} value={Math.min(200, Math.max(20, percent))}

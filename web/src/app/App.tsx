@@ -30,6 +30,13 @@ export function App() {
 function AppContent() {
   const ed = useEditor("doc", "ui");
   React.useEffect(() => {
+    const title = `${ed.isEmpty ? "Home" : `${ed.doc.dirty ? "* " : ""}${ed.doc.fileName}`} — MKWii Advanced Editor`;
+    document.title = title;
+    if (ed.hasWindowControls) void (window as any).__winctl("title", title);
+  }, [ed.doc.fileName, ed.doc.dirty, ed.isEmpty]);
+  React.useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent) => { if (editor.doc.dirty && !(window as any).__closingApproved) { event.preventDefault(); event.returnValue = ""; } };
+    window.addEventListener("beforeunload", onBeforeUnload);
     const onKey = (e: KeyboardEvent) => editor.handleKey(e);
     window.addEventListener("keydown", onKey);
     const onContextMenu = (e: MouseEvent) => { if (editor.hasWindowControls) e.preventDefault(); };
@@ -41,6 +48,7 @@ function AppContent() {
     window.addEventListener("keydown", noZoomKeys, true);
     return () => {
       window.removeEventListener("keydown", onKey); document.removeEventListener("contextmenu", onContextMenu, true);
+      window.removeEventListener("beforeunload", onBeforeUnload);
       window.removeEventListener("wheel", noZoomWheel); window.removeEventListener("keydown", noZoomKeys, true);
     };
   }, []);
@@ -52,6 +60,9 @@ function AppContent() {
       <div className="flex h-full flex-col">
         <TitleBar />
         <UpdateNotice />
+        {!empty && ed.cupTrackLink && <div className="shrink-0 border-b bg-muted/30 px-4 py-2 text-xs" data-cup-track-link>
+          <b>{ed.cupTrackLink.label}</b><span className="ml-2 text-muted-foreground">{ed.cupTrackLink.pending ? "Assigned to this cup position. Save edits here, then Apply in Cups and tracks." : "Applied to this cup position. Save updates its track directly."}</span>
+        </div>}
         {!empty && <Toolbar />}
         <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1" autoSaveId={empty ? "mkwii-layout-start" : "mkwii-layout"}>
           {!empty && <ResizablePanel key="left" defaultSize={20} minSize={14} maxSize={34} className="bg-sidebar" id="left" order={1}>

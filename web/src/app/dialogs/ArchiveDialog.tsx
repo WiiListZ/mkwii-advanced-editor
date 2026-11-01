@@ -106,8 +106,7 @@ export function ArchiveDialog({ path, name, tree: initialTree, compressed = true
       await dialogs.open("gameText", { folder: path.replace(/[\\/][^\\/]+$/, ""), language: lang, file: fileName.replace(/\.bmg$/i, "") });
       await reloadFromDisk();
     } else if (kind.tool === "track") {
-      close(null);
-      await editor.loadFile({ path: null, name: fileName, data: file.node.data });
+      await editor.loadFile({ path: null, name: fileName, data: file.node.data }, { newWindow: true });
     } else if (kind.tool === "params" || kind.tool === "lighting") {
       await dialogs.open("params", { tree, archiveName: name, initialPath: file.path, mode: kind.tool === "lighting" ? "lighting" : "data", onSave: () => save(),
         onChange: (filePath: string, data: Uint8Array) => { const target = listFiles(tree).find((f: any) => f.path === filePath); if (target) { target.node.data = data; changed(); } } });

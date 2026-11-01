@@ -5,7 +5,7 @@ import {
   FolderCog, FolderOpen, Github, GraduationCap, History, House, Image as ImageIcon, ImageOff, ImagePlus, Import, Info, Keyboard, Languages, Layers,
   Lightbulb, Link, ListChecks, ListOrdered, MapPin, Maximize, Minus, Mountain, PackageOpen, PackagePlus, Paintbrush, Pencil, Play, Plus, Puzzle, Redo2, Route, Save, SaveAll,
   Settings as SettingsIcon, Shapes, SlidersHorizontal, ShieldCheck, Sparkles, Square, SquareX, StretchHorizontal, Trash2, Undo2, Video, X,
-  ScrollText, Download, Trophy, MessagesSquare,
+  ScrollText, Download, Trophy,
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -18,7 +18,7 @@ import { useEditor } from "./hooks";
 import { LAYER_LABEL, LAYERS, KIND_LABEL } from "./editor";
 import { KIND_ICON } from "./common";
 import { cn } from "@/lib/utils";
-import { APP_VERSION, DISCORD_URL, REPO_URL, newIssueUrl, useUpdates } from "./updates";
+import { APP_VERSION, DISCORD_URL, DiscordIcon, REPO_URL, newIssueUrl, useUpdates } from "./updates";
 import { api } from "../../js/api.js";
 import { toast } from "sonner";
 
@@ -192,7 +192,7 @@ export function TitleBar() {
             <MenubarSub>
               <MenubarSubTrigger><History /> Open recent</MenubarSubTrigger>
               <MenubarSubContent className="max-w-[28rem]">
-                {s.recent.length ? s.recent.map((p) => <MenubarItem key={p} onSelect={() => ed.openPath(p)} className="truncate"><FileText /> {p}</MenubarItem>) : <MenubarItem disabled>No recent files</MenubarItem>}
+                {s.recent.length ? s.recent.map((p) => <MenubarItem key={p} onSelect={() => ed.openPath(p, { newWindow: true })} className="truncate"><FileText /> {p}</MenubarItem>) : <MenubarItem disabled>No recent files</MenubarItem>}
               </MenubarSubContent>
             </MenubarSub>
             <MenubarSeparator />
@@ -374,7 +374,7 @@ export function TitleBar() {
             <MenubarItem onSelect={() => void versionNotes()}><ScrollText /> Release notes (version {APP_VERSION})</MenubarItem>
             {updates.status?.available && <MenubarItem onSelect={() => updates.showNotes({ version: updates.status?.version || "", title: updates.status?.title, notes: updates.status?.notes || "", url: updates.status?.url })}><Download /> Release notes of the update ({updates.status.version})</MenubarItem>}
             <MenubarSeparator />
-            <MenubarItem onSelect={() => api.openUrl(DISCORD_URL)}><MessagesSquare /> Discord server (help and questions)</MenubarItem>
+            <MenubarItem onSelect={() => api.openUrl(DISCORD_URL)}><DiscordIcon /> Discord server (help and questions)</MenubarItem>
             <MenubarItem onSelect={() => api.openUrl(REPO_URL)}><Github /> GitHub page</MenubarItem>
             <MenubarItem onSelect={() => api.openUrl(newIssueUrl())}><Bug /> Report an issue on GitHub…</MenubarItem>
             <MenubarSeparator />

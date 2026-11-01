@@ -67,6 +67,7 @@ export function relaunchWithNextBackend(level: number, args: string[], compiled:
   const command = compiled ? [process.execPath, ...args] : [process.execPath, process.argv[1], ...args];
   const env: Record<string, string | undefined> = { ...process.env, MKWII_GPU_LEVEL: String(next), WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: userFlags };
   if (userFlags === undefined) delete env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS;
-  Bun.spawn(command, { env, stdio: ["ignore", "ignore", "ignore"] }).unref();
-  return true;
+  const child = Bun.spawn(command, { env, stdio: ["ignore", "ignore", "ignore"], windowsHide: true });
+  child.unref();
+  return child;
 }

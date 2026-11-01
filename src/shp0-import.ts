@@ -71,7 +71,7 @@ function shapeBinary(name: string, frames: number, base: string, targets: ShapeC
 }
 
 async function run(exe: string, cwd: string, ...args: string[]) {
-  const process = Bun.spawn([exe, ...args], { cwd, stdout: "pipe", stderr: "pipe", windowsHide: true });
+  const process = Bun.spawn([exe, ...args], { cwd, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
   const [code, stdout, stderr] = await Promise.all([process.exited, new Response(process.stdout).text(), new Response(process.stderr).text()]);
   if (code) throw new Error(`SHP0 import failed: ${(stdout + "\n" + stderr).trim().slice(-900)}`);
 }

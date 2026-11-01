@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
-  CUPS, SLOTS, checkTrackArchive, initialArrangement, isChanged, moveSlot, musicFiles, nameChanges, nameIds, neighbourSlot,
+  CUPS, SLOTS, appliedMusic, checkTrackArchive, initialArrangement, isChanged, moveSlot, musicFiles, nameChanges, nameIds, neighbourSlot,
   planArrangement, plannedMusic, replaceSlot, resetSlot, setSlotMusic, slotById, swapSlots,
 } from "../web/js/data/cups.js";
 import { createSnapshot, deleteSnapshot, listSnapshots, restoreSnapshot } from "../src/snapshots.ts";
@@ -91,6 +91,27 @@ describe("arrangement", () => {
     // Two different choices for one shared stream: it stays.
     a = setSlotMusic(a, MARIO, { type: "slot", id: MALL });
     expect(planArrangement(a).musicKept.map((m) => m.stream)).toEqual(["n_Circuit32"]);
+  });
+
+  test("applied music remains visible without becoming another pending edit", () => {
+    const plan = planArrangement(setSlotMusic(initialArrangement(), MOO, { type: "slot", id: MARIO }));
+    const saved = appliedMusic(plan);
+    const clean = initialArrangement();
+    expect(plannedMusic(planArrangement(clean), MOO, saved)).toEqual({ stream: "n_Farm", from: "n_Circuit32", file: null });
+    expect(isChanged(clean, MOO)).toBe(false);
+    expect(planArrangement(clean).music).toEqual([]);
+    const copy = planArrangement(setSlotMusic(clean, MALL, { type: "slot", id: MOO }));
+    expect(appliedMusic(copy, saved).n_Shopping32).toEqual({ from: "n_Circuit32", file: null });
+    expect(appliedMusic(plan, {}, [])).toEqual({}); // No file written: no new saved label.
+  });
+
+  test("saved music follows stream swaps and audio choices without reusing a changed source", () => {
+    const file = { type: "file", path: "C:\\music\\song.wav", label: "My song" };
+    const saved = { n_Farm: { from: null, file }, n_Shopping32: { from: "n_Kinoko", file: null } };
+    const next = appliedMusic(planArrangement(swapSlots(initialArrangement(), MOO, MALL)), saved);
+    expect(next.n_Farm).toEqual({ from: "n_Kinoko", file: null });
+    expect(next.n_Shopping32).toEqual({ from: null, file });
+    expect(plannedMusic(planArrangement(initialArrangement()), MALL, next).file).toEqual(file);
   });
 
   test("races and arenas never mix", () => {

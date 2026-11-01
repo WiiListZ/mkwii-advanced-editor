@@ -37,7 +37,7 @@ try {
     const mesh = candidates.sort((a, b) => a.userData.modelPart.triangles - b.userData.modelPart.triangles)[0];
     if (!mesh) throw new Error("No course model part to select");
     app.viewport.selectModelPiece(mesh.userData.partIndex, 0);
-    return { count: app.doc.kcl?.count || 0, partTriangles: app.geometrySelection.vertexIndices.length / 3 };
+    return { count: app.doc.kcl?.count || 0, partTriangles: app.geometrySelection.vertexIndices.length / 3, partIndex: mesh.userData.partIndex };
   }, join(game, "Race", "Common.szs"), track);
   const generateCollision = async (shape: "mesh" | "box", mobileForm = false) => {
     if (mobileForm) await page.setViewport({ width: 390, height: 844 });
@@ -64,6 +64,29 @@ try {
   await page.waitForFunction((count, added) => (window as any).app.doc.kcl?.count === count + added, { timeout: 120000 }, initial.count, initial.partTriangles);
   const undo = await page.evaluate(() => { const app = (window as any).app; app.doc.undo(); const count = app.doc.kcl?.count; app.doc.redo(); return { count, redone: app.doc.kcl?.count }; });
   if (undo.count !== initial.count || undo.redone !== initial.count + initial.partTriangles) throw new Error("Generated model-part collision did not undo/redo");
+  const removeCollision = async (confirm: boolean) => {
+    await page.waitForFunction(() => [...document.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.trim() === "Remove all collision…"));
+    await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Remove all collision…")!.click());
+    await page.waitForSelector('[role="alertdialog"]');
+    await page.evaluate((confirm) => [...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find((button) => button.textContent?.trim() === (confirm ? "Remove collision" : "Cancel"))!.click(), confirm);
+    await page.waitForSelector('[role="alertdialog"]', { hidden: true });
+  };
+  const modelRemoval = await page.evaluate((partIndex) => {
+    const app = (window as any).app;
+    app.startGeometryEditing("model"); app.viewport.selectModelPiece(partIndex, 0);
+    return { count: app.doc.kcl.count, matched: app.collisionOfSelectedModelParts().length, history: app.doc.undoStack.length };
+  }, initial.partIndex);
+  if (modelRemoval.matched < initial.partTriangles) throw new Error("Generated model collision was not found for removal");
+  await removeCollision(false);
+  if (!(await page.evaluate((before) => (window as any).app.doc.kcl.count === before.count && (window as any).app.doc.undoStack.length === before.history, modelRemoval))) throw new Error("Cancelling changed collision or history");
+  await removeCollision(true);
+  const removedModel = await page.evaluate(() => {
+    const app = (window as any).app, count = app.doc.kcl.count, keptModel = app.geometrySelection?.type === "model";
+    app.doc.undo(); const restored = app.doc.kcl.count; app.doc.redo(); const redone = app.doc.kcl.count; app.doc.undo();
+    return { count, keptModel, restored, redone };
+  });
+  if (removedModel.count !== modelRemoval.count - modelRemoval.matched || !removedModel.keptModel || removedModel.restored !== modelRemoval.count || removedModel.redone !== removedModel.count) throw new Error(`Model collision removal/undo/redo failed: ${JSON.stringify(removedModel)}`);
+  console.log(`Removed ${modelRemoval.matched} selected-model triangles after confirmation; cancellation, model retention and undo/redo passed`);
   const objectFound = await page.evaluate(() => {
     const app = (window as any).app;
     const object = app.doc.kmp.GOBJ.find((item: any) => app.assets.objectModel(item.objectId)?.template);
@@ -130,6 +153,19 @@ try {
     return { out, objects: app.doc.kmp.GOBJ.length };
   });
   console.log(`Other objects of the track with collision found: ${JSON.stringify(others.out)} (of ${others.objects} objects)`);
+  const objectRemoval = await page.evaluate(() => {
+    const app = (window as any).app;
+    const object = app.doc.kmp.GOBJ.find((item: any) => app.assets.objectModel(item.objectId)?.template);
+    app.viewport.setTool(null); app.doc.select([String(object.uid)]);
+    return { count: app.doc.kcl.count, objects: app.doc.kmp.GOBJ.length, matched: app.collisionOfSelectedObjects().length };
+  });
+  if (objectRemoval.matched < 12) throw new Error("Generated object collision not found");
+  await removeCollision(true);
+  if (!(await page.evaluate((before) => (window as any).app.doc.kcl.count === before.count - before.matched && (window as any).app.doc.kmp.GOBJ.length === before.objects, objectRemoval))) throw new Error("Removing object collision deleted its model or the wrong triangles");
+  if (!(await page.evaluate(() => (window as any).app.save()))) throw new Error("Could not save removed collision");
+  const afterRemoval = await page.evaluate(async (path) => { const app = (window as any).app; await app.openPath(path); return app.doc.kcl.count; }, track);
+  if (afterRemoval !== objectRemoval.count - objectRemoval.matched) throw new Error("Removed collision returned after save/reopen");
+  console.log("Object collision removal kept the object and survived save/reopen");
   if (errors.length) throw new Error(errors.join("\n"));
   console.log("Model-part and object collision generation, undo/redo, save/reopen passed");
 } finally {

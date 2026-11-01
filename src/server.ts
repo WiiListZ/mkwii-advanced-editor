@@ -1,13 +1,14 @@
 // Local HTTP server (runs in a worker): serves the UI and gives it access to files on disk.
 // Listens on 127.0.0.1 only, and every API call must carry the token generated at startup.
 
-import { appendFile, cp, mkdir, mkdtemp, copyFile, readFile, readdir, rm, stat } from "node:fs/promises";
+import { appendFile, cp, mkdir, mkdtemp, copyFile, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname, basename, resolve, sep } from "node:path";
 import { assets } from "./embedded.gen.ts";
 import { folderDialog, openDialog, saveDialog, revealInExplorer, openInBrowser, type FileFilter } from "./dialogs.ts";
 import { convert3DToBRRES, deleteBRRESModel, duplicateBRRESModel, exportBRRESModel, import3DModel, importBRRESPart, listModelAnimations, parseTriangleRanges } from "./model-operations.ts";
 import { importResourceAnimation } from "./asset-operations.ts";
+import { buildGeneratedTrackModels } from "./generated-track-models.ts";
 import { indexArchives, readArchiveFile } from "./archive-library.ts";
 import { decodeWiimmArchive } from "./wiimm-archives.ts";
 import { prepareBundledTools } from "./bundled-tools.ts";
@@ -16,6 +17,8 @@ import { associationStatus, migrateLegacyAssociation, registerAssociations, unre
 import { tmpdir } from "node:os";
 import packageJson from "../package.json" with { type: "json" };
 import { ReleaseUpdater } from "./updater.ts";
+import { EditorWindows } from "./editor-windows.ts";
+import { CupTrackDrafts } from "./cup-track-drafts.ts";
 import { createSnapshot, deleteSnapshot, listSnapshots, restoreSnapshot } from "./snapshots.ts";
 // @ts-ignore - plain JS module shared with the UI
 import { yaz0Compress } from "../web/js/formats/yaz0.js";
@@ -39,6 +42,10 @@ const MIME: Record<string, string> = {
 let settingsDir = join(process.env.APPDATA || process.env.HOME || ".", "MKWiiAdvancedEditor");
 let settingsFile = join(settingsDir, "settings.json");
 let updater: ReleaseUpdater;
+let editorWindows = new EditorWindows();
+let cupTracks = new CupTrackDrafts(settingsDir);
+const windowDocuments = new Map<string, { name: string; data: Uint8Array }>();
+let settingsWrite: Promise<unknown> = Promise.resolve();
 
 async function readSettings(): Promise<Record<string, unknown>> {
   try {
@@ -89,6 +96,51 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     case "info":
       return json({ version: packageJson.version, bun: Bun.version, platform: process.platform, settingsDir });
 
+    case "cup-track": {
+      if (req.method === "GET") return json(await cupTracks.info(filePath));
+      if (req.method !== "POST") return json({ error: "POST required" }, 405);
+      return json(await cupTracks.create(new Uint8Array(await req.arrayBuffer()), url.searchParams.get("label") || "New track", url.searchParams.get("destination") || undefined));
+    }
+
+    case "cup-tracks-applied": {
+      if (req.method !== "POST") return json({ error: "POST required" }, 405);
+      const body = await req.json() as { files: { source: string; path: string }[] };
+      await cupTracks.applied(body.files || []);
+      return json({ ok: true });
+    }
+
+    case "editor-window": {
+      if (req.method !== "POST") return json({ error: "POST required" }, 405);
+      const target = new URL("/", url.origin);
+      target.searchParams.set("t", req.headers.get("x-token")!);
+      target.searchParams.set("editor", "1");
+      let documentId: string | null = null;
+      if (req.headers.get("content-type") === "application/octet-stream") {
+        documentId = crypto.randomUUID();
+        windowDocuments.set(documentId, { name: basename(url.searchParams.get("name") || "Custom Track.szs"), data: new Uint8Array(await req.arrayBuffer()) });
+        const pendingId = documentId;
+        setTimeout(() => windowDocuments.delete(pendingId), 300000).unref();
+        target.searchParams.set("document", documentId);
+      } else {
+        const body = await req.json() as { path?: string; create?: string };
+        if (body.path) {
+          if (!existsSync(body.path) || !(await stat(body.path)).isFile()) return json({ error: "Track file not found" }, 404);
+          target.searchParams.set("open", resolve(body.path));
+        } else if (body.create === "generator" || body.create === "empty") target.searchParams.set("new", body.create);
+        else return json({ error: "Choose a track or create a new one" }, 400);
+      }
+      try {
+        return json(editorWindows.open(target.href, () => { if (documentId) windowDocuments.delete(documentId); }));
+      } catch (error) { if (documentId) windowDocuments.delete(documentId); throw error; }
+    }
+
+    case "editor-document": {
+      const id = url.searchParams.get("id") || "", doc = windowDocuments.get(id);
+      if (!doc) return json({ error: "This track transfer is no longer available" }, 404);
+      windowDocuments.delete(id);
+      return new Response(doc.data, { headers: { "content-type": "application/octet-stream", "x-file-name": encodeURIComponent(doc.name) } });
+    }
+
     case "updates":
       if (req.method === "GET") return json(await updater.check());
       // The download runs in the background; the page follows it with update-progress.
@@ -100,6 +152,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
 
     case "update-apply":
       if (req.method !== "POST") return json({ error: "POST required" }, 405);
+      if (editorWindows.count) return json({ error: "Close the track editor windows, then install the update from Home." }, 409);
       return json(await updater.apply());
 
     // Notes of the version installed by the updater; POST marks them as read.
@@ -301,6 +354,11 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       return new Response(result, { headers: { "content-type": "application/octet-stream" } });
     }
 
+    case "generated-track-models": {
+      if (req.method !== "POST") return json({ error: "POST required" }, 405);
+      return new Response(await buildGeneratedTrackModels(await req.json()), { headers: { "content-type": "application/octet-stream" } });
+    }
+
     case "import-part": {
       if (req.method !== "POST") return json({ error: "POST required" }, 405);
       // Body: source BRRES (sourceLength bytes) followed by the course_model.brres to patch.
@@ -337,12 +395,22 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       return openInBrowser(url.searchParams.get("url") || "") ? json({ ok: true }) : json({ error: "This address cannot be opened" }, 400);
 
     case "settings": {
-      if (req.method === "GET") return json(await readSettings());
+      if (req.method === "GET") { await settingsWrite; return json(await readSettings()); }
       const patch = (await req.json()) as Record<string, unknown>;
-      const next = { ...(await readSettings()), ...patch };
-      await mkdir(settingsDir, { recursive: true });
-      await Bun.write(settingsFile, JSON.stringify(next, null, 2));
-      return json(next);
+      // Windows can change preferences at the same time: merge each patch after the preceding
+      // write finishes, rather than reading the same old settings and overwriting one another.
+      const write = settingsWrite.then(async () => {
+        const next = { ...(await readSettings()), ...patch };
+        await mkdir(settingsDir, { recursive: true });
+        const temporary = `${settingsFile}.${crypto.randomUUID()}.tmp`;
+        try {
+          await Bun.write(temporary, JSON.stringify(next, null, 2));
+          await rename(temporary, settingsFile);
+        } catch (error) { await rm(temporary, { force: true }); throw error; }
+        return next;
+      });
+      settingsWrite = write.catch(() => {});
+      return json(await write);
     }
 
     case "file-association": {
@@ -358,11 +426,18 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
 }
 
 self.onmessage = async (e: MessageEvent) => {
+  if (e.data?.type === "owner-closed") {
+    await editorWindows.whenIdle();
+    self.postMessage({ type: "windows-closed" });
+    return;
+  }
   if (e.data?.type === "start") {
+    editorWindows = new EditorWindows(e.data.windowCommand || null);
     if (e.data.settingsDir) {
       settingsDir = e.data.settingsDir;
       settingsFile = join(settingsDir, "settings.json");
     }
+    cupTracks = new CupTrackDrafts(settingsDir);
     updater = new ReleaseUpdater(packageJson.version, e.data.updateExecutable || null, settingsDir);
     void migrateLegacyAssociation();
     try {

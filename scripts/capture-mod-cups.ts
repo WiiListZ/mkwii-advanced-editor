@@ -83,7 +83,7 @@ try {
     const handle = await page.evaluateHandle((scope, text) => {
       const roots = [...document.querySelectorAll(scope)];
       const root = roots[roots.length - 1] || document.body;
-      return [...root.querySelectorAll("button, [role=menuitem], label")].find((b) => b.textContent?.trim().startsWith(text)) || null;
+      return [...root.querySelectorAll("button, [role=menuitem], [role=option], label")].find((b) => b.textContent?.trim().startsWith(text)) || null;
     }, scope, text);
     const element = handle.asElement();
     if (!element) throw new Error(`Not found: ${text} in ${scope}`);
@@ -145,7 +145,8 @@ try {
     await sleep(500);
     await showToasts();
     // Back to the game's cups for the next mods.
-    await clickIn(dialog, "The game (8 cups");
+    await page.click("#cups-source");
+    await clickIn('[role="listbox"]', "The game (8 cups");
     await sleep(500);
   }
 

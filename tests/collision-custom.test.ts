@@ -19,6 +19,17 @@ test("a line cannot become collision", () => {
   expect(() => appendCollisionTriangle(null, [[0, 0, 0], [1, 0, 0], [2, 0, 0]], 0)).toThrow();
 });
 
+test("explicit removal of the last model's collision saves an empty KCL without dummy surfaces", () => {
+  const first = appendCollisionTriangle(null, [[0, 0, 0], [100, 0, 0], [0, 0, 100]], 6);
+  expect(() => deleteCollisionTriangles(first, [0])).toThrow();
+  const empty = deleteCollisionTriangles(first, [0], { allowEmpty: true });
+  const parsed = parseKCL(buildKCL(empty.verts, empty.flags, { allowEmpty: true }));
+  expect(parsed.count).toBe(0);
+  expect(parsed.verts.length).toBe(0);
+  expect(parsed.areaMin.every(Number.isFinite)).toBe(true);
+  expect(() => buildKCL(new Float32Array(9), [0], { allowEmpty: true })).toThrow();
+});
+
 test("selected triangles duplicate, flip and delete as a group", () => {
   const a = appendCollisionTriangle(null, [[0, 0, 0], [100, 0, 0], [0, 0, 100]], 6);
   const b = appendCollisionTriangle(a, [[200, 0, 0], [300, 0, 0], [200, 0, 100]], 3);

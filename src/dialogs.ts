@@ -1,7 +1,7 @@
 // Native Windows Open/Save dialogs through PowerShell + WinForms.
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 export interface FileFilter {
   name: string;
@@ -179,5 +179,9 @@ export function openInBrowser(url: string) {
 
 export function revealInExplorer(path: string) {
   if (process.platform !== "win32" || !path) return;
-  Bun.spawn(["explorer.exe", `/select,${path}`], { stdout: "ignore", stderr: "ignore", windowsHide: true });
+  // Paths coming from the web UI use forward slashes. Explorer's /select parser needs a native
+  // absolute path, including when the file is on another drive or its folder contains spaces.
+  const target = resolve(path);
+  if (!existsSync(target)) throw new Error("The file or folder no longer exists");
+  Bun.spawn(["explorer.exe", `/select,${target}`], { stdout: "ignore", stderr: "ignore", windowsHide: true });
 }

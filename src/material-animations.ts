@@ -18,7 +18,7 @@ const curve = (values: number[]) => ({ keyframes: values.map((value, frame) => (
 const colorWord = (rgba: number[]) => rgba.reduce((word, value) => ((word << 8) | Math.max(0, Math.min(255, Math.round(value * 255)))) >>> 0, 0);
 
 async function run(executable: string, cwd: string, ...args: string[]) {
-  const child = Bun.spawn([executable, ...args], { cwd, stdout: "pipe", stderr: "pipe", windowsHide: true });
+  const child = Bun.spawn([executable, ...args], { cwd, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
   const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   if (code) throw new Error(`Animation conversion failed: ${(out + "\n" + err).trim().slice(-800)}`);
 }

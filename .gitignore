@@ -8,3 +8,4 @@ src/embedded.gen.ts
 /.readme-capture/
 docs/images/frames/
 .cache/
+.vscode/

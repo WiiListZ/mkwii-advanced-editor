@@ -1,8 +1,7 @@
 import * as React from "react";
 import { escapes, fontSizePercent, plainText } from "../../../js/formats/bmg.js";
 import { drawText } from "../../../js/formats/brfnt.js";
-import { api } from "../../../js/api.js";
-import { MenuAssets } from "../../../js/editor/menu-screens.js";
+import { gameTextAssetsFor } from "../game-text-assets";
 import { DISPLAYS, archivesFor, defaultDisplay, drawDisplay } from "../../../js/editor/text-displays.js";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -15,22 +14,15 @@ const SCREEN_W = 608 * RESOLUTION, SCREEN_H = 456 * RESOLUTION;
 
 // One set of game files per Scene/UI folder, kept while the editor runs (parsed layouts, decoded
 // textures and drawn panes are reused by every message).
-const assetsByFolder = new Map<string, any>();
-function assetsFor(folder: string) {
-  let assets = assetsByFolder.get(folder);
-  if (!assets) {
-    assets = new MenuAssets(async (name: string) => {
-      const path = `${folder.replace(/[\\/]+$/, "")}\\${name}`;
-      return api.decodeArchiveBytes((await api.readPath(path)).data, path);
-    });
-    assetsByFolder.set(folder, assets);
-  }
-  return assets;
-}
 
-export function GameTextPreview({ folder, file, id, font, text, originalText, place, lookup, inGamePreview, onInGamePreviewChange }: {
+export const DEFAULT_GAME_SCREEN_VH = 30;
+export const MIN_GAME_SCREEN_VH = 18;
+export const MAX_GAME_SCREEN_VH = 65;
+
+export function GameTextPreview({ folder, file, id, font, text, originalText, place, lookup, inGamePreview, onInGamePreviewChange, screenVh = DEFAULT_GAME_SCREEN_VH, onScreenVhChange }: {
   folder: string; file: string; id: number; font: any; text: string; originalText: string; place: string; lookup: Lookup;
   inGamePreview: boolean; onInGamePreviewChange: (enabled: boolean) => void;
+  screenVh?: number; onScreenVhChange?: (vh: number) => void;
 }) {
   const canvas = React.useRef<HTMLCanvasElement>(null);
   const [choice, setChoice] = React.useState("auto");
@@ -44,7 +36,7 @@ export function GameTextPreview({ folder, file, id, font, text, originalText, pl
     let cancelled = false;
     // While typing, redraw at most once per frame.
     const frame = requestAnimationFrame(async () => {
-      const assets = assetsFor(folder);
+      const assets = gameTextAssetsFor(folder);
       await assets.load(archivesFor(display));
       if (cancelled) return;
       if (archivesFor(display).some((name) => !assets.archives.get(name))) { drawMessage(g, c, font, text); setState("missing"); return; }
@@ -63,17 +55,34 @@ export function GameTextPreview({ folder, file, id, font, text, originalText, pl
 
   return (
     <div className="shrink-0">
-      <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px]">
+      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px]">
         <span className="font-medium text-foreground">{inGamePreview ? "Game screen" : "Font preview"}</span>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-3">
           {inGamePreview && (
-            <Select value={choice} onValueChange={setChoice}>
-              <SelectTrigger className="h-7 w-56 text-[11px]" aria-label="Game screen to show"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="auto">Automatic · {(DISPLAYS as Record<string, string>)[defaultDisplay(file, id, originalText)]}</SelectItem>
-                {Object.entries(DISPLAYS).map(([key, label]) => <SelectItem key={key} value={key}>{label}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <>
+              {onScreenVhChange && (
+                <label className="flex items-center gap-1.5 text-muted-foreground" title="Resize the game screen preview">
+                  <span>Size</span>
+                  <input
+                    type="range"
+                    aria-label="Game screen size"
+                    min={MIN_GAME_SCREEN_VH}
+                    max={MAX_GAME_SCREEN_VH}
+                    step={1}
+                    value={Math.min(MAX_GAME_SCREEN_VH, Math.max(MIN_GAME_SCREEN_VH, screenVh))}
+                    onChange={(e) => onScreenVhChange(Number(e.target.value))}
+                    className="w-24 accent-primary"
+                  />
+                </label>
+              )}
+              <Select value={choice} onValueChange={setChoice}>
+                <SelectTrigger className="h-7 w-56 text-[11px]" aria-label="Game screen to show"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Automatic · {(DISPLAYS as Record<string, string>)[defaultDisplay(file, id, originalText)]}</SelectItem>
+                  {Object.entries(DISPLAYS).map(([key, label]) => <SelectItem key={key} value={key}>{label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </>
           )}
           <label className="flex cursor-pointer items-center gap-1.5 text-muted-foreground">
             <input type="checkbox" aria-label="Preview in game screen" className="accent-primary" checked={inGamePreview} onChange={(e) => onInGamePreviewChange(e.target.checked)} />
@@ -81,12 +90,13 @@ export function GameTextPreview({ folder, file, id, font, text, originalText, pl
           </label>
         </div>
       </div>
-      <canvas ref={canvas} role="img" width={608} height={456}
+      <canvas ref={canvas} role="img" width={inGamePreview && folder ? SCREEN_W : 608} height={inGamePreview && folder ? SCREEN_H : 90}
         aria-label={inGamePreview ? `${(DISPLAYS as Record<string, string>)[display]} preview for ${place}` : `Text preview for ${place}`}
-        className="block h-auto max-h-[52vh] w-auto max-w-full rounded-md border border-white/15 shadow-md" style={{ imageRendering: "auto" }} />
+        className="block h-auto w-auto max-w-full rounded-md border border-white/15 shadow-md"
+        style={{ imageRendering: "auto", maxHeight: `${inGamePreview ? screenVh : 52}vh` }} />
       <div className="mt-1 text-[10.5px] leading-relaxed text-muted-foreground">
         {state === "screen"
-          ? "Drawn from the game's own files in Scene\\UI (layouts, textures, animations and fonts), with this text in its place. Text wider than its box is squeezed to fit, like in the game. Character and vehicle models, trophies and course movies are 3D or video and are not drawn."
+          ? "Drawn from the game's own files in Scene\\UI (layouts, textures, animations and fonts), with this text in its place and limited to the text box's capacity. Wide text is squeezed to fit. Character and vehicle models, trophies and course movies are 3D or video and are not drawn."
           : state === "missing"
             ? "The game files for this screen were not found in the Scene\\UI folder. Showing the font only."
             : state === "font" ? (inGamePreview ? "Choose the game's Scene\\UI folder to see the game screen." : "Game screen preview is off; showing the font only.") : "Drawing…"}

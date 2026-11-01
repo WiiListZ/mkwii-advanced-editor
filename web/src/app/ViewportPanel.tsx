@@ -59,7 +59,7 @@ export function ViewportPanel() {
           e.preventDefault();
           const point = editor.viewport?.pickGround(e)?.point ?? null;
           const files = await Promise.all(list.map(async (f) => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) })));
-          await editor.loadFiles(files, point);
+          await editor.loadFiles(files, point, { newWindow: true });
         }}
       >
         <div ref={host} className={`absolute inset-0 [&>canvas]:block [&>canvas]:size-full [&>canvas]:outline-none ${view2D ? "invisible" : ""}`} />
@@ -116,8 +116,8 @@ function Welcome() {
   const recent = ed.settings.recent || [];
   // Tools for the rest of the game; the ones that need the game folder appear once it is chosen.
   // The track library moved into Cups and tracks: said once on Home, to new and updated users alike.
-  const [movedSeen, setMovedSeen] = React.useState(() => localStorage.getItem("mkwii-tracks-moved-seen") === "1");
-  const dismissMoved = () => { localStorage.setItem("mkwii-tracks-moved-seen", "1"); setMovedSeen(true); };
+  const movedSeen = ed.tracksMovedNoticeSeen;
+  const dismissMoved = () => ed.dismissTracksMovedNotice();
   const gameTools = [
     { icon: Clapperboard, title: "Preview videos", text: "Track previews and menu videos (THP)", cmd: "thp", detail: "Play the game's THP videos and replace a track's preview, a cup's picture or a whole menu video with a picture, a video file or another preview" },
     { icon: Languages, title: "Game text", text: "Menu and race messages, with a preview", cmd: "gameText", detail: "Edit menu and race messages with a preview of where they appear in the game" },
@@ -151,7 +151,7 @@ function Welcome() {
             <Button size="icon" variant="ghost" title="Close track" aria-label="Close track" onClick={() => ed.cmd("closeTrack")}><X /></Button>
           </div>
         )}
-        {!movedSeen && (
+        {movedSeen === false && (
           <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-card px-3 py-2.5" role="status" data-tracks-moved>
             <Trophy className="size-5 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
@@ -167,7 +167,7 @@ function Welcome() {
             <HomeSection title="Tracks">
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
                 <HomeTile icon={Trophy} title="Cups and tracks" text="All your tracks, by cup" primary detail="Every track of the game folder by cup (and those in no cup), with search and filters: click one to edit it. Move tracks between cups, put in your own, make new cups" onClick={() => { dismissMoved(); ed.cmd("cups"); }} />
-                <HomeTile icon={FolderOpen} title="Open a track" text=".szs, .kmp or .kcl file" shortcut="Ctrl+O" detail="A .szs from Race/Course, or a single .kmp / .kcl" onClick={() => ed.cmd("open")} />
+                <HomeTile icon={FolderOpen} title="Open a track" text="In its own 3D editor window" shortcut="Ctrl+O" detail="Open an .szs, .kmp or .kcl in a separate window; other tracks stay open for editing" onClick={() => ed.cmd("open")} />
                 <HomeTile icon={Sparkles} title="New track" text="Draw it from above; the rest is built" shortcut="Ctrl+N" detail="Draw the layout from above — road, walls, routes and checkpoints are built for you" onClick={() => ed.cmd("newTrack")} />
                 <HomeTile icon={FilePlus2} title="Empty project" text="Start from your own collision" detail="Start from scratch and import your own collision" onClick={() => ed.cmd("newEmpty")} />
               </div>
@@ -182,7 +182,7 @@ function Welcome() {
               {recent.length ? (
                 <div className="grid grid-cols-1 gap-0.5 rounded-lg border bg-card p-1 sm:grid-cols-2" data-recent-files>
                   {recent.map((p) => (
-                    <button key={p} onClick={() => ed.openPath(p)} title={p} className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent">
+                    <button key={p} onClick={() => ed.openPath(p, { newWindow: true })} title={p} className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent">
                       <History className="size-3.5 shrink-0 text-muted-foreground" />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[12.5px] font-medium">{p.split(/[\\/]/).pop()}</span>

@@ -19,7 +19,7 @@ async function run(args: string[]) {
   let missing = true;
   for (const exe of toolPath()) {
     try {
-      const proc = Bun.spawn([exe, ...args], { stdout: "pipe", stderr: "pipe", windowsHide: true });
+      const proc = Bun.spawn([exe, ...args], { env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
       missing = false;
       const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
       if (code !== 0) throw new Error((err || out).trim() || `wszst exited with code ${code}`);

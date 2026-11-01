@@ -41,6 +41,7 @@ export function UpdatesProvider({ children }: { children: React.ReactNode }) {
   const [progress, setProgress] = React.useState(0);
   const [dismissed, setDismissed] = React.useState(false);
   const downloading = React.useRef(false);
+  const verifiedVersion = React.useRef("");
   const [installed, setInstalled] = React.useState<ReleaseNotes | null>(null);
   const [reading, setReading] = React.useState<Updates["reading"]>(null);
   // First start after an in-app update: its notes open once, then only from Help › About.
@@ -61,9 +62,9 @@ export function UpdatesProvider({ children }: { children: React.ReactNode }) {
     try {
       const result = await api.checkUpdates();
       setStatus(result);
-      if (!result.available) { setPhase("idle"); return; }
+      if (!result.available) { verifiedVersion.current = ""; setPhase("idle"); return; }
       setDismissed(false);
-      setPhase("offered");
+      setPhase(verifiedVersion.current === result.version ? "ready" : "offered");
     } catch (reason: any) { setError(reason.message || String(reason)); setPhase("error"); }
   }, []);
   React.useEffect(() => { void check(); }, [check]);
@@ -96,11 +97,11 @@ export function UpdatesProvider({ children }: { children: React.ReactNode }) {
       }
       if (state.phase !== "ready") throw new Error(state.error || "The download did not finish");
       setProgress(1);
+      verifiedVersion.current = state.version || status?.version || "";
       setPhase("ready");
-      await restart();
     } catch (reason: any) { setError(reason.message || String(reason)); setPhase("error"); }
     finally { downloading.current = false; }
-  }, [restart]);
+  }, [status?.version]);
   const dismiss = React.useCallback(() => setDismissed(true), []);
   return <Context.Provider value={{ status, phase, error, progress, dismissed, check, accept, dismiss, restart, installed, reading, showNotes, closeNotes }}>{children}</Context.Provider>;
 }
@@ -134,6 +135,8 @@ export function ReleaseNotesDialog() {
 
 export function UpdateNotice() {
   const { status, phase, error, progress, dismissed, accept, dismiss, restart, reading, showNotes } = useUpdates();
+  const [readyDismissed, setReadyDismissed] = React.useState(false);
+  React.useEffect(() => { if (phase === "ready") setReadyDismissed(false); }, [phase]);
   if (!status?.available) return <ReleaseNotesDialog />;
   const notes = { version: status.version || "", title: status.title, notes: status.notes || "", url: status.url };
   return <>
@@ -142,12 +145,24 @@ export function UpdateNotice() {
       <AlertDialogContent className="max-w-xl">
         <AlertDialogHeader>
           <AlertDialogTitle>Update to version {status.version}?</AlertDialogTitle>
-          <AlertDialogDescription>The editor will download and verify the update, then save any unsaved track changes and restart to install it.</AlertDialogDescription>
+          <AlertDialogDescription>The editor will download and verify the update. When it is ready, choose when to restart and install it.</AlertDialogDescription>
         </AlertDialogHeader>
         <div className="max-h-72 min-h-0 overflow-y-auto rounded-md border p-3"><Markdown text={status.notes || "No release notes provided."} /></div>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={dismiss}>Later</AlertDialogCancel>
-          <AlertDialogAction onClick={() => void accept()}>Update now</AlertDialogAction>
+          <AlertDialogAction onClick={() => void accept()}>Download update</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    <AlertDialog open={phase === "ready" && !readyDismissed && !reading} onOpenChange={(open) => { if (!open) setReadyDismissed(true); }}>
+      <AlertDialogContent className="max-w-xl">
+        <AlertDialogHeader>
+          <AlertDialogTitle>Update {status.version} is ready to install</AlertDialogTitle>
+          <AlertDialogDescription>The download is complete and verified. Restart to install it. Any unsaved track changes will be saved first.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={() => setReadyDismissed(true)}>Later</AlertDialogCancel>
+          <AlertDialogAction onClick={() => void restart()}>Restart &amp; install update</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -162,7 +177,7 @@ export function UpdateNotice() {
     <Button size="sm" variant="ghost" className="shrink-0" onClick={() => showNotes(notes)}>Release notes</Button>
     {phase === "error"
       ? <Button size="sm" variant="secondary" onClick={() => void accept()}><RefreshCw /> Retry</Button>
-      : phase === "ready" ? <Button size="sm" onClick={() => void restart()}><RefreshCw /> Restart & update</Button> : null}
+      : phase === "ready" ? <Button size="sm" onClick={() => void restart()}><RefreshCw /> Restart &amp; install update</Button> : null}
   </div>}
   </>;
 }

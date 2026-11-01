@@ -1,6 +1,6 @@
 import * as React from "react";
 import {
-  BookOpen, BrickWall, CircleCheck, MessagesSquare, Download, FileJson, FilePlus2, FolderOpen, GraduationCap, Keyboard, Package, Puzzle, Replace, Rocket, Trash2, Trophy,
+  BookOpen, BrickWall, CircleCheck, Download, FileJson, FilePlus2, FolderOpen, GraduationCap, Keyboard, Package, Puzzle, Replace, Rocket, Trash2, Trophy,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -52,7 +52,7 @@ import { EffectsDialog } from "./EffectsDialog";
 import { ParamsDialog } from "./ParamsDialog";
 import { SkeletonEditorDialog } from "./SkeletonEditorDialog";
 import { NumberField } from "../number-field";
-import { APP_VERSION, DISCORD_URL, useUpdates } from "../updates";
+import { APP_VERSION, DISCORD_URL, DiscordIcon, useUpdates } from "../updates";
 
 // Windows that can hold unsaved work: they close only through their own buttons, which ask first.
 const GUARDED = ["thp", "cups", "objectDocsEditor", "gameText", "audio", "assetEditor", "assetTextureEditor", "riivolution", "archive", "textureEditor", "objectTextureEditor", "sky", "effects", "params", "skeletonEditor"];
@@ -99,7 +99,7 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
       case "cups": return <CupsDialog initialFile={p.initialFile} close={close} />;
       case "cupsApply": return <CupsApplyDialog {...p} close={close} />;
       case "objectDocsEditor": return <ObjectDocumentationEditor close={close} />;
-      case "thp": return <ThpDialog initialPath={p.initialPath} close={close} />;
+      case "thp": return <ThpDialog initialPath={p.initialPath} initialPart={p.initialPart} close={close} />;
       case "gameText": return <GameTextDialog search={p.search} folder={p.folder} language={p.language} file={p.file} loose={p.loose} saveLoose={p.saveLoose} close={close} />;
       case "audio": return <AudioDialog file={p.file} loose={p.loose} close={close} />;
       case "riivolution": return <RiivolutionDialog initialFile={p.initialFile} close={close} />;
@@ -372,7 +372,7 @@ function HelpDialog({ tab = "start", tutorial, close }: { tab?: string; tutorial
             </div>
             <div className="flex flex-wrap gap-2">
               <Button variant="secondary" onClick={() => { close(null); editor.cmd("tour"); }}><BookOpen /> Start the guided tour</Button>
-              <Button variant="ghost" onClick={() => api.openUrl(DISCORD_URL)}><MessagesSquare /> Ask on Discord</Button>
+              <Button variant="ghost" onClick={() => api.openUrl(DISCORD_URL)}><DiscordIcon /> Ask on Discord</Button>
             </div>
           </TabsContent>
           <TabsContent value="tutorials" className="mt-0"><Tutorials initial={tutorial} /></TabsContent>
@@ -432,7 +432,7 @@ function AboutDialog() {
         {updates.phase === "checking" ? <p className="m-0 text-muted-foreground">Checking for updates…</p>
           : updates.phase === "downloading" ? <p className="m-0 text-muted-foreground">Downloading update {updates.status?.version}… {Math.floor(updates.progress * 100)}%</p>
           : updates.phase === "installing" ? <p className="m-0 text-muted-foreground">Installing update {updates.status?.version}…</p>
-          : updates.status?.available ? <><p className="m-0">Version {updates.status.version} {updates.phase === "ready" ? "is ready to install." : "is available."}</p>{updates.phase === "error" && <p className="m-0 text-destructive">Download failed: {updates.error}</p>}<div className="flex gap-2"><Button size="sm" onClick={() => void (updates.phase === "ready" ? updates.restart() : updates.accept())}>{updates.phase === "ready" ? "Restart & update" : updates.phase === "error" ? "Retry update" : "Update now"}</Button><Button size="sm" variant="secondary" onClick={() => updates.showNotes({ version: updates.status?.version || "", title: updates.status?.title, notes: updates.status?.notes || "", url: updates.status?.url })}>Release notes</Button></div></>
+          : updates.status?.available ? <><p className="m-0">Version {updates.status.version} {updates.phase === "ready" ? "is ready to install." : "is available."}</p>{updates.phase === "error" && <p className="m-0 text-destructive">Download failed: {updates.error}</p>}<div className="flex gap-2"><Button size="sm" disabled={updates.phase === "downloading" || updates.phase === "installing"} onClick={() => void (updates.phase === "ready" ? updates.restart() : updates.accept())}>{updates.phase === "ready" ? "Restart & install update" : updates.phase === "error" ? "Retry update" : updates.phase === "downloading" ? "Downloading…" : updates.phase === "installing" ? "Installing…" : "Download update"}</Button><Button size="sm" variant="secondary" onClick={() => updates.showNotes({ version: updates.status?.version || "", title: updates.status?.title, notes: updates.status?.notes || "", url: updates.status?.url })}>Release notes</Button></div></>
           : updates.phase === "error" ? <p className="m-0 text-muted-foreground">Could not check: {updates.error}</p>
           : <p className="m-0 text-muted-foreground">{updates.status?.supported ? "You have the latest release." : "Updates are available in the built Windows executable."}</p>}
         {updates.installed && <Button size="sm" variant="secondary" onClick={() => updates.showNotes(updates.installed!)}>What's new in {updates.installed.version}</Button>}
@@ -624,8 +624,8 @@ function TrackCreatedDialog({ length, tris, keptSzs, close }: { length: number; 
       </DialogHeader>
       <ol className="m-0 flex list-decimal flex-col gap-2 pl-5 text-[13px] leading-relaxed">
         <li>Adjust anything you like: move objects, add item boxes, paint collision (boost, off-road…).</li>
-        <li>File › Export › Track model (OBJ), then turn it into course_model.brres with BrawlCrate.</li>
-        <li>{keptSzs ? "Save: the other files of the original SZS were kept." : "Add course_model.brres and vrcorn_model.brres with File › SZS contents (copy them from any track), then save as .szs."}</li>
+        <li>{keptSzs ? "The original models and other files were kept; missing model, sky and minimap resources were generated." : "The track model, sky and minimap are already included. You can edit their models and textures directly."}</li>
+        <li>Save as .szs to keep the complete track.</li>
         <li>To race on it in the game, put it in a cup: <b>Tools › Cups and tracks</b>, then <b>Replace › Track open in the editor</b> on the track it should take the place of.</li>
       </ol>
       <DialogFooter>

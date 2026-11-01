@@ -162,11 +162,11 @@ export function buildKCL(verts, flags, opts = {}) {
     tris.push([A, B, C]);
   }
   if (prisms.length > 0xFFFE) throw new Error(`Too many triangles for a KCL (${prisms.length.toLocaleString()}, the format allows 65,534)`);
-  if (!prisms.length) throw new Error('No valid triangles for the KCL');
+  if (!prisms.length && !(opts.allowEmpty && verts.length === 0)) throw new Error('No valid triangles for the KCL');
   const normals = shareNormals(prisms);
 
   // Bounding box.
-  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  const min = tris.length ? [Infinity, Infinity, Infinity] : [0, 0, 0], max = tris.length ? [-Infinity, -Infinity, -Infinity] : [0, 0, 0];
   for (const tri of tris) for (const v of tri) for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], v[k]); max[k] = Math.max(max[k], v[k]); }
   for (let k = 0; k < 3; k++) { min[k] = Math.floor(min[k] - margin - 1); max[k] = Math.ceil(max[k] + margin + 1); }
   const ext = sub(max, min);

@@ -28,9 +28,9 @@ const DialogContent = React.forwardRef<
         className,
       )}
       {...props}
-      // The title bar stays usable above dialogs (move, minimize, close the window): not a click outside.
+      // The title bar and notification actions stay usable without dismissing the open dialog.
       onInteractOutside={(event) => {
-        if ((event.target as Element | null)?.closest?.("[data-window-chrome]")) event.preventDefault();
+        if ((event.target as Element | null)?.closest?.("[data-window-chrome], [data-sonner-toast]")) event.preventDefault();
         props.onInteractOutside?.(event);
       }}
     >

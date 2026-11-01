@@ -11,12 +11,13 @@ import { PULSAR_IDS } from '../formats/pulsar.js';
 
 export function initialPulsar(config) {
   return {
+    ...(config.regsMode === undefined ? {} : { regsMode: config.regsMode }),
     cups: Array.from({ length: config.cupCount }, (_, i) => ({ from: i })),
     tracks: Array.from({ length: config.cupCount * 4 }, (_, i) => ({ from: i })),
   };
 }
 
-const copy = (a) => ({ cups: a.cups.slice(), tracks: a.tracks.slice() });
+const copy = (a) => ({ ...a, cups: a.cups.slice(), tracks: a.tracks.slice() });
 
 export function swapTracks(a, i, j) {
   if (i === j || j < 0 || j >= a.tracks.length) return a;
@@ -44,6 +45,18 @@ export function addCup(a, name) {
   return next;
 }
 
+// Cups always have four races. Fill only empty places, after the user has chosen which track to
+// repeat. Copies of saved tracks get a separate identity in Pulsar, while retaining their variants.
+export function fillEmptyTracks(a, sourceIndex) {
+  const source = a.tracks[sourceIndex];
+  if (!source || (source.from === null && !source.file)) throw new Error('Choose a track already in the pack');
+  const next = copy(a);
+  next.tracks = next.tracks.map((t) => t.from === null && !t.file
+    ? { ...source, ...(source.file ? { file: { ...source.file } } : { duplicate: true }) }
+    : t);
+  return next;
+}
+
 // Only the last cup can be removed: removing one in the middle would renumber every track after it.
 export function removeLastCup(a) {
   if (a.cups.length <= 1) throw new Error('A pack needs at least one cup');
@@ -65,14 +78,14 @@ export function patchCup(a, c, patch) {
   return next;
 }
 
-export function replaceTrack(a, i, path, label) {
+export function replaceTrack(a, i, path, label, generated = false) {
   const { from, slot, music } = a.tracks[i];
-  return patchTrack(a, i, { from: null, file: { path, label }, name: label, author: '', slot, music, origin: from ?? a.tracks[i].origin ?? null });
+  return patchTrack(a, i, { from: null, file: { path, label, ...(generated ? { generated: true } : {}) }, duplicate: undefined, name: label, author: '', slot, music, origin: from ?? a.tracks[i].origin ?? null });
 }
 
 export function trackChanged(a, i) {
   const t = a.tracks[i];
-  return t.from !== i || t.file || t.name !== undefined || t.author !== undefined || t.slot !== undefined || t.music !== undefined;
+  return t.from !== i || t.file || t.duplicate || t.name !== undefined || t.author !== undefined || t.slot !== undefined || t.music !== undefined;
 }
 export function cupChanged(a, c) {
   const cup = a.cups[c];
@@ -109,7 +122,7 @@ export function plannedTracks(config, a, crcOf) {
     const base = t.from !== null ? config.tracks[t.from] : { slot: 0x08, music: 0x08, crc: 0, variants: [] };
     return {
       slot: t.slot ?? base.slot, music: t.music ?? base.music,
-      crc: t.file ? crcOf(t.file.path, i) : base.crc,
+      crc: t.file || t.duplicate ? crcOf(t.file?.path ?? null, i) : base.crc,
       variants: t.file ? [] : base.variants,
     };
   });
@@ -142,7 +155,7 @@ export function plannedAlphabetical(config, a, text) {
   const collator = new Intl.Collator('en', { sensitivity: 'variant', numeric: false });
   const names = a.tracks.map((_, i) => clean(trackName(a, i, pulsarNames(text))));
   const newIndex = new Map();
-  a.tracks.forEach((t, i) => { if (t.from !== null && t.name === undefined && !t.file) newIndex.set(t.from, i); });
+  a.tracks.forEach((t, i) => { if (t.from !== null && t.name === undefined && !t.file && !t.duplicate) newIndex.set(t.from, i); });
   const order = config.alphabetical.filter((old) => newIndex.has(old)).map((old) => newIndex.get(old));
   const placed = new Set(order);
   for (let i = 0; i < a.tracks.length; i++) {

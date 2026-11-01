@@ -6,12 +6,14 @@ const token = params.get('t');
 
 export const hasBackend = !!token;
 export const startupFile = params.get('open');
+export const startupCreate = params.get('new');
+export const startupDocument = params.get('document');
 
-async function call(route, { method = 'GET', query = {}, body, raw = false, headers = false } = {}) {
+async function call(route, { method = 'GET', query = {}, body, raw = false, headers = false, contentType } = {}) {
   const qs = new URLSearchParams(query).toString();
   const res = await fetch(`/api/${route}${qs ? '?' + qs : ''}`, {
     method,
-    headers: { 'x-token': token, ...(body && !(body instanceof Uint8Array) ? { 'content-type': 'application/json' } : {}) },
+    headers: { 'x-token': token, ...(contentType ? { 'content-type': contentType } : body && !(body instanceof Uint8Array) ? { 'content-type': 'application/json' } : {}) },
     body: body instanceof Uint8Array ? body : body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
@@ -94,6 +96,31 @@ function download(name, data) {
 }
 
 export const api = {
+  createCupTrack(data, label, destination) {
+    return call('cup-track', { method: 'POST', query: { label, ...(destination ? { destination } : {}) }, body: data, contentType: 'application/octet-stream' });
+  },
+  cupTrackInfo(path) { return call('cup-track', { query: { path } }); },
+  cupTracksApplied(files) { return call('cup-tracks-applied', { method: 'POST', body: { files } }); },
+  async openEditorWindow({ path, create, name, data }) {
+    // Reserve a real browser popup before awaiting the server. Native WebViews ask the server
+    // for another desktop process, which keeps its own document and rendering context.
+    const native = typeof window.__nativeEditorWindow === 'function';
+    const popup = native ? null : window.open('about:blank', '_blank', 'popup,width=1600,height=950');
+    if (!native && !popup) throw new Error('Allow popup windows to open another track editor');
+    try {
+      if (popup) { popup.opener = null; popup.document.title = 'Opening track…'; }
+      const result = await call('editor-window', data
+        ? { method: 'POST', query: { name }, body: data, contentType: 'application/octet-stream' }
+        : { method: 'POST', body: { path, create } });
+      if (result.url && popup) popup.location.replace(result.url);
+      else popup?.close();
+      return result;
+    } catch (error) { popup?.close(); throw error; }
+  },
+  async editorDocument(id) {
+    const result = await call('editor-document', { query: { id }, raw: true, headers: true });
+    return { path: null, name: decodeURIComponent(result.headers.get('x-file-name') || 'Custom Track.szs'), data: result.data };
+  },
   async checkUpdates() {
     return hasBackend ? call('updates') : { supported: false, currentVersion: '0.0.0', available: false };
   },
@@ -285,6 +312,11 @@ export const api = {
     return call('convert-model-brres', { method: 'POST', query: { path, animation, ...(name ? { name } : {}) }, raw: true });
   },
 
+  async generatedTrackModels(model) {
+    if (!hasBackend) throw new Error('Creating playable track models requires the desktop app');
+    return call('generated-track-models', { method: 'POST', body: model, raw: true });
+  },
+
   // Converts a BRRES to .dae / .obj (chosen by the extension) with its textures, next to `path`.
   async exportModel(data, path) {
     if (!hasBackend) throw new Error('Exporting the model as DAE/OBJ requires the desktop app and ABMatt');
@@ -342,7 +374,7 @@ export const api = {
     return call('settings', { method: 'POST', body: patch });
   },
 
-  reveal(path) { if (hasBackend && path) call('reveal', { query: { path } }); },
+  reveal(path) { return hasBackend && path ? call('reveal', { query: { path } }) : Promise.resolve(); },
 
   // Opens one of the project's GitHub pages in the default browser.
   openUrl(url) {

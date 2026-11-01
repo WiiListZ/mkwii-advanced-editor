@@ -8,20 +8,59 @@ import { renderMovie, type MovieEdit } from "./thp-render";
 import { buildBMG, parseBMG } from "../../js/formats/bmg.js";
 import { parseKMP } from "../../js/formats/kmp.js";
 import { buildU8, findFile, isU8, listFiles, parseU8, setFilePath } from "../../js/formats/u8.js";
-import { isYaz0 } from "../../js/formats/yaz0.js";
+import { isYaz0, yaz0Decompress } from "../../js/formats/yaz0.js";
 import { editor } from "./editor";
+import { dialogs } from "./dialogs-store";
+import { toast } from "sonner";
 import { decodeFile, musicLike } from "./audio-convert";
+import { generateTrackArchive } from "./generated-track";
 
-export type Source = { type: "slot"; id: number } | { type: "file"; path: string; label: string };
+export type Source = { type: "slot"; id: number } | { type: "file"; path: string; label: string; generated?: boolean };
 // Music chosen for a slot: the music of another track, or an audio file converted when applied.
 export type MusicChoice = { type: "slot"; id: number }
   | { type: "file"; path: string; label: string; loop: boolean; loopStart: number; volume: number; finalFaster: boolean };
 export type Arrangement = { content: Record<number, Source>; names: Record<number, string>; cupNames: Record<number, string>; music: Record<number, MusicChoice> };
+type SavedMusic = { from: string | null; file: Extract<MusicChoice, { type: "file" }> | null };
+type MusicSnapshot = Record<string, Record<string, SavedMusic | null>>;
 // remove: the file is deleted instead (it is in the backup like the others).
-export type Write = { path: string; data: Uint8Array; compress?: "yaz0"; what: string; remove?: boolean };
+export type Write = { path: string; data: Uint8Array; compress?: "yaz0"; what: string; remove?: boolean; source?: string };
 
 const LANGUAGE_ORDER = ["E", "U", "I", "F", "G", "S", "M", "Q", "J", "K"];
 const languageArchive = (name: string) => /_([A-Z])\.szs$/i.exec(name)?.[1]?.toUpperCase() || "";
+export const musicFolderKey = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+
+export function saveCupMusic(folder: string, music: Record<string, SavedMusic>) {
+  editor.cupMusicByFolder = { ...editor.cupMusicByFolder, [folder]: music };
+  editor.saveSettings({ cupMusicByFolder: editor.cupMusicByFolder });
+  editor.bump("settings");
+}
+
+// Only the streams included in this backup change when it is restored. Keep their displayed
+// sources with the backup, leaving the music of every other stream and workspace alone.
+export function snapshotCupMusic(files: string[]): MusicSnapshot {
+  const snapshot: MusicSnapshot = {};
+  for (const file of files) {
+    const normalized = file.replace(/\\/g, "/");
+    const match = /\/([^/]+)_[nf]\.brstm$/i.exec(normalized);
+    const stream = match && SLOTS.find((s) => s.music.toLowerCase() === match[1].toLowerCase())?.music;
+    if (!stream) continue;
+    const folder = musicFolderKey(normalized.slice(0, normalized.lastIndexOf("/")));
+    (snapshot[folder] ||= {})[stream] = editor.cupMusicByFolder[folder]?.[stream] || null;
+  }
+  return snapshot;
+}
+
+export function restoreCupMusic(files: string[], snapshot: MusicSnapshot = {}) {
+  for (const [folder, streams] of Object.entries(snapshotCupMusic(files))) {
+    const music = { ...editor.cupMusicByFolder[folder] };
+    for (const stream of Object.keys(streams)) {
+      const before = snapshot?.[folder]?.[stream];
+      if (before) music[stream] = before;
+      else delete music[stream];
+    }
+    saveCupMusic(folder, music);
+  }
+}
 
 export const trackPath = (file: string, multiplayer = false) => editor.workspacePath("Race", "Course", `${file}${multiplayer ? "_d" : ""}.szs`);
 
@@ -65,6 +104,28 @@ export async function inspectTrack(path: string, battle: boolean) {
   return { ...checkTrackArchive({ files, checkpoints, starts }, battle), files: files.length, checkpoints };
 }
 
+// The position is already chosen. Keep its working archive automatically until Apply installs it;
+// there is no separate source-file destination for the user to choose.
+export async function createCupTrack(label: string, destination?: string): Promise<string | null> {
+  const res: any = await dialogs.open("generator", { hasSzs: false });
+  if (!res) return null;
+  const generated = await editor.withBusy("Building the cup's track…", async () => {
+    try { return await generateTrackArchive(res.points, res.params, null, (text) => { editor.busy = text; editor.bump("ui"); }); }
+    catch (e: any) { void dialogs.alert({ title: "Track generation failed", description: e.message }); return null; }
+  });
+  if (!generated) return null;
+  try {
+    const bytes = buildU8(generated.tree);
+    const { path } = await api.createCupTrack(bytes, label, destination);
+    const disk = (await api.readPath(path)).data;
+    const actual = isYaz0(disk) ? yaz0Decompress(disk) : disk;
+    if (actual.length !== bytes.length || !actual.every((v: number, i: number) => v === bytes[i])) throw new Error("The saved track could not be verified");
+    toast.success(`New track for ${label}`, { description: "Assigned to this cup position. Save edits in its 3D window, then Apply the cup changes." });
+    await editor.openEditorWindow({ path });
+    return path;
+  } catch (e: any) { void dialogs.alert({ title: "Could not save the cup's track", description: e.message }); return null; }
+}
+
 // Archive bytes as the game reads them (Yaz0): Yaz0 files are copied as they are, plain U8 and
 // Wiimm's formats (WLZ, WBZ, WU8, YBZ) are rebuilt and compressed when written.
 async function trackBytes(path: string): Promise<{ data: Uint8Array; compress?: "yaz0" }> {
@@ -89,6 +150,7 @@ export async function buildWrites(arrangement: Arrangement, { moveMusic, moveVid
   const plan = planArrangement(arrangement, { moveMusic });
   const writes: Write[] = [];
   const notes: string[] = [];
+  const musicApplied: string[] = [];
   const say = (text: string) => progress?.(text);
 
   for (const { slot, source } of plan.tracks) {
@@ -109,7 +171,7 @@ export async function buildWrites(arrangement: Arrangement, { moveMusic, moveVid
       if (multiplayer && !(await api.exists(to)) && source.type === "slot") continue;
       say(`Reading ${from.split(/[\\/]/).pop()}…`);
       const bytes = await trackBytes(from);
-      writes.push({ path: to, ...bytes, what: `${target.file}${multiplayer ? "_d" : ""}.szs` });
+      writes.push({ path: to, ...bytes, what: `${target.file}${multiplayer ? "_d" : ""}.szs`, ...(source.type === "file" ? { source: source.path } : {}) });
     }
   }
 
@@ -117,6 +179,7 @@ export async function buildWrites(arrangement: Arrangement, { moveMusic, moveVid
     const strm = editor.workspacePath("sound", "strm");
     const listing: string[] = strm ? await api.listDir(strm, ["brstm"]).catch(() => []) : [];
     for (const { target, source, file: audioFile } of plan.music) {
+      const before = writes.length;
       const to = musicFiles(target, listing);
       if (audioFile) {
         // An audio file: converted like the stream it replaces, normal and final lap.
@@ -130,6 +193,7 @@ export async function buildWrites(arrangement: Arrangement, { moveMusic, moveVid
           const data = await musicLike(template, audio, { loop: audioFile.loop ?? true, loopStart: audioFile.loopStart ?? 0, volume: audioFile.volume ?? 100, speed });
           writes.push({ path: `${strm}\\${to[key]}`, data, what: to[key]! });
         }
+        if (writes.length > before) musicApplied.push(target);
         continue;
       }
       const from = musicFiles(source, listing);
@@ -139,6 +203,7 @@ export async function buildWrites(arrangement: Arrangement, { moveMusic, moveVid
         const file = await api.readPath(`${strm}\\${from[key]}`);
         writes.push({ path: `${strm}\\${to[key]}`, data: file.data, what: to[key]! });
       }
+      if (writes.length > before) musicApplied.push(target);
     }
   }
 
@@ -196,7 +261,7 @@ export async function buildWrites(arrangement: Arrangement, { moveMusic, moveVid
       if (changed) writes.push({ path, data: buildU8(tree), compress: "yaz0", what: name });
     }
   }
-  return { writes, plan, notes };
+  return { writes, plan, notes, musicApplied };
 }
 
 // One line per change, for the confirmation window and the backup's label.
@@ -226,7 +291,9 @@ export async function writeAll(writes: Write[], { backup, label, details, progre
   for (const [i, w] of writes.entries()) {
     progress?.(`Writing ${w.what} (${i + 1}/${writes.length})…`);
     if (w.remove) { await api.deleteFile(w.path); continue; }
-    await api.writeFile(w.path, w.data, { backup: editor.settings.keepBackups, edited: true, compress: w.compress || null });
+    await api.writeFile(w.path, w.data, { backup: backup && editor.settings.keepBackups, edited: true, compress: w.compress || null });
   }
+  const cupFiles = writes.filter((w) => w.source && !w.remove).map((w) => ({ source: w.source!, path: w.path }));
+  if (cupFiles.length) await api.cupTracksApplied(cupFiles);
   return snapshot;
 }

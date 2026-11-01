@@ -107,6 +107,7 @@ export function parseBRLYT(data) {
           text += String.fromCharCode(c);
         }
         Object.assign(pane, {
+          textCapacity: Math.max(0, Math.floor(r.u16(p) / 2) - 1),
           material: r.u16(p + 4), font: r.u16(p + 6), textOrigin: r.u8(p + 8), textAlign: r.u8(p + 9),
           topColor: rgba8(r, p + 16), bottomColor: rgba8(r, p + 20),
           fontSize: [r.f32(p + 24), r.f32(p + 28)], charSpace: r.f32(p + 32), lineSpace: r.f32(p + 36), text,

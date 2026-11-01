@@ -416,7 +416,7 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
                 {hasSzs && (
                   <label className="flex cursor-pointer items-start gap-2 text-[13px]">
                     <Switch checked={keepSzs} onCheckedChange={setKeepSzs} className="mt-0.5" />
-                    <span>Keep the other files of the open SZS <span className="block text-xs text-muted-foreground">Models, sky, textures and effects of the current archive are reused, so the new track can be played at once.</span></span>
+                    <span>Keep the other files of the open SZS <span className="block text-xs text-muted-foreground">Reuse the existing models, sky, textures and effects. Missing model, sky and minimap resources are generated automatically.</span></span>
                   </label>
                 )}
               </TabsContent>

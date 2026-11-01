@@ -5,6 +5,7 @@
 
 import { decodeTexture } from '../formats/brres.js';
 import { keyValue } from '../formats/brlyt.js';
+import { fitMessageText } from '../formats/bmg.js';
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -255,7 +256,7 @@ export class LayoutRenderer {
   // alignment, glyphs coloured by the material (black = outline, white = fill) and the top/bottom
   // gradient.
   drawText(ctx, m, pane, props, alpha) {
-    const rawText = this.overrides.text?.[pane.name] ?? pane.text;
+    const rawText = fitMessageText(this.overrides.text?.[pane.name] ?? pane.text ?? '', pane.textCapacity);
     if (!rawText) return;
     const sizeCode = rawText.match(/\{1A:0800000000([0-9a-f]{2})\}/i);
     const fontPercent = sizeCode ? Math.max(1, parseInt(sizeCode[1], 16)) : 100;

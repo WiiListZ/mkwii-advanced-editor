@@ -11,8 +11,10 @@ const Toaster = (props: ToasterProps) => (
       classNames: {
         toast: "group !bg-popover !text-popover-foreground !border-border !shadow-xl !text-[13px]",
         description: "!text-muted-foreground",
-        actionButton: "!bg-primary !text-primary-foreground",
-        cancelButton: "!bg-muted !text-muted-foreground",
+        // Modal dialogs disable pointer events on body; notification buttons stay clickable.
+        actionButton: "!pointer-events-auto !bg-primary !text-primary-foreground",
+        cancelButton: "!pointer-events-auto !bg-muted !text-muted-foreground",
+        closeButton: "!pointer-events-auto",
       },
     }}
     {...props}

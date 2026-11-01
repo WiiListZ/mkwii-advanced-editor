@@ -121,8 +121,8 @@ export function moveSlot(arrangement, id, dir) {
   return other === null ? arrangement : swapSlots(arrangement, id, other);
 }
 
-export function replaceSlot(arrangement, id, path, label) {
-  return { ...arrangement, content: { ...arrangement.content, [id]: { type: 'file', path, label } }, names: { ...arrangement.names, [id]: label } };
+export function replaceSlot(arrangement, id, path, label, generated = false) {
+  return { ...arrangement, content: { ...arrangement.content, [id]: { type: 'file', path, label, ...(generated ? { generated: true } : {}) } }, names: { ...arrangement.names, [id]: label } };
 }
 
 export function resetSlot(arrangement, id) {
@@ -183,11 +183,25 @@ export function planArrangement(arrangement, { moveMusic = true } = {}) {
 
 // What a slot plays once the plan is written: the audio file converted into its stream (`file`),
 // the stream of another slot copied in (`from`), or its own stream unchanged (`from` = `stream`).
-export function plannedMusic(plan, id) {
+export function plannedMusic(plan, id, saved = {}) {
   const stream = slotById(id).music;
   const entry = plan.music.find((m) => m.target === stream);
-  if (!entry) return { stream, from: stream, file: null };
-  return entry.file ? { stream, from: null, file: entry.file } : { stream, from: entry.source, file: null };
+  if (entry?.file) return { stream, from: null, file: entry.file };
+  const source = entry ? entry.source : stream;
+  return { stream, ...(saved[source] || { from: source, file: null }) };
+}
+
+// The files have been written: remember what is now in each stream for display, separately from
+// pending edits. Resolve every source against the old state so swaps do not change their meaning.
+export function appliedMusic(plan, saved = {}, written = plan.music.map((m) => m.target)) {
+  const next = { ...saved };
+  for (const entry of plan.music) {
+    if (!written.includes(entry.target)) continue;
+    const music = entry.file ? { from: null, file: entry.file } : saved[entry.source] || { from: entry.source, file: null };
+    if (music.from === entry.target && !music.file) delete next[entry.target];
+    else next[entry.target] = music;
+  }
+  return next;
 }
 
 // Changed messages of one Common.bmg: { id: text }. `textOf(id)` reads the archive's original text

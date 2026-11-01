@@ -3,12 +3,12 @@
 
 import * as THREE from "three";
 import { toast } from "sonner";
-import { api, FILTERS, hasBackend, startupFile } from "../../js/api.js";
+import { api, FILTERS, hasBackend, startupFile, startupCreate, startupDocument } from "../../js/api.js";
 import { TrackDocument, KIND_LABEL, SECTION_LABEL } from "../../js/editor/document.js";
 import { Viewport, LAYERS } from "../../js/editor/viewport.js";
 import { Ops, copiesCenter } from "../../js/editor/ops.js";
 import { GameAssets } from "../../js/editor/assets.js";
-import { generateTrack } from "../../js/editor/trackgen.js";
+import { generateTrackArchive } from "./generated-track";
 import { validate } from "../../js/editor/validate.js";
 import { isYaz0, yaz0Decompress } from "../../js/formats/yaz0.js";
 import { isU8, parseU8, buildU8, findFile, setFile, setFilePath, newSzsTree, listFiles } from "../../js/formats/u8.js";
@@ -59,7 +59,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS = {
   iconSize: 150, checkpointWidth: 3000, autoCheckpointWidth: true, pathWidth: 20,
   modelMode: "real", displayMode: "visual", modelEditing: true, smartAlignment: false, animations: true, showLabels: true, selectionBox: false, showAreaVolumes: true, areaOutlinesThroughWalls: false, showEffects: true, showDescriptions: true, quality: "high",
-  flySpeed: 1, lookSensitivity: 1, hideCursorWhileLooking: true, dragToMove: false, hideMoveArrows: false, textureBrushSize: 8, confirmModelDrop: true, hideGrid: false, cameraPreview: true, uiFont: "default", offerCopyUpdates: true, keepBackups: true, map2DAddSeveral: false, introFollow: true, introTimelineHeight: 118,
+  flySpeed: 1, lookSensitivity: 1, hideCursorWhileLooking: true, dragToMove: false, hideMoveArrows: false, textureBrushSize: 8, confirmModelDrop: true, hideGrid: true, cameraPreview: true, uiFont: "default", offerCopyUpdates: true, keepBackups: true, map2DAddSeveral: false, introFollow: true, introTimelineHeight: 118,
 } satisfies Partial<Settings>;
 
 export type CollisionShapeKind = keyof typeof COLLISION_SHAPES;
@@ -100,6 +100,32 @@ export function applyUiFont(font: Settings["uiFont"]) {
 export const hex = (v: number, pad = 4) => "0x" + (v >>> 0).toString(16).toUpperCase().padStart(pad, "0");
 
 export class Editor {
+  private diskVersion: { path: string; data: Uint8Array } | null = null;
+  cupTrackLink: { draft: string; label: string; pending: boolean; target: string } | null = null;
+  private cupTrackTimer: any = null;
+  private cupTrackRefresh: Promise<void> | null = null;
+  private clearCupTrackLink() { clearInterval(this.cupTrackTimer); this.cupTrackTimer = null; this.cupTrackLink = null; }
+  refreshCupTrackTarget(): Promise<void> {
+    if (this.cupTrackRefresh) return this.cupTrackRefresh;
+    const link = this.cupTrackLink;
+    if (!link?.pending) return Promise.resolve();
+    this.cupTrackRefresh = (async () => {
+      const next = await api.cupTrackInfo(link.draft);
+      if (!next || this.cupTrackLink !== link || this.doc.filePath !== link.draft) return;
+      if (!next.pending) {
+        this.doc.filePath = next.path;
+        this.doc.fileName = next.path.split(/[\\/]/).pop();
+        // The archive copied by Apply is the last saved working copy; keep its bytes as the
+        // conflict baseline so a later change to the destination still triggers the Save warning.
+        this.diskVersion = { path: next.path, data: this.diskVersion?.data || (await api.readPath(next.path)).data };
+        this.cupTrackLink = { ...link, pending: false, target: next.path };
+        clearInterval(this.cupTrackTimer); this.cupTrackTimer = null;
+        this.addRecent(next.path);
+        this.bump("doc", "ui");
+      }
+    })().finally(() => { this.cupTrackRefresh = null; });
+    return this.cupTrackRefresh;
+  }
   doc = new TrackDocument();
   viewport: any = null;
   ops: any;
@@ -148,6 +174,7 @@ export class Editor {
   }
   tab = "outline";
   homeVisible = true;
+  tracksMovedNoticeSeen: boolean | null = null; // Hidden until its saved dismissal has been read.
   map2D = false;
   busy: string | null = null;
   hint = "";
@@ -299,6 +326,10 @@ export class Editor {
   async loadSettings() {
     try {
       const s = await api.getSettings();
+      let legacyTracksMoved = false;
+      try { legacyTracksMoved = localStorage.getItem("mkwii-tracks-moved-seen") === "1"; } catch {}
+      this.tracksMovedNoticeSeen = this.tracksMovedNoticeSeen === true || s.tracksMovedNoticeSeen === true || legacyTracksMoved;
+      if (this.tracksMovedNoticeSeen && s.tracksMovedNoticeSeen !== true) this.saveSettings({ tracksMovedNoticeSeen: true });
       for (const key of PERSISTED) if (s[key] !== undefined) (this.settings as any)[key] = s[key];
       // Hidden Move arrows need dragging to move (see setSetting).
       if (this.settings.hideMoveArrows) this.settings.dragToMove = true;
@@ -310,10 +341,17 @@ export class Editor {
         this.settings.hideCursorWhileLooking = true;
         this.saveSettings({ hideCursorWhileLooking: true, hideCursorDefaultOn: true });
       }
+      // "Hide grid" is on by default: switched on once for everyone, also those who had it off
+      // (or already went through the earlier hideGridDefaultOn pass), then their own choice is kept.
+      if (s.hideGridDefaultOn2 !== true) {
+        this.settings.hideGrid = true;
+        this.saveSettings({ hideGrid: true, hideGridDefaultOn: true, hideGridDefaultOn2: true });
+      }
       this.settings.favoriteObjects = Array.isArray(s.favoriteObjects) ? s.favoriteObjects.filter((id: unknown) => Number.isInteger(id) && (id as number) >= 0) : [];
       this.settings.favoriteModelSources = Array.isArray(s.favoriteModelSources) ? s.favoriteModelSources.filter((key: unknown) => typeof key === "string") : [];
       this.settings.favoriteModelParts = Array.isArray(s.favoriteModelParts) ? s.favoriteModelParts.filter((key: unknown) => typeof key === "string") : [];
       this.settings.recent = s.recent || [];
+      if (s.cupMusicByFolder && typeof s.cupMusicByFolder === "object" && !Array.isArray(s.cupMusicByFolder)) this.cupMusicByFolder = s.cupMusicByFolder;
       if (s.riivolutionXml) {
         try { this.riivolutionWorkspace = await this.readRiivolutionWorkspace(s.riivolutionXml); }
         catch (error) { console.warn("Riivolution workspace unavailable", error); }
@@ -348,10 +386,25 @@ export class Editor {
       this.loadLibrary();
       this.refreshWorkspaceInfo();
       if (!s.tourDone) setTimeout(() => { this.tourActive = true; this.bump("ui"); }, 700);
-      if (startupFile) this.openPath(startupFile);
+      if (startupFile) await this.openPath(startupFile);
+      else if (startupDocument) {
+        await this.loadFile(await api.editorDocument(startupDocument));
+        this.doc.dirty = true; this.bump("doc");
+      } else if (startupCreate === "generator") await this.newTrack();
+      else if (startupCreate === "empty") await this.cmd("newEmpty", true);
     } catch (e) {
       console.warn("Settings not loaded", e);
+    } finally {
+      this.tracksMovedNoticeSeen ??= false;
+      this.bump("settings");
     }
+  }
+
+  dismissTracksMovedNotice() {
+    if (this.tracksMovedNoticeSeen === true) return;
+    this.tracksMovedNoticeSeen = true;
+    this.saveSettings({ tracksMovedNoticeSeen: true });
+    this.bump("settings");
   }
 
   saveSettings(patch: Record<string, unknown>) {
@@ -454,11 +507,16 @@ export class Editor {
   get usesCustomObjectDocumentation() { return Object.keys(this.customObjectDocumentation).length > 0; }
   get objectDocumentationInUse(): Record<string, any> { return this.usesCustomObjectDocumentation ? this.customObjectDocumentation : defaultDocumentation().objects; }
 
+  // Display metadata for the music already written into each game's stream folder.
+  cupMusicByFolder: Record<string, Record<string, { from: string | null; file: any }>> = {};
+
   // The default documentation is kept up to date from data/objects.json of the object-info repository:
   // the copy downloaded last is used at start (offline too), then a newer one is downloaded. When it
-  // cannot be reached or is not valid, the copy shipped with the editor stays in use.
+  // cannot be reached or is not valid, the last valid copy stays in use.
   objectDocumentationUpdated: string | null = null;
-  async updateDefaultObjectDocumentation(cached?: { fetched: string; json: any } | null) {
+  objectDocumentationSyncing = false;
+  async updateDefaultObjectDocumentation(cached?: { fetched: string; json: any } | null, notify = false) {
+    if (this.objectDocumentationSyncing) return;
     if (cached?.json) {
       try {
         useDefaultDocumentation(cached.json, { kind: "online", fetched: cached.fetched });
@@ -467,6 +525,8 @@ export class Editor {
         this.bump("settings", "doc");
       } catch (error) { console.warn("Saved object documentation is not valid:", error); }
     }
+    this.objectDocumentationSyncing = true;
+    this.bump("settings");
     try {
       const response = await fetch(OBJECT_INFO_URL, { cache: "no-store", signal: AbortSignal.timeout(10000) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -479,7 +539,14 @@ export class Editor {
       this.saveSettings({ objectDocumentationOnline: { fetched, json } });
       this.bringInDefaultUpdate();
       this.bump("settings", "doc");
-    } catch (error) { console.info("Object documentation not updated from GitHub:", error); }
+      if (notify) toast.success("Object documentation synced", { description: "The latest documentation from GitHub is now available." });
+    } catch (error: any) {
+      console.info("Object documentation not updated from GitHub:", error);
+      if (notify) toast.error("Could not sync object documentation", { description: `${error.message}. Try again when GitHub is reachable.` });
+    } finally {
+      this.objectDocumentationSyncing = false;
+      this.bump("settings");
+    }
   }
 
   // With a documentation of the person's in use, a newer default reaches it object by object: entries
@@ -703,15 +770,23 @@ export class Editor {
     this.viewport?.setTool(null);
     this.viewport?.selectGeometry(null);
     this.doc.reset();
+    this.diskVersion = null;
+    this.clearCupTrackLink();
     this.doc.loaded();
     await this.assets?.setTrack(null);
     this.homeVisible = true;
     this.bump("ui");
   }
 
-  async openPath(path: string) {
+  async openPath(path: string, options: { newWindow?: boolean } = {}) {
     try {
-      await this.loadFile(await api.readPath(path));
+      const managed = hasBackend && !options.newWindow && /[\\/]cup-tracks[\\/]/i.test(path) ? await api.cupTrackInfo(path) : null;
+      await this.loadFile(await api.readPath(managed?.path || path), options);
+      if (managed && this.doc.filePath === managed.path) {
+        this.cupTrackLink = { draft: path, label: managed.label, pending: managed.pending, target: managed.path };
+        if (managed.pending) this.cupTrackTimer = setInterval(() => void this.refreshCupTrackTarget().catch(console.warn), 1000);
+        this.bump("ui");
+      }
     } catch (e: any) {
       toast.error(`Could not open ${path}`, { description: e.message });
       this.settings.recent = this.settings.recent.filter((p) => p !== path);
@@ -730,13 +805,18 @@ export class Editor {
     } catch (e: any) { toast.error(`Could not open ${path}`, { description: e.message }); }
   }
 
-  async loadFile({ path, name, data }: { path: string | null; name: string; data: Uint8Array }) {
+  async loadFile({ path, name, data }: { path: string | null; name: string; data: Uint8Array }, { newWindow = false } = {}) {
     // Archives without a track open in their own window and leave the open track alone.
     const quick = (() => { try { return isYaz0(data) ? yaz0Decompress(data) : isU8(data) ? data : null; } catch { return null; } })();
     // So do models, game text, effects, parameters, music and Riivolution files.
     const loose = !(quick && isU8(quick)) ? looseKind(name, quick || data) : null;
     if (loose) return this.openLooseFile({ path, name, data: quick || data }, loose);
     const archiveOnly = !!quick && isU8(quick) && (() => { const t = parseU8(quick); return !["course.kmp", "course.kcl", "course_model.brres"].some((f) => findFile(t, f)); })();
+    if (newWindow && hasBackend && !archiveOnly) {
+      await api.openEditorWindow(path ? { path } : { name, data });
+      this.addRecent(path);
+      return;
+    }
     if (!archiveOnly && !(await this.confirmDiscard())) return;
     const d = this.doc;
     // An archive without a track (menus, characters, effects…) opens in the archive window instead.
@@ -768,9 +848,11 @@ export class Editor {
         } else throw new Error("Unknown file format");
         d.filePath = path;
         d.fileName = name;
+        this.clearCupTrackLink();
+        this.diskVersion = path ? { path, data: data.slice() } : null;
         d.loaded();
         this.enterEditor();
-        this.addRecent(path);
+        if (!path || !/[\\/]cup-tracks[\\/]/i.test(path)) this.addRecent(path);
         this.loadTrackAssets();
         const k = d.kmp;
         toast.success(`Opened ${name}`, { description: `${k.GOBJ.length} objects · ${k.CKPT.reduce((s: number, g: any) => s + g.points.length, 0)} checkpoints${d.kcl ? ` · ${d.kcl.count.toLocaleString()} collision triangles` : ""}` });
@@ -807,7 +889,7 @@ export class Editor {
   kclBytes() {
     const d = this.doc, k = d.kcl;
     if (!k) return null;
-    if (d.kclGeometryChanged || !k.raw) return buildKCL(k.verts, k.flags);
+    if (d.kclGeometryChanged || !k.raw) return buildKCL(k.verts, k.flags, { allowEmpty: k.count === 0 });
     return patchKCLFlags(k);
   }
 
@@ -822,6 +904,8 @@ export class Editor {
 
   async save(saveAs = false) {
     const d = this.doc;
+    try { await this.refreshCupTrackTarget(); }
+    catch (e: any) { toast.error("Could not resolve the cup track's destination", { description: e.message }); return false; }
     let path = d.filePath;
     let kind = d.fileKind;
     if (saveAs || !path || kind === "new" || /\.(wu8|wlz|wbz)$/i.test(path)) {
@@ -838,6 +922,15 @@ export class Editor {
       let fixed = 0;
       this.editIntro("Fix intro cameras", (k) => { fixed = fixIntroShots(k); });
       toast.info(`${fixed} intro camera${fixed === 1 ? "" : "s"} fixed for the game`, { description: "They were saved so the game plays them as the Cameras tab shows them. Ctrl+Z undoes it.", duration: 9000 });
+    }
+    if (hasBackend && this.diskVersion && path.replace(/\\/g, "/").toLowerCase() === this.diskVersion.path.replace(/\\/g, "/").toLowerCase()) {
+      try {
+        const current = await api.exists(path) ? (await api.readPath(path)).data : null;
+        if (!current || !sameBytes(current, this.diskVersion.data)) {
+          const overwrite = await dialogs.confirm({ title: "This track changed on disk", description: `Another editor window or program changed "${d.fileName}" after this window opened it. Saving here would overwrite those changes.`, confirmLabel: "Overwrite with this version", destructive: true });
+          if (!overwrite) return false;
+        }
+      } catch (e: any) { void dialogs.alert({ title: "Could not check the track on disk", description: e.message }); return false; }
     }
     return this.withBusy("Saving…", async () => {
       try {
@@ -868,11 +961,13 @@ export class Editor {
           const disk = (await api.readPath(path)).data;
           const actual = kind === "szs" ? (isYaz0(disk) ? yaz0Decompress(disk) : null) : disk;
           if (!actual || !sameBytes(actual, written)) throw new Error(`The saved file could not be verified: ${path}`);
+          this.diskVersion = { path, data: disk.slice() };
         }
         d.filePath = hasBackend ? path : null;
         d.fileName = path.split(/[\\/]/).pop();
         d.fileKind = kind;
         d.dirty = false;
+        if (saveAs) this.clearCupTrackLink();
         this.addRecent(d.filePath);
         this.bump("doc");
         toast.success(`Saved ${d.fileName}`, { description: hasBackend ? `${path}${result?.backup ? " · Original kept as .bak" : ""}` : undefined, duration: 8000 });
@@ -1357,7 +1452,7 @@ export class Editor {
   async switchTrack(file: string) {
     const t = this.trackFiles;
     if (!t || file === this.currentTrackFile()) return;
-    await this.openPath(`${t.folder}\\${file}`);
+    await this.openPath(`${t.folder}\\${file}`, { newWindow: true });
   }
 
   // Previous / next track of the folder, staying among single-player or multiplayer (_d) archives.
@@ -1648,6 +1743,48 @@ export class Editor {
     return [...found];
   }
 
+  collisionOfSelectedModelParts(): number[] {
+    const part = this.geometrySelection;
+    if (part?.type !== "model" || !this.doc.kcl?.count) return [];
+    const found = new Set<number>();
+    for (const piece of part.pieces || [part]) {
+      if (!piece.mesh?.parent) continue;
+      const tris = modelCollisionTriangles(piece.mesh, { vertexIndices: piece.vertexIndices });
+      if (!tris.length) continue;
+      const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (const tri of tris) for (const p of tri) for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], p[a]); hi[a] = Math.max(hi[a], p[a]); }
+      const tolerance = Math.max(10, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) * 0.03);
+      for (const t of collisionOfModel(this.doc.kcl, tris, collisionBoxFromTriangles(tris), tolerance)) found.add(t);
+    }
+    return [...found];
+  }
+
+  async removeCollisionForSelection() {
+    const d = this.doc, kcl = d.kcl, archive = d.szs;
+    if (!archive || !kcl?.count) return toast.info("No collision to remove");
+    const part = this.geometrySelection?.type === "model" ? this.geometrySelection : null;
+    const objects = d.selectedInfos().filter((info: any) => info.kind === "GOBJ");
+    if (!part && !objects.length) return toast.info("Select a track model part or an object first");
+    const parts = part?.pieces || (part ? [part] : []);
+    const label = part ? (parts.length === 1 ? part.name : `${parts.length} track model parts`)
+      : objects.length === 1 ? this.objectLabel(objects[0].item.objectId) : `${objects.length} objects`;
+    const triangles = part ? this.collisionOfSelectedModelParts() : this.collisionOfSelectedObjects();
+    if (!triangles.length) return dialogs.alert({ title: "No collision found", description: `No course collision matching ${label} was found.` });
+    const confirmed = await dialogs.confirm({
+      title: `Remove collision · ${label}?`,
+      description: `Remove all ${triangles.length.toLocaleString()} collision triangles matching ${label}? The model stays in the track. Ctrl+Z restores the collision. Save the SZS to keep this change.`,
+      confirmLabel: "Remove collision", destructive: true,
+    });
+    if (!confirmed) return;
+    if (d.szs !== archive || d.kcl !== kcl) return toast.info("The track changed. Select the model or object again.");
+    try {
+      const next = deleteCollisionTriangles(kcl, triangles, { allowEmpty: true });
+      buildKCL(next.verts, next.flags, { allowEmpty: true });
+      d.change(`Remove collision for ${label}`, () => d.setKCL(next, true));
+      toast.success(`${triangles.length.toLocaleString()} collision triangles removed`, { description: "Ctrl+Z restores them. Save the SZS to keep the change." });
+    } catch (error: any) { toast.error("Could not remove collision", { description: error.message }); }
+  }
+
   async generateCollisionForSelection() {
     if (!this.doc.szs) return toast.error("Open a track SZS to add collision");
     const part = this.geometrySelection?.type === "model" ? this.geometrySelection : null;
@@ -1933,12 +2070,15 @@ export class Editor {
   }
 
   // ---- Commands -------------------------------------------------------------------------
-  async cmd(name: string) {
+  async cmd(name: string, inPlace = false) {
     const d = this.doc, vp = this.viewport, ops = this.ops;
     switch (name) {
       case "open": {
         const f = await api.openFile(FILTERS.editable, "Open");
-        if (f) await this.loadFile(f);
+        if (f) {
+          try { await this.loadFile(f, { newWindow: true }); }
+          catch (e: any) { toast.error("Could not open another editor window", { description: e.message }); }
+        }
         break;
       }
       case "save": return this.save(false);
@@ -1947,8 +2087,11 @@ export class Editor {
       case "editor": this.enterEditor(); break;
       case "closeTrack": return this.closeTrack();
       case "newEmpty": {
+        if (hasBackend && !inPlace) return this.openEditorWindow({ create: "empty" });
         if (!(await this.confirmDiscard())) return;
         d.reset();
+        this.diskVersion = null;
+        this.clearCupTrackLink();
         d.fileKind = "szs";
         d.fileName = "New Track.szs";
         d.loaded();
@@ -1957,7 +2100,7 @@ export class Editor {
         toast("Empty project created", { description: "Import a collision (Collision tab) or start placing elements." });
         break;
       }
-      case "newTrack": return this.newTrack();
+      case "newTrack": return hasBackend && !inPlace ? this.openEditorWindow({ create: "generator" }) : this.newTrack();
       case "importTrackModel": return this.importTrackModel();
       case "modelParts": return this.openModelParts();
       case "gameObjects": return this.openGameObjects();
@@ -2105,33 +2248,36 @@ export class Editor {
     }
   }
 
-  async newTrack() {
+  async newTrack({ showCreated = true } = {}): Promise<boolean> {
     const d = this.doc;
     const res: any = await dialogs.open("generator", { hasSzs: !!d.szs });
-    if (!res) return;
-    if (!res.keepSzs && !(await this.confirmDiscard())) return;
-    await this.withBusy("Building the track…", async () => {
+    if (!res) return false;
+    if (!res.keepSzs && !(await this.confirmDiscard())) return false;
+    return this.withBusy("Building the track…", async () => {
       try {
-        const out = generateTrack(res.points, res.params);
-        const kclBytes = buildKCL(out.verts, out.flags);
         const szs = res.keepSzs ? d.szs : null;
+        const { out, tree, kclBytes } = await generateTrackArchive(res.points, res.params, szs, (text) => { this.busy = text; this.bump("ui"); });
         d.reset();
-        d.szs = szs || newSzsTree();
+        d.szs = tree;
+        this.diskVersion = null;
+        this.clearCupTrackLink();
         d.kmp = out.kmp;
         d.kcl = parseKCL(kclBytes);
         d.kclGeometryChanged = false;
         d.extraModel = out.model;
         d.fileKind = "szs";
         d.fileName = "New Track.szs";
-        this.assets?.setTrack(szs || null);
         d.loaded();
+        await this.assets?.setTrack(d.szs);
         this.enterEditor();
         d.dirty = true;
         this.bump("doc");
-        dialogs.open("trackCreated", { length: out.length, tris: d.kcl.count, keptSzs: !!szs });
+        if (showCreated) void dialogs.open("trackCreated", { length: out.length, tris: d.kcl.count, keptSzs: !!szs });
+        return true;
       } catch (e: any) {
         console.error(e);
         dialogs.alert({ title: "Track generation failed", description: e.message });
+        return false;
       }
     });
   }
@@ -2214,15 +2360,26 @@ export class Editor {
   // Loose track files dropped together (course_model.brres, course.kcl, course.kmp, object .brres…)
   // are assembled into a new SZS archive in memory.
   // point: where the files were dropped on the track (used for 3D models).
-  async loadFiles(files: { name: string; data: Uint8Array }[], point: number[] | null = null) {
+  async loadFiles(files: { name: string; data: Uint8Array }[], point: number[] | null = null, { newWindow = false } = {}) {
     if (files.some((f) => MODEL_FILE.test(f.name))) return this.importDroppedModels(files, point);
-    if (files.length === 1) return this.loadFile({ path: null, ...files[0] });
+    if (newWindow && files.length > 1 && files.every((f) => /\.(szs|wlz|wbz|wu8)$/i.test(f.name))) {
+      for (const file of files) await this.loadFile({ path: null, ...file }, { newWindow: true });
+      return;
+    }
+    if (files.length === 1) return this.loadFile({ path: null, ...files[0] }, { newWindow });
+    if (newWindow && hasBackend) {
+      const tree = newSzsTree();
+      for (const file of files) setFile(tree, file.name, await api.decodeArchiveBytes(file.data, null, this.commonPath || this.partsFolder()));
+      return this.openEditorWindow({ name: "Custom Track.szs", data: buildU8(tree) });
+    }
     if (!(await this.confirmDiscard())) return;
     const d = this.doc;
     await this.withBusy("Assembling track files…", async () => {
       try {
         d.reset();
         d.szs = newSzsTree();
+        this.diskVersion = null;
+        this.clearCupTrackLink();
         for (const f of files) {
           let data = f.data;
           if (/\.(kmp|kcl|brres)$/i.test(f.name)) data = await api.decodeArchiveBytes(data, null, this.commonPath || this.partsFolder());
@@ -2713,6 +2870,10 @@ export class Editor {
   }
 
   // ---- Window (desktop app) ------------------------------------------------------------------
+  async openEditorWindow(request: { path?: string; create?: string; name?: string; data?: Uint8Array }) {
+    try { return await api.openEditorWindow(request); }
+    catch (e: any) { toast.error("Could not open another editor window", { description: e.message }); return null; }
+  }
   get hasWindowControls() { return typeof (window as any).__winctl === "function"; }
   private windowStateTimer: any = null;
   // Windows can maximize or restore the window by itself (snap, Win+arrows): read the state back.
@@ -2730,6 +2891,7 @@ export class Editor {
       const ok = await dialogs.confirm({ title: "Unsaved changes", description: `"${this.doc.fileName}" has unsaved changes. Close anyway?`, confirmLabel: "Close without saving", destructive: true });
       if (!ok) return;
     }
+    if (action === "close") (window as any).__closingApproved = true;
     const state = await (window as any).__winctl(action, arg);
     this.maximized = !!state?.maximized;
     this.bump("ui");

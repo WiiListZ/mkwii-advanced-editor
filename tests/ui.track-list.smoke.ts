@@ -12,7 +12,7 @@ const folder = join(dir, "files", "Race", "Course");
 await mkdir(folder, { recursive: true });
 for (let i = 0; i < 100; i++) await writeFile(join(folder, `${i}.szs`), new Uint8Array());
 await writeFile(join(dir, "settings.json"), JSON.stringify({ tourDone: true, workspace: join(dir, "files") }));
-const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
+let worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((resolve) => {
   worker.onmessage = (event) => event.data?.type === "ready" && resolve(event.data.port);
   worker.postMessage({ type: "start", token: "tracks-smoke", settingsDir: dir });
@@ -27,9 +27,23 @@ try {
   page.on("pageerror", (error) => { throw error; });
   await page.setViewport({ width: 1200, height: 900 });
   await page.goto(`http://127.0.0.1:${port}/?t=tracks-smoke`);
-  // Home says once where the track list went; its button opens Cups and tracks.
+  // Dismiss with Got it, then restart on a new origin like the desktop app does on each launch.
   await page.waitForSelector("[data-tracks-moved]");
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>("[data-tracks-moved] button")].find((b) => b.textContent?.includes("Open Cups and tracks"))!.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>("[data-tracks-moved] button")].find((b) => b.textContent?.trim() === "Got it")!.click());
+  await page.waitForSelector("[data-tracks-moved]", { hidden: true });
+  await page.evaluate(() => (window as any).app.settingsSave);
+  if (!(await Bun.file(join(dir, "settings.json")).json()).tracksMovedNoticeSeen) throw new Error("Got it was not saved in the desktop settings");
+  worker.terminate();
+  worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
+  const restartedPort: number = await new Promise((resolve) => {
+    worker.onmessage = (event) => event.data?.type === "ready" && resolve(event.data.port);
+    worker.postMessage({ type: "start", token: "tracks-smoke", settingsDir: dir });
+  });
+  // A different hostname also guarantees an empty browser origin if the OS happens to reuse a port.
+  await page.goto(`http://localhost:${restartedPort}/?t=tracks-smoke`);
+  await page.waitForFunction(() => !!(window as any).app?.viewport && (window as any).app.tracksMovedNoticeSeen !== null);
+  if (await page.$("[data-tracks-moved]")) throw new Error("The notice reappeared after restarting the app on a new origin");
+  await page.evaluate(() => { void (window as any).app.cmd("cups"); });
   await page.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => b.textContent?.startsWith("All tracks")));
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.startsWith("All tracks"))!.click());
   await page.waitForFunction(() => document.body.textContent?.includes("of 100 files"));
@@ -59,7 +73,7 @@ try {
   const keptCommon = await switchWorkspace;
   if (!keptCommon) throw new Error("Changing workspace discarded the manually loaded Common.szs");
   await page.waitForFunction(() => document.body.textContent?.includes("of 1 files"), { timeout: 6000 });
-  const noticeGone = await page.evaluate(() => localStorage.getItem("mkwii-tracks-moved-seen") === "1");
+  const noticeGone = await page.evaluate(() => (window as any).app.tracksMovedNoticeSeen === true);
   if (!noticeGone) throw new Error("The Home notice was not marked as read");
   console.log(`Track list updated: ${join(dir, "track-list.png")}`);
 } finally {

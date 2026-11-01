@@ -241,6 +241,10 @@ export function drawDisplay(assets, ctx, display, { file, id, text, lookup }) {
 
   if (display === 'menuButton') {
     menu();
+    if (file === 'Menu' && id === 0x7d1) {
+      assets.drawControl(ctx, 'button', 'Back', 'ButtonBack', { anims: ['free'], text: button(shown) });
+      return;
+    }
     assets.drawControl(ctx, 'message_window', 'YesNoButton', 'Option0', { anims: ['select@end'], text: { text: shown, text_light_01: shown } });
     back();
     return;

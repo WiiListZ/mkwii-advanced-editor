@@ -112,7 +112,7 @@ await page.waitForFunction(() => !document.querySelector("[role=dialog]"));
 await page.evaluate(() => (window as any).app.setTab("outline"));
 
 // Create a new track through the generator dialog.
-await page.evaluate(() => { (window as any).app.cmd("newTrack"); });
+await page.evaluate(() => { (window as any).app.cmd("newTrack", true); }); // this test exercises the generator; multi-window.smoke.ts covers window routing
 await wait(500);
 await shot("2-generator");
 const clickButton = (text: string) => page.evaluate((t) => { ([...document.querySelectorAll("[role=dialog] button, [role=alertdialog] button")].find((b) => b.textContent?.includes(t)) as HTMLElement)?.click(); }, text);

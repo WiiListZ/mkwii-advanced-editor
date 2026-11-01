@@ -5,7 +5,7 @@
 import { api } from "../../js/api.js";
 import { buildBMG, parseBMG } from "../../js/formats/bmg.js";
 import { PULSAR_IDS, buildPulsarConfig, crc32, parsePulsarConfig } from "../../js/formats/pulsar.js";
-import { EXPERT_MODES, expertFile, plannedAlphabetical, plannedFileSection, plannedTracks, pulsarNameChanges, pulsarNames, trackFile } from "../../js/data/pulsar-cups.js";
+import { EXPERT_MODES, expertFile, plannedAlphabetical, plannedFileSection, plannedTracks, pulsarNameChanges, pulsarNames, trackFile, trackName } from "../../js/data/pulsar-cups.js";
 import { SLOTS } from "../../js/data/cups.js";
 import type { ModCups } from "./dialogs/PulsarCupsView";
 import { parseTPL } from "../../js/formats/brlyt.js";
@@ -16,12 +16,14 @@ import { editor } from "./editor";
 import { dialogs } from "./dialogs-store";
 import { bmgFromText } from "../../js/formats/bmg-text.js";
 import type { Write } from "./cups";
+import { buildPulsarLaunch, pulsarInstructions, pulsarLaunchPaths } from "../../js/editor/pulsar-launch.js";
 
 export type PulsarPack = {
   configPath: string; root: string; config: any; text: (id: number) => string | null;
   uiAssets: string; tracks: string; experts: string;
   // A pack being created: its menu archive is the engine's default one, not yet on disk.
   uiAssetsData?: Uint8Array;
+  play?: NonNullable<ModCups["play"]>;
 };
 
 const parent = (p: string) => p.replace(/[\\/][^\\/]+$/, "");
@@ -40,8 +42,10 @@ export async function loadPulsarPack(configPath: string, data?: Uint8Array): Pro
   const config = parsePulsarConfig(data || (await api.readPath(configPath)).data);
   const messages = new Map<number, string>(parseBMG(config.bmg).messages.map((m: any) => [m.id, m.text]));
   const root = parent(parent(configPath));
+  const launchPaths = pulsarLaunchPaths(config.folder.replace(/^\//, ""), parent(root));
+  const play = await api.exists(launchPaths.xmlPath) ? launchPaths : undefined;
   return {
-    configPath, root, config, text: (id) => messages.get(id) ?? null,
+    configPath, root, config, text: (id) => messages.get(id) ?? null, play,
     uiAssets: join(root, "Assets", "UIAssets.szs"), tracks: join(root, "Tracks"), experts: join(root, "Ghosts", "Experts"),
   };
 }
@@ -136,19 +140,23 @@ export async function buildPackWrites(pack: PulsarPack, a: any, progress?: (text
   };
   const newTracks: string[] = [];
   for (const [i, t] of a.tracks.entries()) {
-    if (t.from === i && !t.file) continue;
+    if (t.from === i && !t.file && !t.duplicate) continue;
     if (t.from === null && !t.file) throw new Error(`Cup ${Math.floor(i / 4) + 1}, position ${i % 4 + 1} has no track yet`);
     if (t.file) {
       say(`Reading ${t.file.path.split(/[\\/]/).pop()}…`);
       const data = await trackBytes(t.file.path);
       crcs.set(i, uniqueCRC(data, i));
       newTracks.push(`${t.name ?? t.file.label} = ${crcs.get(i)!.toString(16).toUpperCase().padStart(8, "0")}`);
-      writes.push({ path: join(pack.tracks, trackFile(i)), data, what: trackFile(i) });
+      writes.push({ path: join(pack.tracks, trackFile(i)), data, what: trackFile(i), source: t.file.path });
     } else {
       const variants = config.tracks[t.from].variants.length;
       for (let v = 0; v <= variants; v++) {
         say(`Reading ${trackFile(t.from, v)}…`);
         const file = await api.readPath(join(pack.tracks, trackFile(t.from, v)));
+        if (v === 0 && t.duplicate) {
+          crcs.set(i, uniqueCRC(file.data, i));
+          newTracks.push(`${trackName(a, i, pulsarNames(text))} = ${crcs.get(i)!.toString(16).toUpperCase().padStart(8, "0")}`);
+        }
         writes.push({ path: join(pack.tracks, trackFile(i, v)), data: file.data, what: trackFile(i, v) });
       }
     }
@@ -203,8 +211,15 @@ export async function buildPackWrites(pack: PulsarPack, a: any, progress?: (text
     writes.push({ path: folders, data: new TextEncoder().encode((before.trim() ? before.replace(/\s*$/, "") + eol : "") + newTracks.join(eol) + eol), what: "FolderToTrackName.txt" });
   }
   const bmg = buildBMG(parseBMG(config.bmg), pulsarNameChanges(config, a, text), { add: true });
-  const next = { ...config, tracks, alphabetical: plannedAlphabetical(config, a, text), info: { ...config.info, iconCount } };
+  const regsMode = a.regsMode ?? config.regsMode;
+  if (regsMode !== config.regsMode && ![0, 1, 2].includes(regsMode)) throw new Error("Invalid original-cup setting");
+  const next = { ...config, regsMode, tracks, alphabetical: plannedAlphabetical(config, a, text), info: { ...config.info, iconCount } };
   writes.push({ path: pack.configPath, data: buildPulsarConfig(next, bmg, plannedFileSection(config.file, a)), what: "Config.pul" });
+  if (pack.play && !pack.play.pending && regsMode !== config.regsMode && await api.exists(pack.play.instructionsPath)) {
+    const name = config.folder.replace(/^\//, "");
+    const instructions = new TextDecoder().decode((await api.readPath(pack.play.instructionsPath)).data);
+    if (instructions.startsWith(`${name} - Riivolution cup pack`)) writes.push({ path: pack.play.instructionsPath, data: new TextEncoder().encode(pulsarInstructions(name, regsMode)), what: "HOW TO PLAY.txt" });
+  }
   if (a.cups.length < config.cupCount) notes.push(`The track files of the removed cups stay in the Tracks folder; the game no longer uses them.`);
   return { writes, notes };
 }
@@ -238,23 +253,30 @@ export async function pulsarCups(configPath: string): Promise<ModCups> {
 function packCups(pack: PulsarPack, creating: boolean): ModCups {
   const raceSlots = SLOTS.filter((s: any) => !s.battle);
   return {
-    kind: "pulsar", title: `${pack.config.folder.replace(/^\//, "")} (Pulsar)`, cupCount: pack.config.cupCount, capacity: 16383,
+    kind: "pulsar", title: `${pack.config.folder.replace(/^\//, "")} (Pulsar)`, cupCount: pack.config.cupCount, capacity: 16383, play: pack.play, regsMode: pack.config.regsMode,
     names: pulsarNames(pack.text), hasAuthors: true,
     slotOf: (from) => pack.config.tracks[from].slot, musicOf: (from) => pack.config.tracks[from].music,
     musicOptions: raceSlots.map((s: any) => ({ value: s.id, label: s.label })),
     fileOf: (position) => `Tracks/${trackFile(position)}`,
+    trackPath: (from) => join(pack.tracks, trackFile(from)),
     icon: (cup) => packIconURL(pack, cup),
     build: (a, progress) => (creating ? buildNewPack(pack, a, progress) : buildPackWrites(pack, a, progress)),
     rename: creating ? undefined : (what) => renameInTextEditor(pack, "cup" in what ? PULSAR_IDS.cup + what.cup : PULSAR_IDS.track + what.track),
     written: creating
-      ? `Written: a new mod folder ${pack.root} (the Pulsar engine, its menus, Binaries/Config.pul with your cups, the tracks in Tracks) and its Riivolution XML in ${join(parent(pack.root), "riivolution")}. The game's 8 cups stay first; your cups follow them.`
+      ? `Written: a new Riivolution cup pack in ${pack.root}, its patch XML and instructions. Load the XML with Pack set to Enabled to use the extra cups. Keep original game cups makes your cups coexist with the game's eight.`
       : "Written: the track archives in the pack's Tracks folder, Binaries/Config.pul (cups, names, alphabetical order), the cup icons in Assets/UIAssets.szs when they change, and the expert ghosts that belong to moved tracks. The pack's other settings are kept as they are.",
   };
 }
 
 // ---- A new pack -----------------------------------------------------------------------------------
 // The engine files are served with the editor (vendor/pulsar, MIT, see its NOTICE.md).
-const engineFile = async (name: string) => new Uint8Array(await (await fetch(`pulsar/${name}`)).arrayBuffer());
+const engineFile = async (name: string) => {
+  const response = await fetch(`pulsar/${name}`);
+  if (!response.ok) throw new Error(`Could not load the cup pack's ${name} (HTTP ${response.status})`);
+  const data = new Uint8Array(await response.arrayBuffer());
+  if (!data.length) throw new Error(`The cup pack's ${name} is empty`);
+  return data;
+};
 const ascii = (s: string) => [...s].map((c) => c.charCodeAt(0));
 const be32 = (n: number) => [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
 
@@ -284,6 +306,7 @@ export async function newPulsarCups(name: string, folder: string): Promise<ModCu
   const configPath = join(root, "Binaries", "Config.pul");
   const pack = await loadPulsarPack(configPath, await emptyConfig(name));
   pack.uiAssetsData = await engineFile("UIAssets.szs");
+  pack.play = { ...pulsarLaunchPaths(name, folder), pending: true };
   forgetIcons();
   const cups = packCups(pack, true);
   return { ...cups, kind: "pulsar-new", title: `${name} (new Pulsar mod)` };
@@ -297,11 +320,12 @@ async function buildNewPack(pack: PulsarPack, a: any, progress: (text: string) =
     writes.push({ path: join(pack.root, to, file), data: await engineFile(file), what: file });
   }
   if (!writes.some((w) => w.path === pack.uiAssets)) writes.push({ path: pack.uiAssets, data: pack.uiAssetsData!, what: "UIAssets.szs" });
-  const xml = new TextDecoder().decode(await engineFile("Base.xml")).replaceAll("{$pack}", name);
-  writes.push({ path: join(parent(pack.root), "riivolution", `${name}.xml`), data: new TextEncoder().encode(xml), what: `${name}.xml` });
+  const launch = buildPulsarLaunch(new TextDecoder().decode(await engineFile("Base.xml")), name, parent(pack.root), a.regsMode ?? pack.config.regsMode);
+  writes.push({ path: launch.paths.xmlPath, data: new TextEncoder().encode(launch.xml), what: `${name}.xml` });
+  writes.push({ path: launch.paths.instructionsPath, data: new TextEncoder().encode(launch.instructions), what: "HOW TO PLAY.txt" });
   // The folders the XML maps: they hold the expert ghosts and custom music later.
   for (const dir of ["Ghosts\\Experts", "CTBRSTM", "My Stuff"]) writes.push({ path: join(pack.root, dir, "README.txt"), data: new TextEncoder().encode("Folder of the Pulsar pack, mapped by its Riivolution XML.\r\n"), what: `${dir}\\README.txt` });
-  notes.push(`Start it in Dolphin or on a Wii with Riivolution (riivolution/${name}.xml); the Riivolution mod editor can make a Dolphin launcher for it.`);
+  notes.push(`Load riivolution/${name}.xml with Riivolution and enable ${name} → Pack to use these cups.`);
   return { writes, notes };
 }
 

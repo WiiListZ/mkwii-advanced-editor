@@ -3,6 +3,7 @@
 // track file, the change is applied with a backup, checked on disk, then restored from the backup.
 // Everything runs on a temporary copy of the game files: the real game folder is only read.
 // Usage: MKWII_GAME_DIR=<extracted game files> bun run --preload ./scripts/readme-privacy.ts scripts/capture-cups.ts
+// Add --cups-only to refresh just the Cups and tracks screenshots.
 import puppeteer from "puppeteer-core";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +16,7 @@ import { parseBRSTM } from "../web/js/formats/brstm.js";
 import { encodeWAV, toInt16 } from "../web/js/editor/audio.js";
 
 const game = process.env.MKWII_GAME_DIR;
+const cupsOnly = process.argv.includes("--cups-only");
 if (!game || !existsSync(join(game, "Race", "Common.szs"))) throw new Error("Set MKWII_GAME_DIR to the extracted game's files directory");
 const out = (name: string) => join(import.meta.dir, "..", "docs", "images", name);
 const temp = mkdtempSync(join(tmpdir(), "mkwii-cups-shots-"));
@@ -65,6 +67,7 @@ const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 try {
+  capture: {
   const port: number = await new Promise((r) => {
     worker.onmessage = (event) => event.data?.type === "ready" && r(event.data.port);
     worker.postMessage({ type: "start", token: "shots", settingsDir: temp });
@@ -115,6 +118,13 @@ try {
   // Coconut Mall goes where Luigi Circuit was.
   await clickIn(dialog, "Hide");
   await clickIn("nav[aria-label=Cups]", "Flower Cup");
+  if (cupsOnly) {
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-slot] canvas')].some((c) => (c as HTMLCanvasElement).width > 0), { timeout: 60000 });
+    await settle(1500);
+    await page.mouse.move(1450, 900);
+    await page.screenshot({ path: out("cups-previews.png") });
+    console.log("cups-previews.png");
+  }
   await clickIn(`${dialog} [data-slot="shopping_course"]`, "Swap with");
   await clickIn("[role=menu]", "Mushroom Cup 1");
   // Moo Moo Meadows is replaced by a track file.
@@ -126,7 +136,7 @@ try {
   await page.screenshot({ path: out("cups-swap.png") });
   console.log("cups-swap.png");
 
-  // Apply: backups are off in Settings, so the editor asks whether to back up first.
+  // Apply always offers the per-operation backup checkbox, also with .bak backups off in Settings.
   await clickIn(dialog, "Apply changes");
   await page.waitForFunction(() => document.body.innerText.includes("Make a backup first?"));
   await settle();
@@ -195,6 +205,7 @@ try {
   await settle(400);
   await page.screenshot({ path: out("cups-music.png") });
   console.log("cups-music.png");
+  if (cupsOnly) break capture;
   // Closes the menu without choosing (the menu is the top layer, so the window stays open).
   await page.keyboard.press("Escape");
   await sleep(300);
@@ -202,8 +213,11 @@ try {
   await clickIn(dialog, "Apply changes");
   await page.waitForFunction(() => document.body.innerText.includes("Make a backup first?"));
   await clickIn(dialog, "Back up and apply");
-  // Applied: the window starts again from the files as they are now (the earlier toast is still there).
-  await page.waitForFunction(() => !document.querySelector('[data-slot="farm_course"]')?.textContent?.includes("(audio file)"), { timeout: 240000 });
+  // Applied: the choice stays visible, while the pending-change badge disappears.
+  await page.waitForFunction(() => {
+    const text = document.querySelector('[data-slot="farm_course"]')?.textContent || "";
+    return text.includes("(audio file)") && !text.includes("music changed") && !(window as any).app.busy;
+  }, { timeout: 240000 });
   await sleep(500);
   {
     const normal = parseBRSTM(new Uint8Array(after("sound", "strm", "n_Farm_n.brstm")));
@@ -367,6 +381,7 @@ try {
   check(await page.evaluate(() => document.body.innerText.includes("150cc and Mirror time limit")), "ranktimeGP.krt opens with its time limits");
   await clickIn('[role="dialog"]', "minigame.kmg");
   check(await page.evaluate(() => document.body.innerText.includes("Balloon Battle · points")), "minigame.kmg opens with the Battle settings");
+  }
 } catch (error) {
   // Where it stopped, for the person running the script (not a README picture).
   if (process.env.CAPTURE_FAILURE) await (await browser?.pages())?.at(-1)?.screenshot({ path: process.env.CAPTURE_FAILURE }).catch(() => {});

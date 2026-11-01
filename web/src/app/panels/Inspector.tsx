@@ -189,6 +189,7 @@ export function Inspector() {
       <div className="text-sm font-semibold">{parts.length} track model part{parts.length === 1 ? "" : "s"}{infos.length ? ` and ${infos.length} track item${infos.length === 1 ? "" : "s"}` : ""} selected</div>
       <p className="text-xs text-muted-foreground">Move, rotate or scale the selection together. Shift adds parts and Ctrl toggles them. Drag a box in the 3D view to select several items.</p>
       <Button size="sm" variant="secondary" onClick={() => ed.generateCollisionForSelection()}><BrickWall /> Generate collision…</Button>
+      <RemoveSelectionCollision />
       <Button size="sm" variant="ghost" className="text-destructive" onClick={() => ed.cmd("delete")}><Trash2 /> Delete selected parts</Button>
     </div>;
     return <ModelInspector key={`${ed.geometrySelection.partIndex}:${ed.geometrySelection.pieceIndex}`} />;
@@ -273,6 +274,7 @@ export function Inspector() {
         <Hint title="Duplicate" text="Copy the selection next to the original." shortcut="Ctrl+D"><Button size="sm" variant="secondary" onClick={() => ed.cmd("duplicate")}><Copy /> Duplicate</Button></Hint>
         <Hint title="Focus" text="Move the camera to the selection." shortcut="F"><Button size="sm" variant="secondary" onClick={() => ed.viewport.focusSelection()}><Crosshair /> Focus</Button></Hint>
         {infos.some((info: any) => info.kind === "GOBJ") && <Hint title="Generate collision" text={infos.length > 1 ? "Add static collision for the models of the selected objects to the course KCL. It will not move with them." : "Add a static copy of this object's model to the course KCL. It will not move with the object."}><Button size="sm" variant="secondary" disabled={!d.szs} onClick={() => ed.generateCollisionForSelection()}><BrickWall /> Generate collision…</Button></Hint>}
+        {infos.some((info: any) => info.kind === "GOBJ") && <RemoveSelectionCollision />}
         <Hint title="Delete" text="Remove the selection. Indices that pointed to it are updated." shortcut="Ctrl+X"><Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => ed.cmd("delete")}><Trash2 /> Delete</Button></Hint>
       </div>
       <Separator />
@@ -415,6 +417,13 @@ export function TextureEditorDialog({ name, close }: { name: string; close: (v: 
   );
 }
 
+function RemoveSelectionCollision() {
+  const ed = useEditor("doc");
+  return <Hint title="Remove all collision" text="Remove the course collision matching the selected model parts or objects, keeping their models. A confirmation shows how many triangles will be removed. Ctrl+Z restores them.">
+    <Button size="sm" variant="secondary" disabled={!ed.doc.szs || !ed.doc.kcl?.count} onClick={() => void ed.removeCollisionForSelection()}><Trash2 /> Remove all collision…</Button>
+  </Hint>;
+}
+
 function ModelInspector() {
   const ed = useEditor("ui", "doc", "settings");
   const selected = ed.geometrySelection;
@@ -437,6 +446,7 @@ function ModelInspector() {
         <Button size="sm" variant="secondary" onClick={() => ed.cmd("paste")} disabled={!ed.modelClipboard}><ClipboardPaste /> Paste</Button>
         <Button size="sm" variant="secondary" onClick={() => ed.cmd("duplicate")}><Plus /> Duplicate</Button>
         <Button size="sm" variant="secondary" disabled={!ed.doc.szs} onClick={() => ed.generateCollisionForSelection()} title="Generate course KCL from this selected model part"><BrickWall /> Generate collision…</Button>
+        <RemoveSelectionCollision />
         <Button size="sm" variant="ghost" className="text-destructive" onClick={() => ed.cmd("delete")}><Trash2 /> Delete</Button>
       </div>
       <Separator />

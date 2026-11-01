@@ -24,7 +24,7 @@ const FOLDERS = ["course", "battle", "button", "title", "ending"];
 const FOLDER_TITLES: Record<string, string> = { course: "Cup and track selection", battle: "Battle", button: "Menu buttons", title: "Title", ending: "Ending" };
 type Part = Rect & { label: string; key: string };
 
-export function ThpDialog({ initialPath, close }: { initialPath?: string; close: (v: any) => void }) {
+export function ThpDialog({ initialPath, initialPart, close }: { initialPath?: string; initialPart?: string; close: (v: any) => void }) {
   const [files, setFiles] = React.useState<{ folder: string; name: string; path: string }[] | null>(null);
   const [path, setPath] = React.useState(initialPath || "");
   const [thp, setThp] = React.useState<THP | null>(null);
@@ -55,7 +55,7 @@ export function ThpDialog({ initialPath, close }: { initialPath?: string; close:
 
   React.useEffect(() => {
     if (!path) return;
-    setThp(null); setError(""); setFrame(0); setPlaying(false); setSelected("whole"); setEdits({});
+    setThp(null); setError(""); setFrame(0); setPlaying(false); setSelected(path === initialPath ? initialPart ?? "whole" : "whole"); setEdits({});
     api.readPath(path).then((f: any) => setThp(parseTHP(f.data))).catch((e: any) => setError(e.message));
   }, [path]);
 
@@ -136,7 +136,7 @@ export function ThpDialog({ initialPath, close }: { initialPath?: string; close:
     setPlaying(false);
     const lines = parts.filter((p) => edits[p.key]).map((p) => `${p.label}: ${edits[p.key].source.name}${edits[p.key].fit === "stretch" ? " (stretched)" : ""}`);
     const choice: any = await dialogs.open("cupsApply", {
-      lines, keepBackups: editor.settings.keepBackups, title: "Save the preview video?", confirmLabel: "save",
+      lines, title: "Save the preview video?", confirmLabel: "save",
       description: `${path.split(/[\\/]/).pop()} is encoded again, all ${thp.frames.length} frames, with these changes. This takes a few seconds for a cup's previews and longer for long movies.`,
       written: "Every frame is saved as JPEG again (the parts you did not change too, at a quality close to the original). A frame is never larger than the largest frame of the original, because the game reserves memory for that size.",
     });
@@ -145,7 +145,7 @@ export function ThpDialog({ initialPath, close }: { initialPath?: string; close:
       try {
         const bytes = await renderMovie(thp, ordered, (done, total) => { editor.busy = `Encoding frame ${done} of ${total}…`; editor.bump("ui"); });
         if (choice.backup) await api.createSnapshot(`Preview video ${path.split(/[\\/]/).pop()}: ${lines.join(" · ")}`, [path], { lines });
-        await api.writeFile(path, bytes, { backup: editor.settings.keepBackups, edited: true });
+        await api.writeFile(path, bytes, { backup: choice.backup && editor.settings.keepBackups, edited: true });
         setThp(parseTHP(bytes)); setEdits({});
         toast.success("Preview video saved", { description: choice.backup ? "A backup was made first: Backups in this window puts it back." : "No backup was made." });
       } catch (e: any) { dialogs.alert({ title: "Could not save the video", description: e.message }); }
@@ -180,7 +180,7 @@ export function ThpDialog({ initialPath, close }: { initialPath?: string; close:
           <div className="grid gap-x-6 gap-y-1.5 md:grid-cols-2">
             <p className="m-0">The game plays THP movies: JPEG pictures, one per frame (60 per second), sometimes with sound. To save memory, one movie holds several previews at once: <code>course/kinoko.thp</code> has the four tracks of the Mushroom Cup one above the other, and the menu shows only the part of the track you point at. <code>cup_select.thp</code> has one picture per cup, the battle movies one per arena.</p>
             <p className="m-0"><b>Change a part:</b> click it on the video (or in the list), then <b>Picture</b> (a still image), <b>Video file</b> (MP4 or WebM, played from the start and repeated to the movie's length) or <b>From another preview</b> (for example Coconut Mall's preview into Luigi Circuit's place). <b>Fill</b> crops the source to the part's shape; <b>Stretch</b> squeezes all of it in. The player shows the result straight away.</p>
-            <p className="m-0"><b>Save</b> encodes every frame again and writes the THP, after a backup (asked when .bak backups are off in Settings). <b>Backups</b> puts the old video back. The movie keeps its size, frame count and sound.</p>
+            <p className="m-0"><b>Save</b> encodes every frame again and writes the THP. Its confirmation always lets you choose whether to make a backup first. <b>Backups</b> puts the old video back when a backup was made. The movie keeps its size, frame count and sound.</p>
             <p className="m-0"><b>Cups and tracks</b> moves the previews by itself when tracks change places (its option <i>Preview videos follow the tracks</i>). Use this window for a custom track's preview: record a lap in Dolphin, cut a few seconds and use it as a video file.</p>
           </div>
         </section>
@@ -191,7 +191,7 @@ export function ThpDialog({ initialPath, close }: { initialPath?: string; close:
           <p className="m-0 max-w-md">Choose the extracted game's <b>files</b> folder first: the videos are in its <code>thp</code> folder.</p>
           <Button onClick={() => void editor.chooseWorkspace()}>Choose the game folder…</Button>
         </div>
-      ) : view === "backups" ? <BackupsView onRestored={() => { const p = path; setPath(""); setTimeout(() => setPath(p), 0); }} /> : (
+      ) : view === "backups" ? <BackupsView onClose={() => setView("movie")} onRestored={() => { const p = path; setPath(""); setTimeout(() => setPath(p), 0); }} /> : (
         <div className="grid min-h-0 flex-1 grid-cols-[210px_minmax(0,1fr)_290px] gap-4">
           <nav className="flex min-h-0 flex-col gap-0.5 overflow-y-auto border-r pr-3" aria-label="Videos">
             {files === null ? <div className="flex items-center gap-2 text-xs text-muted-foreground"><LoaderCircle className="size-3.5 animate-spin" /> Reading…</div>

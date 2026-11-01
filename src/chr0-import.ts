@@ -26,7 +26,7 @@ export const wszstPath = () => [
 ].filter(Boolean).find((path) => existsSync(path!)) || null;
 
 async function run(exe: string, cwd: string, ...args: string[]) {
-  const child = Bun.spawn([exe, ...args], { cwd, stdout: "pipe", stderr: "pipe", windowsHide: true });
+  const child = Bun.spawn([exe, ...args], { cwd, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
   const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   if (code) throw new Error(`RiiStudio failed: ${(out + "\n" + err).trim().slice(-900)}`);
 }

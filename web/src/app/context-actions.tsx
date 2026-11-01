@@ -9,6 +9,7 @@ export function contextActions(): Action[] {
   if (ed.geometrySelection?.type === "model") return [
     { label: "Edit model resource…", icon: Box, onSelect: () => ed.openSelectedAssetEditor() },
     { label: "Generate collision…", icon: BrickWall, onSelect: () => ed.generateCollisionForSelection(), disabled: !d.szs },
+    { label: "Remove all collision…", icon: Trash2, onSelect: () => ed.removeCollisionForSelection(), disabled: !d.szs || !d.kcl?.count },
     { label: "Copy model object", icon: Copy, shortcut: "Ctrl+C", onSelect: () => ed.cmd("copy") },
     { label: "Paste model object", icon: ClipboardPaste, shortcut: "Ctrl+V", onSelect: () => ed.cmd("paste"), disabled: !ed.modelClipboard },
     { label: "Duplicate model object", icon: Plus, shortcut: "Ctrl+D", onSelect: () => ed.cmd("duplicate") },
@@ -28,6 +29,7 @@ export function contextActions(): Action[] {
   if (p?.kind === "GOBJ") {
     items.push({ label: "Edit object resource…", icon: Box, onSelect: () => ed.openSelectedAssetEditor() });
     items.push({ label: "Generate collision…", icon: BrickWall, onSelect: () => ed.generateCollisionForSelection(), disabled: !d.szs });
+    items.push({ label: "Remove all collision…", icon: Trash2, onSelect: () => ed.removeCollisionForSelection(), disabled: !d.szs || !d.kcl?.count });
     items.push({ label: `Select all "${ed.objectLabel(p.item.objectId)}"`, icon: ListChecks, onSelect: () => ed.selectObjectsById(p.item.objectId) });
   }
   if (items.length) items.push({ separator: true });

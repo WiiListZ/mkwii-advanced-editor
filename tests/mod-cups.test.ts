@@ -5,7 +5,7 @@ import { buildBMG, parseBMG } from "../web/js/formats/bmg.js";
 import { PULSAR_IDS, buildPulsarConfig, crc32, parsePulsarConfig } from "../web/js/formats/pulsar.js";
 import { buildLECode, parseLECode } from "../web/js/formats/lecode.js";
 import {
-  addCup, cupName, initialPulsar, moveTrack, plannedAlphabetical, plannedFileSection, plannedTracks, pulsarNameChanges, pulsarNames, removeLastCup, replaceTrack, swapCups, swapTracks, trackName,
+  addCup, cupName, fillEmptyTracks, initialPulsar, moveTrack, patchTrack, plannedAlphabetical, plannedFileSection, plannedTracks, pulsarNameChanges, pulsarNames, removeLastCup, replaceTrack, swapCups, swapTracks, trackChanged, trackName,
 } from "../web/js/data/pulsar-cups.js";
 
 const be = (n: number, size = 4) => Array.from({ length: size }, (_, i) => (n >>> ((size - 1 - i) * 8)) & 255);
@@ -58,6 +58,52 @@ function pulsarConfig(cups: number) {
 }
 
 describe("Pulsar packs", () => {
+  test("a single replacement fills empty places without changing the source or other tracks", () => {
+    let a = addCup(initialPulsar({ cupCount: 0, regsMode: 1 }), "First cup");
+    expect(() => fillEmptyTracks(a, 0)).toThrow("Choose a track");
+    a = replaceTrack(a, 1, "C:/track.szs", "My track");
+    a = patchTrack(a, 1, { author: "Author", slot: 4, music: 6 });
+    const next = fillEmptyTracks(a, 1);
+    expect(a.tracks.filter((t: any) => !t.file)).toHaveLength(3);
+    expect(next.regsMode).toBe(1);
+    expect(next.tracks[1]).toBe(a.tracks[1]);
+    expect(next.tracks.every((t: any) => t.file?.path === "C:/track.szs" && t.slot === 4 && t.music === 6 && t.author === "Author")).toBe(true);
+    expect(next.tracks[0].file).not.toBe(a.tracks[1].file);
+  });
+
+  test("repeating a saved track preserves variants and alphabetical order with a fresh identity", () => {
+    const config = parsePulsarConfig(pulsarConfig(1));
+    config.tracks[0].variants = [{ slot: 4, music: 6 }];
+    const text = (id: number) => new Map(parseBMG(config.bmg).messages.map((m: any) => [m.id, m.text])).get(id) ?? null;
+    const before = addCup(initialPulsar(config), "Second cup");
+    let next = fillEmptyTracks(before, 0);
+    expect(next.tracks.slice(4).every((t: any) => t.from === 0 && t.duplicate)).toBe(true);
+    const tracks = plannedTracks(config, next, (_path: string, i: number) => 2000 + i);
+    expect(tracks[0].crc).toBe(config.tracks[0].crc);
+    expect(new Set(tracks.map((t: any) => t.crc)).size).toBe(8);
+    expect(tracks[4].variants).toEqual([{ slot: 4, music: 6 }]);
+    expect(plannedAlphabetical(config, next, text).slice(0, 4)).toEqual(config.alphabetical);
+    expect([...plannedAlphabetical(config, next, text)].sort((a, b) => a - b)).toEqual([...Array(8).keys()]);
+    expect(new TextDecoder().decode(plannedFileSection(config.file, next))).toContain("4=file0||||");
+    // Moving a copy back to the source's old position still needs a write and a fresh identity.
+    next = swapTracks(next, 0, 4);
+    expect(trackChanged(next, 0)).toBeTruthy();
+    expect(plannedTracks(config, next, (_path: string, i: number) => 2000 + i)[0].crc).toBe(2000);
+    expect(replaceTrack(next, 0, "new.szs", "New").tracks[0].duplicate).toBeUndefined();
+  });
+
+  test("editing custom cups preserves the original-cup coexistence mode", () => {
+    for (const regsMode of [0, 1, 2]) {
+      const config = { ...parsePulsarConfig(pulsarConfig(2)), regsMode };
+      let a = initialPulsar(config);
+      a = addCup(a, "Extra cup");
+      a = swapTracks(a, 0, 4);
+      a = swapCups(a, 0, 1);
+      a = removeLastCup(a);
+      expect(a.regsMode).toBe(regsMode);
+      expect(parsePulsarConfig(buildPulsarConfig({ ...config, regsMode: a.regsMode })).regsMode).toBe(regsMode);
+    }
+  });
   test("Config.pul reads and rebuilds byte for byte, with even and odd cup counts", () => {
     for (const cups of [2, 3]) {
       const data = pulsarConfig(cups);

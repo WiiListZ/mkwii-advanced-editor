@@ -191,6 +191,29 @@ export function escapes(text) {
   return [...text.matchAll(ESC)].map((m) => ({ start: m.index, end: m.index + m[0].length, bytes: m[1].match(/../g).map((h) => parseInt(h, 16)) }));
 }
 
+// Capacity is measured in UTF-16 units, not the printed length of {1A:...} codes.
+export function messageTextLength(text) {
+  return escapes(text).reduce((length, e) => length - (e.end - e.start) + (e.bytes.length + 2) / 2, text.length);
+}
+
+export function fitMessageText(text, capacity) {
+  if (capacity === undefined || messageTextLength(text) <= capacity) return text;
+  let out = '', used = 0, at = 0;
+  for (const e of [...escapes(text), { start: text.length, end: text.length, bytes: null }]) {
+    for (const ch of text.slice(at, e.start)) {
+      if (used + ch.length > capacity) return out;
+      out += ch; used += ch.length;
+    }
+    if (e.bytes) {
+      const size = (e.bytes.length + 2) / 2;
+      if (used + size > capacity) return out;
+      out += text.slice(e.start, e.end); used += size;
+    }
+    at = e.end;
+  }
+  return out;
+}
+
 // Where a message is shown in the game, from its file and ID (ranges of the original files).
 const RANGES = {
   Common: [

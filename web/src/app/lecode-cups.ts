@@ -111,7 +111,7 @@ export async function leCodeCups(paths: string[]): Promise<ModCups> {
         const f = await api.readPath(t.file.path);
         const plain = isYaz0(f.data) ? null : isU8(f.data) ? f.data : await api.decodeArchiveBytes(f.data, f.path, editor.commonPath || editor.partsFolder());
         if (plain && !isU8(plain)) throw new Error(`${f.name} is not a track archive`);
-        writes.push({ path: editor.workspacePath("Race", "Course", file(slot)), data: plain ? yaz0Compress(plain) : f.data, what: file(slot) });
+        writes.push({ path: editor.workspacePath("Race", "Course", file(slot)), data: plain ? yaz0Compress(plain) : f.data, what: file(slot), source: t.file.path });
       } else if (t.from !== null) {
         slot = slotAt(t.from);
         if (t.slot !== undefined) slots[slot].property = t.slot;
@@ -198,6 +198,7 @@ export async function leCodeCups(paths: string[]): Promise<ModCups> {
     slotOf: (from) => main.slots[slotAt(from)]?.property ?? 0x08, musicOf: (from) => main.slots[slotAt(from)]?.music ?? 0,
     musicOptions,
     fileOf: (_position, from) => (from === null ? "new slot" : `Race/Course/${file(slotAt(from))}`),
+    trackPath: (from) => course ? `${course}\\${file(slotAt(from))}` : "",
     icon, build,
     // Names that are in the game text open in the game text editor (every language archive).
     rename: async (what) => {

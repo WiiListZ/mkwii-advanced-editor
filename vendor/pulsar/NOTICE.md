@@ -8,4 +8,6 @@ The editor writes them into a new mod when you create custom cups for a game tha
 (Cups and tracks › New cup): `Code.pul` and `Loader.pul` (the engine), `UIAssets.szs`,
 `RaceAssets.szs` and `CommonAssets.szs` (its menus, default cup icons and effects), `Base.xml` (the
 Riivolution XML template) and `BMG.txt` (the engine's own texts, in Wiimm's BMG text format). They
-are copied as they are; the editor only fills in the mod name and adds the cups, tracks and names.
+are copied as they are, except for the XML: the editor fills in the mod name, enables the Pack
+option by default and leaves My Stuff disabled. The editor adds the cups, tracks, names and
+platform-independent Riivolution instructions.
