@@ -1,37 +1,21 @@
 // Persist the generator's visual geometry as real game resources, using the bundled
 // OBJ converter directly. Blender and a source game's course/sky are not required.
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import { deflateSync } from "node:zlib";
 import { abmattPath } from "./model-operations.ts";
+import { resolveGeneratedMaterials, type GeneratedMaterial } from "./generated-materials.ts";
+import { type GameTextureOptions } from "./generated-game-textures.ts";
+import { transplantBRRESTextures } from "./brres-palettes.ts";
+import { preserveImportedImageAlpha } from "./imported-textures.ts";
+import { applyGeneratedBoost } from "./generated-boost.ts";
 import { modelToOBJ } from "../web/js/formats/obj.js";
 import { parseBRRES } from "../web/js/formats/brres.js";
-import { crc32 } from "../web/js/formats/pulsar.js";
 import { buildU8, newSzsTree, setFilePath } from "../web/js/formats/u8.js";
-import { buildCollisionShape } from "../web/js/editor/collision.js";
 
-type Model = { tris: { mat: string; v: number[]; uv?: number[] }[]; materials: Record<string, { color: number[] }> };
+type Model = { tris: { mat: string; v: number[]; uv?: number[] }[]; materials: Record<string, GeneratedMaterial> };
 
-function solidPNG(color: number[]) {
-  const chunk = (type: string, data: Uint8Array) => {
-    const out = new Uint8Array(data.length + 12), view = new DataView(out.buffer);
-    view.setUint32(0, data.length); out.set(new TextEncoder().encode(type), 4); out.set(data, 8);
-    view.setUint32(out.length - 4, crc32(out.subarray(4, out.length - 4)));
-    return out;
-  };
-  const header = new Uint8Array(13), view = new DataView(header.buffer);
-  view.setUint32(0, 8); view.setUint32(4, 8); header[8] = 8; header[9] = 6;
-  const pixels = new Uint8Array(8 * (1 + 8 * 4));
-  for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
-    const at = y * 33 + 1 + x * 4;
-    for (let c = 0; c < 3; c++) pixels[at + c] = Math.round(Math.max(0, Math.min(1, color[c])) * 255);
-    pixels[at + 3] = 255;
-  }
-  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", header), chunk("IDAT", deflateSync(pixels)), chunk("IEND", new Uint8Array())]);
-}
-
-export async function buildGeneratedTrackModels(model: Model) {
+export async function buildGeneratedTrackModels(model: Model, options: GameTextureOptions = {}) {
   if (!model?.tris?.length || model.tris.length > 65534) throw new Error("Invalid generated track geometry");
   for (const tri of model.tris) {
     if (!/^[A-Za-z0-9_]{1,32}$/.test(tri.mat) || tri.v?.length !== 9 || !tri.v.every(Number.isFinite)) throw new Error("Invalid generated model triangle");
@@ -41,21 +25,45 @@ export async function buildGeneratedTrackModels(model: Model) {
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   for (const tri of model.tris) for (let k = 0; k < 9; k++) { const a = k % 3; lo[a] = Math.min(lo[a], tri.v[k]); hi[a] = Math.max(hi[a], tri.v[k]); }
   const center = lo.map((v, i) => (v + hi[i]) / 2), radius = Math.max(60000, ...hi.map((v, i) => (v - lo[i]) * 1.5));
-  const skyTris = buildCollisionShape("box", [[center[0] - radius, center[1] - radius, center[2] - radius], [center[0] + radius, center[1] - radius, center[2] + radius]], { height: radius * 2 });
-  const sky: Model = { materials: { sky: { color: [.43, .68, .92] } }, tris: skyTris.map((t: number[][]) => ({ mat: "sky", v: [...t[0], ...t[2], ...t[1]], uv: [0, 0, 1, 1, 1, 0] })) };
+  // An inward sphere keeps the sky gradient continuous at every camera angle;
+  // a box would show its bottom-face edges against the elevated track.
+  const sky: Model = { materials: { sky: { color: [.43, .68, .92], surface: "sky" } }, tris: [] };
+  const skyVertex = (row: number, column: number) => {
+    const theta = row * Math.PI / 16, phi = column * Math.PI * 2 / 32;
+    return { p: [center[0] + radius * Math.sin(theta) * Math.cos(phi), center[1] + radius * Math.cos(theta), center[2] + radius * Math.sin(theta) * Math.sin(phi)],
+      // Inset V because repeat wrapping would join the horizon to the zenith.
+      uv: [column / 32, .01 + .98 * row / 16] };
+  };
+  const skyFace = (...vertices: ReturnType<typeof skyVertex>[]) => sky.tris.push({ mat: "sky", v: vertices.flatMap((p) => p.p), uv: vertices.flatMap((p) => p.uv) });
+  for (let row = 0; row < 16; row++) for (let col = 0; col < 32; col++) {
+    const a = skyVertex(row, col), b = skyVertex(row + 1, col), c = skyVertex(row + 1, col + 1), d = skyVertex(row, col + 1);
+    if (row < 15) skyFace(a, b, c);
+    if (row > 0) skyFace(a, c, d);
+  }
   const map: Model = { materials: { map_white: { color: [1, 1, 1] } }, tris: model.tris.filter((t) => ["road", "startline", "boost"].includes(t.mat)).map((t) => ({ mat: "map_white", v: t.v.map((v, i) => i % 3 === 1 ? 0 : v), uv: t.uv })) };
   if (!map.tris.length) throw new Error("The generated track has no road for its minimap");
   const resources: [string, string, Model][] = [["course", "course_model.brres", model], ["vrcorn", "vrcorn_model.brres", sky], ["map", "map_model.brres", map]];
   const dir = await mkdtemp(join(tmpdir(), "mkwii-generated-models-"));
   try {
+    const customImages = join(dir, "custom-images");
+    await mkdir(customImages);
+    const courseTextures = await resolveGeneratedMaterials(model.materials, options);
     for (const [name, , source] of resources) {
-      const { obj, mtl } = modelToOBJ(source, `${name}.mtl`);
+      const { textures } = name === "course" ? courseTextures : await resolveGeneratedMaterials(source.materials);
+      const geometry = name === "course" ? { ...source, tris: source.tris.map((tri) => {
+        const scale = textures.get(tri.mat)?.uvScale || [1, 1];
+        return tri.uv ? { ...tri, uv: tri.uv.map((value, i) => value * scale[i % 2]) } : tri;
+      }) } : source;
+      // Keep each converter geometry well below Python's recursion limit.
+      // This applies to the course, sky and minimap, including dense splines.
+      const { obj, mtl } = modelToOBJ(geometry, `${name}.mtl`, { maxTrianglesPerMaterial: 256, normals: name === "course" });
       await writeFile(join(dir, `${name}.obj`), obj);
       await writeFile(join(dir, `${name}.mtl`), mtl.replace(/# map_Kd ([A-Za-z0-9_]+\.png)/g, "map_Kd $1"));
       for (const mat of new Set(source.tris.map((t) => t.mat))) {
-        const color = source.materials?.[mat]?.color || [.7, .7, .7];
-        if (color.length !== 3 || !color.every(Number.isFinite)) throw new Error("Invalid generated model colour");
-        await writeFile(join(dir, `${mat}.png`), solidPNG(color));
+        const texture = textures.get(mat);
+        if (!texture) throw new Error(`Missing generated material ${mat}`);
+        await writeFile(join(dir, `${mat}.png`), texture.png);
+        if (name === "course" && source.materials[mat]?.image) await writeFile(join(customImages, `${mat}.png`), texture.png);
       }
     }
     const tree = newSzsTree();
@@ -64,7 +72,18 @@ export async function buildGeneratedTrackModels(model: Model) {
       const child = Bun.spawn([exe, "-f", "commands.txt", "-o"], { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
       const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
       if (code) throw new Error(`Could not build ${target}: ${(out + "\n" + err).trim().slice(-800)}`);
-      const bytes = new Uint8Array(await readFile(join(dir, target)).catch(() => { throw new Error(`Could not create ${target}: ${(out + "\n" + err).trim().slice(-1800)}`); })), parsed = parseBRRES(bytes);
+      let bytes = new Uint8Array(await readFile(join(dir, target)).catch(() => { throw new Error(`Could not create ${target}: ${(out + "\n" + err).trim().slice(-1800)}`); }));
+      if (name === "course" && courseTextures.game) for (const mat of new Set(source.tris.map((t) => t.mat))) {
+        const original = courseTextures.textures.get(mat)?.original;
+        if (original && ![8, 9, 10].includes(original.texture.format))
+          bytes = await transplantBRRESTextures(original.source || courseTextures.game.source, bytes, { [original.name]: mat }, join(dir, `original-${mat}`));
+      }
+      if (name === "course") for (const [role, texture] of courseTextures.textures) if (texture.original?.native) {
+        const names = parseBRRES(bytes).models.flatMap((m: any) => m.materials).map((m: any) => m.name).filter((n: string) => n === role || n.startsWith(`${role}_part`));
+        if (names.length) bytes = await applyGeneratedBoost(bytes, texture.original, names, exe, join(dir, `animated-${role}`));
+      }
+      if (name === "course" && Object.values(source.materials).some((m) => m.image)) bytes = await preserveImportedImageAlpha(bytes, customImages, dir, exe);
+      const parsed = parseBRRES(bytes);
       const built = parsed.models.find((m: any) => m.name === name);
       if (!built || built.objects.reduce((n: number, o: any) => n + o.triangles, 0) !== source.tris.length || !parsed.textures.size) throw new Error(`The generated ${target} is missing geometry or textures`);
       if (name === "map" && !["posLD", "posRU"].every((n) => built.bones.some((b: any) => b.name === n))) throw new Error("The generated minimap has no position bounds");

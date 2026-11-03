@@ -509,11 +509,12 @@ function SlotRow({ id, position, arrangement, check, name, gameName, music, musi
         const target = e.target as HTMLElement;
         if (onOpen && e.currentTarget.contains(target) && !target.closest("button, input, a, [role=menuitem], form")) onOpen();
       }}>
-      {preview && playPreview && <>
-        <ThpPart key={previewVersion} path={preview.path} rect={preview.rect} className="absolute inset-0 size-full" />
-        {/* Keeps the names and buttons readable over the moving picture. */}
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-card via-card/80 to-card/30" />
-      </>}
+      {preview && playPreview && <div className="pointer-events-none absolute inset-0 bg-card">
+        {/* Fade the video itself: separately clipped overlays leave bright subpixel seams. */}
+        <div className="absolute inset-0" style={{ maskImage: "linear-gradient(to right, transparent, rgb(0 0 0 / 20%) 50%, rgb(0 0 0 / 70%))" }}>
+          <ThpPart key={previewVersion} path={preview.path} rect={preview.rect} className="absolute inset-0 size-full" />
+        </div>
+      </div>}
       <div className="relative flex items-start gap-3">
         <span className="mt-0.5 w-5 shrink-0 text-center text-[13px] font-semibold tabular-nums text-muted-foreground">{position + 1}</span>
         <div className="min-w-0 flex-1">

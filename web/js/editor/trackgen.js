@@ -2,8 +2,11 @@
 // (collision triangles, visual model, and a complete KMP with routes, checkpoints and respawns).
 
 import { emptyKMP, make } from '../formats/kmp.js';
+import { trackMaterials } from './track-styles.js';
 
 export const DEFAULT_PARAMS = {
+  style: 'circuit',
+  textureSource: 'game',
   roadWidth: 2600,
   offroadWidth: 1400,
   wallHeight: 700,
@@ -14,6 +17,7 @@ export const DEFAULT_PARAMS = {
   keyCheckpoints: 3,
   itemRows: 2,
   boostPads: 1,
+  boostLength: 1200,
   laps: 3,
   walls: true,
   fallDepth: 4000,
@@ -47,7 +51,8 @@ function ring(n, rx, rz, height, radius = () => 1) {
   return pts;
 }
 
-// Closed Catmull-Rom spline, resampled at a constant distance.
+// Centripetal Catmull-Rom avoids loops and cusps between unevenly spaced
+// control points (common when drawing by hand), then resamples by distance.
 export function sampleSpline(points, step) {
   const n = points.length;
   if (n < 3) return { samples: [], length: 0 };
@@ -55,9 +60,15 @@ export function sampleSpline(points, step) {
   const dense = [];
   for (let i = 0; i < n; i++) {
     const p0 = P(i - 1), p1 = P(i), p2 = P(i + 1), p3 = P(i + 2);
+    const interval = (a, b) => Math.max(.001, Math.sqrt(Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)));
+    const d0 = interval(p0, p1), d1 = interval(p1, p2), d2 = interval(p2, p3);
     for (let s = 0; s < 40; s++) {
       const t = s / 40, t2 = t * t, t3 = t2 * t;
-      const f = (a, b, c, d) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+      const f = (a, b, c, d) => {
+        const m1 = ((b - a) / d0 - (c - a) / (d0 + d1) + (c - b) / d1) * d1;
+        const m2 = ((c - b) / d1 - (d - b) / (d1 + d2) + (d - c) / d2) * d1;
+        return (2 * t3 - 3 * t2 + 1) * b + (-2 * t3 + 3 * t2) * c + (t3 - 2 * t2 + t) * m1 + (t3 - t2) * m2;
+      };
       dense.push([f(p0.x, p1.x, p2.x, p3.x), f(p0.y, p1.y, p2.y, p3.y), f(p0.z, p1.z, p2.z, p3.z),
         f(p0.w ?? 1, p1.w ?? 1, p2.w ?? 1, p3.w ?? 1)]);
     }
@@ -257,20 +268,20 @@ function thin(list, spacing) {
   return out;
 }
 
-export function generateTrack(points, params = {}) {
+// Shared by the preview and the exported model/collision. Each strip stays
+// forward-facing even when the control points or widths change abruptly.
+export function roadFrames(samples, params = {}) {
   const P = { ...DEFAULT_PARAMS, ...params };
-  const { samples, length } = trackSamples(points, P);
   const n = samples.length;
   const turn = turns(samples, P);
-  const yaw = (dx, dz) => Math.round((Math.atan2(dx, dz) * 180) / Math.PI * 100) / 100;
-
-  // Frames along the track.
   const frames = samples.map((s, i) => {
     const a = samples[(i - 1 + n) % n], b = samples[(i + 1) % n];
-    let tx = b[0] - a[0], tz = b[2] - a[2];
+    const incoming = Math.hypot(s[0] - a[0], s[2] - a[2]) || 1, outgoing = Math.hypot(b[0] - s[0], b[2] - s[2]) || 1;
+    let tx = (s[0] - a[0]) / incoming + (b[0] - s[0]) / outgoing, tz = (s[2] - a[2]) / incoming + (b[2] - s[2]) / outgoing;
+    if (Math.hypot(tx, tz) < 1e-6) { tx = b[0] - s[0]; tz = b[2] - s[2]; }
     const l = Math.hypot(tx, tz) || 1;
     tx /= l; tz /= l;
-    const half = (P.roadWidth * s[3]) / 2;
+    const half = (P.roadWidth * Math.max(.1, s[3])) / 2;
     const left = [tz, -tx];
     const at = (d) => [s[0] + left[0] * d, s[1], s[2] + left[1] * d];
     // The inside of a turn tighter than the road: road and offroad shrink together so that the inner
@@ -284,10 +295,43 @@ export function generateTrack(points, params = {}) {
       L: at(hl), R: at(-hr), LO: at(hl + ol), RO: at(-hr - or),
     };
   });
+  const widths = frames.map((f) => [f.hl + f.ol, f.hr + f.or]);
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n, f = frames[i], g = frames[j], dx = g.c[0] - f.c[0], dz = g.c[2] - f.c[2];
+    const forwardF = Math.max(0, dx * f.t[0] + dz * f.t[1]), forwardG = Math.max(0, dx * g.t[0] + dz * g.t[1]);
+    for (let k = 0; k < 2; k++) {
+      const side = k === 0 ? 1 : -1;
+      const atG = -side * (g.left[0] * f.t[0] + g.left[1] * f.t[1]);
+      const atF = side * (f.left[0] * g.t[0] + f.left[1] * g.t[1]);
+      if (atG > 1e-8) widths[j][k] = Math.min(widths[j][k], .8 * forwardF / atG);
+      if (atF > 1e-8) widths[i][k] = Math.min(widths[i][k], .8 * forwardG / atF);
+    }
+  }
+  // Spread narrowing along the approach and exit instead of making a spike.
+  for (let pass = 0; pass < 2; pass++) for (let k = 0; k < 2 * n; k++) {
+    const i = k < n ? k : 2 * n - k - 1, j = (i + (k < n ? 1 : n - 1)) % n;
+    const taper = .35 * Math.hypot(frames[i].c[0] - frames[j].c[0], frames[i].c[2] - frames[j].c[2]);
+    for (let side = 0; side < 2; side++) widths[j][side] = Math.min(widths[j][side], widths[i][side] + taper);
+  }
+  return frames.map((f, i) => {
+    const sl = widths[i][0] / (f.hl + f.ol), sr = widths[i][1] / (f.hr + f.or);
+    const at = (d) => [f.c[0] + f.left[0] * d, f.c[1], f.c[2] + f.left[1] * d];
+    const hl = f.hl * sl, hr = f.hr * sr, ol = f.ol * sl, or = f.or * sr;
+    return { ...f, hl, hr, ol, or, half: (hl + hr) / 2, L: at(hl), R: at(-hr), LO: at(hl + ol), RO: at(-hr - or) };
+  });
+}
+
+export function generateTrack(points, params = {}) {
+  const P = { ...DEFAULT_PARAMS, ...params };
+  const { samples, length } = trackSamples(points, P);
+  const n = samples.length, frames = roadFrames(samples, P);
+  const yaw = (dx, dz) => Math.round((Math.atan2(dx, dz) * 180) / Math.PI * 100) / 100;
 
   // Boost pads: samples on the straightest parts of the track.
   const boost = new Set();
-  if (P.boostPads > 0) {
+  if (Array.isArray(P.boostPositions)) {
+    for (const t of P.boostPositions.slice(0, 32).filter(Number.isFinite)) boost.add(Math.max(1, Math.min(n - 1, Math.round((((t % 1) + 1) % 1) * n))));
+  } else if (P.boostPads > 0) {
     const straight = frames.map((f, i) => {
       let s = 0;
       for (let k = -3; k <= 3; k++) { const g = frames[(i + k + n) % n]; s += g.t[0] * f.t[0] + g.t[1] * f.t[1]; }
@@ -301,6 +345,12 @@ export function generateTrack(points, params = {}) {
       boost.add(i);
     }
   }
+  const boostSegments = new Map();
+  const panelSegments = Math.max(1, Math.min(Math.floor(n / 4), Math.round((P.boostLength || 1200) / P.step)));
+  for (const center of boost) {
+    const begin = Math.max(1, Math.min(n - panelSegments, center - Math.floor(panelSegments / 2)));
+    for (let offset = 0; offset < panelSegments; offset++) if (!boostSegments.has(begin + offset)) boostSegments.set(begin + offset, [offset / panelSegments, (offset + 1) / panelSegments]);
+  }
 
   const verts = [], flags = [];
   const model = []; // { mat, v: [9], uv: [6] }
@@ -309,22 +359,43 @@ export function generateTrack(points, params = {}) {
     flags.push(flag);
     if (mat) model.push({ mat, v: [...a, ...b, ...c], uv });
   };
+  const face = (a, b, c, mat, uv) => model.push({ mat, v: [...a, ...b, ...c], uv });
+  const depth = Math.max(300, Math.min(600, P.roadWidth * .16));
+  const groundY = Math.min(...frames.map((f) => f.c[1])) - depth - 40;
+  const lower = (p) => [p[0], p[1] - depth, p[2]];
+  const raised = (p) => [p[0], p[1] + 6, p[2]];
+  const support = (center, top) => {
+    const width = 240, half = width / 2;
+    const corners = [[-half, -half], [half, -half], [half, half], [-half, half]];
+    for (let s = 0; s < 4; s++) {
+      const a = corners[s], b = corners[(s + 1) % 4];
+      const lowA = [center[0] + a[0], groundY, center[2] + a[1]], lowB = [center[0] + b[0], groundY, center[2] + b[1]];
+      const highA = [lowA[0], top, lowA[2]], highB = [lowB[0], top, lowB[2]], h = (top - groundY) / 600;
+      face(lowA, highB, lowB, 'support', [0, h, 1, 0, 1, h]);
+      face(lowA, highA, highB, 'support', [0, h, 0, 0, 1, 0]);
+    }
+  };
   let dist = 0;
   for (let i = 0; i < n; i++) {
     const f = frames[i], g = frames[(i + 1) % n];
     const v0 = dist / P.roadWidth;
-    dist += Math.hypot(g.c[0] - f.c[0], g.c[2] - f.c[2]);
+    const previousDist = dist;
+    dist += Math.hypot(g.c[0] - f.c[0], g.c[1] - f.c[1], g.c[2] - f.c[2]);
     const v1 = dist / P.roadWidth;
-    const isBoost = boost.has(i);
+    const isBoost = boostSegments.has(i);
     const roadFlag = isBoost ? 0x0006 : 0x0000;
     const roadMat = isBoost ? 'boost' : i === 0 ? 'startline' : 'road';
-    tri(f.L, f.R, g.R, roadFlag, roadMat, [0, v0, 1, v0, 1, v1]);
-    tri(f.L, g.R, g.L, roadFlag, roadMat, [0, v0, 1, v1, 0, v1]);
+    const roadV0 = isBoost ? boostSegments.get(i)[0] : roadMat === 'road' ? v0 : 0, roadV1 = isBoost ? boostSegments.get(i)[1] : roadMat === 'road' ? v1 : .125;
+    tri(f.L, f.R, g.R, roadFlag, roadMat, [0, roadV0, 1, roadV0, 1, roadV1]);
+    tri(f.L, g.R, g.L, roadFlag, roadMat, [0, roadV0, 1, roadV1, 0, roadV1]);
     if (P.offroadWidth > 0) {
-      tri(f.LO, f.L, g.L, 0x0003, 'offroad', [0, v0, 1, v0, 1, v1]);
-      tri(f.LO, g.L, g.LO, 0x0003, 'offroad', [0, v0, 1, v1, 0, v1]);
-      tri(f.R, f.RO, g.RO, 0x0003, 'offroad', [0, v0, 1, v0, 1, v1]);
-      tri(f.R, g.RO, g.R, 0x0003, 'offroad', [0, v0, 1, v1, 0, v1]);
+      // Planar mapping keeps grass/sand at a constant scale when a shoulder
+      // narrows, rather than stretching a full tile across a tiny inner edge.
+      const offUV = (...points) => points.flatMap((p) => [p[0] / 1800, p[2] / 1800]);
+      tri(f.LO, f.L, g.L, 0x0003, 'offroad', offUV(f.LO, f.L, g.L));
+      tri(f.LO, g.L, g.LO, 0x0003, 'offroad', offUV(f.LO, g.L, g.LO));
+      tri(f.R, f.RO, g.RO, 0x0003, 'offroad', offUV(f.R, f.RO, g.RO));
+      tri(f.R, g.RO, g.R, 0x0003, 'offroad', offUV(f.R, g.RO, g.R));
     }
     if (P.walls && P.wallHeight > 0) {
       const up = (p) => [p[0], p[1] + P.wallHeight, p[2]];
@@ -335,7 +406,56 @@ export function generateTrack(points, params = {}) {
       tri(rb0, up(rb1), rb1, 0x000C, 'wall', [v0, 0, v1, 1, v1, 0]);
       tri(rb0, up(rb0), up(rb1), 0x000C, 'wall', [v0, 0, v0, 1, v1, 1]);
     }
+    // The track is a solid deck rather than a zero-thickness ribbon. Side
+    // faces and its underside make the actual spline heights readable.
+    const lf = lower(f.LO), lg = lower(g.LO), rf = lower(f.RO), rg = lower(g.RO);
+    const u0 = previousDist / 900, u1 = dist / 900;
+    face(f.LO, g.LO, lg, 'foundation', [u0, 0, u1, 0, u1, 1]);
+    face(f.LO, lg, lf, 'foundation', [u0, 0, u1, 1, u0, 1]);
+    face(f.RO, rg, g.RO, 'foundation', [u0, 0, u1, 1, u1, 0]);
+    face(f.RO, rf, rg, 'foundation', [u0, 0, u0, 1, u1, 1]);
+    face(lf, lg, rg, 'foundation', [0, u0, 0, u1, 1, u1]);
+    face(lf, rg, rf, 'foundation', [0, u0, 1, u1, 1, u0]);
+    // Painted kerbs sit just above the shoulder, avoiding coincident faces.
+    const kerb = (frame, side) => {
+      const edge = side > 0 ? frame.L : frame.R;
+      const shoulder = side > 0 ? frame.ol : frame.or;
+      const offset = shoulder > 0 ? Math.min(120, shoulder) : -Math.min(120, frame.half * .08);
+      return [edge[0] + frame.left[0] * side * offset, edge[1], edge[2] + frame.left[1] * side * offset];
+    };
+    const cl0 = raised(kerb(f, 1)), cl1 = raised(kerb(g, 1)), cr0 = raised(kerb(f, -1)), cr1 = raised(kerb(g, -1));
+    const vl0 = previousDist / 600, vl1 = dist / 600;
+    const aL = raised(f.L), bL = raised(g.L), aR = raised(f.R), bR = raised(g.R);
+    const left = P.offroadWidth > 0 ? [cl0, aL, bL, cl1] : [aL, cl0, cl1, bL];
+    const right = P.offroadWidth > 0 ? [aR, cr0, cr1, bR] : [cr0, aR, bR, cr1];
+    for (const [a, b, c, d] of [left, right]) {
+      face(a, b, c, 'curb', [0, vl0, 1, vl0, 1, vl1]); face(a, c, d, 'curb', [0, vl0, 1, vl1, 0, vl1]);
+    }
+    if (Math.floor(dist / 6000) !== Math.floor(previousDist / 6000) && f.c[1] - depth - groundY > 700) {
+      const skip = Math.ceil((P.roadWidth + P.offroadWidth * 2) * 2 / P.step);
+      for (const side of [1, -1]) {
+        const edge = side > 0 ? f.LO : f.RO;
+        const center = [edge[0] - f.left[0] * side * 230, f.c[1], edge[2] - f.left[1] * side * 230];
+        const blocked = frames.some((other, j) => {
+          const delta = Math.min(Math.abs(i - j), n - Math.abs(i - j));
+          return delta > skip && other.c[1] < f.c[1] - depth + 250
+            && Math.hypot(other.c[0] - center[0], other.c[2] - center[2]) < other.half + P.offroadWidth + 350;
+        });
+        if (!blocked) support(center, f.c[1] - depth);
+      }
+    }
   }
+
+  // A textured reference level makes ramps and overpasses visible from any
+  // camera angle. Landing off the deck still causes a fall/respawn.
+  const gx0 = Math.min(...frames.map((f) => f.LO[0]), ...frames.map((f) => f.RO[0])) - 10000;
+  const gx1 = Math.max(...frames.map((f) => f.LO[0]), ...frames.map((f) => f.RO[0])) + 10000;
+  const gz0 = Math.min(...frames.map((f) => f.LO[2]), ...frames.map((f) => f.RO[2])) - 10000;
+  const gz1 = Math.max(...frames.map((f) => f.LO[2]), ...frames.map((f) => f.RO[2])) + 10000;
+  const ground = [[gx0, groundY, gz0], [gx0, groundY, gz1], [gx1, groundY, gz1], [gx1, groundY, gz0]];
+  const groundUV = ground.map((p) => [p[0] / 1800, p[2] / 1800]);
+  tri(ground[0], ground[1], ground[2], 0x0010, 'terrain', [...groundUV[0], ...groundUV[1], ...groundUV[2]]);
+  tri(ground[0], ground[2], ground[3], 0x0010, 'terrain', [...groundUV[0], ...groundUV[2], ...groundUV[3]]);
 
   // Fall boundary below everything.
   const xs = verts.filter((_, i) => i % 3 === 0), ys = verts.filter((_, i) => i % 3 === 1), zs = verts.filter((_, i) => i % 3 === 2);
@@ -418,15 +538,10 @@ export function generateTrack(points, params = {}) {
     verts: Float32Array.from(verts),
     flags: Uint16Array.from(flags),
     kmp,
-    model: { tris: model, materials: MODEL_MATERIALS },
+    model: { tris: model, materials: trackMaterials(P) },
+    boosts: [...boost].map((i) => ({ t: i / n, pos: [...frames[i].c], yaw: yaw(...frames[i].t) })),
     length,
   };
 }
 
-export const MODEL_MATERIALS = {
-  road: { color: [0.36, 0.37, 0.4] },
-  startline: { color: [0.95, 0.95, 0.95] },
-  boost: { color: [1.0, 0.6, 0.0] },
-  offroad: { color: [0.3, 0.6, 0.22] },
-  wall: { color: [0.75, 0.3, 0.3] },
-};
+export const MODEL_MATERIALS = trackMaterials();

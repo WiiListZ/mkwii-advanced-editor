@@ -1,9 +1,10 @@
 // ABMatt cannot read MDL0 palette links. Expand indexed textures losslessly before
 // handing it a model, including each original mip level (never regenerate them).
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { wszstPath } from "./chr0-import.ts";
 import { parseBRRES } from "../web/js/formats/brres.js";
+import { writePAT0 } from "../web/js/formats/pat0.js";
 
 const indexed = (format: number) => [8, 9, 10].includes(format);
 const align = (value: number) => Math.ceil(value / 32) * 32;
@@ -21,6 +22,37 @@ function group(data: Uint8Array, at: number) {
 }
 const sections = (version: number) => ({ materials: version >= 10 ? 8 : 6, palettes: version >= 10 ? 12 : 10 });
 
+export function hasBRRESModelAnimations(data: Uint8Array) {
+  return group(data, view(data).getUint16(12) + 8).some((folder) =>
+    ["AnmChr(NW4R)", "AnmShp(NW4R)", "AnmVis(NW4R)"].includes(folder.name));
+}
+
+// ABMatt cannot read every SHP0/VIS0/PAT0 encoding. Keep them out of temporary
+// geometry conversions; pattern animations are transferred separately below.
+export async function staticBRRESModelSource(data: Uint8Array, dir: string) {
+  const folders = group(data, view(data).getUint16(12) + 8)
+    .filter((folder) => ["AnmShp(NW4R)", "AnmVis(NW4R)", "AnmTexPat(NW4R)"].includes(folder.name));
+  if (!folders.length) return data;
+  const exe = wszstPath();
+  if (!exe) throw new Error("Importing an animated model part requires the included Wiimm tools");
+  await mkdir(dir, { recursive: true });
+  const source = join(dir, "source.brres"), extracted = join(dir, "resources"), output = join(dir, "static.brres");
+  const run = async (...args: string[]) => {
+    const child = Bun.spawn([exe, ...args], { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
+    const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    if (code) throw new Error(`Could not prepare the animated model part: ${(out + "\n" + err).trim().slice(-600)}`);
+  };
+  await writeFile(source, data);
+  await run("EXTRACT", source, "--dest", extracted);
+  for (const folder of folders) {
+    const path = resolve(extracted, folder.name);
+    if (!path.startsWith(resolve(extracted) + sep)) throw new Error("Invalid animation resource path");
+    await rm(path, { recursive: true, force: true });
+  }
+  await run("CREATE", "--brres", extracted, "--dest", output);
+  return new Uint8Array(await readFile(output));
+}
+
 export function hasBRRESPaletteLinks(data: Uint8Array) {
   const v = view(data);
   const models = group(data, v.getUint16(12) + 8).find((f) => f.name === "3DModels(NW4R)");
@@ -29,7 +61,12 @@ export function hasBRRESPaletteLinks(data: Uint8Array) {
 
 export function needsBRRESPaletteConversion(data: Uint8Array) {
   if (hasBRRESPaletteLinks(data)) return true;
-  const v = view(data), folder = group(data, v.getUint16(12) + 8).find((f) => f.name === "Textures(NW4R)");
+  const v = view(data), folders = group(data, v.getUint16(12) + 8);
+  for (const folder of folders) if (folder.name === "AnmTexPat(NW4R)") for (const resource of group(data, folder.offset)) {
+    const header = resource.offset + (v.getUint32(resource.offset + 8) >= 4 ? 0x28 : 0x24);
+    if (v.getUint16(header + 14)) return true;
+  }
+  const folder = folders.find((f) => f.name === "Textures(NW4R)");
   return !!folder && group(data, folder.offset).some((t) => indexed(v.getUint32(t.offset + 32)));
 }
 
@@ -77,40 +114,71 @@ function directTexture(tex: any, palette: any, resourceName = tex.name) {
 export async function normalizeBRRESPalettes(data: Uint8Array, dir: string): Promise<Uint8Array> {
   if (!needsBRRESPaletteConversion(data)) return data;
   const parsed = parseBRRES(data);
+  for (const folder of group(data, view(data).getUint16(12) + 8)) if (folder.name === "AnmTexPat(NW4R)") {
+    for (const resource of group(data, folder.offset)) if (!parsed.pat.has(resource.name)) throw new Error(`Pattern animation ${resource.name} could not be read; its palette cannot be converted safely`);
+  }
   const exe = wszstPath();
   if (!exe) throw new Error("Palette texture import requires the included Wiimm SZS tools");
-  const bindings = new Map<string, Set<string>>();
-  for (const model of parsed.models) for (const material of model.materials) for (const layer of material.layers) {
-    if (!layer.palette) continue;
-    if (!bindings.has(layer.texture)) bindings.set(layer.texture, new Set());
-    bindings.get(layer.texture)!.add(layer.palette);
-  }
-  // Do not silently flatten a palette animation into its first frame.
-  const originalView = view(data);
-  for (const folder of group(data, originalView.getUint16(12) + 8)) if (folder.name === "AnmTexPat(NW4R)") {
-    for (const resource of group(data, folder.offset)) {
-      const header = resource.offset + 0x24 + (originalView.getUint32(resource.offset + 8) >= 4 ? 4 : 0);
-      if (originalView.getUint16(header + 14)) throw new Error("This model animates its texture palettes; importing it through ABMatt would lose those colours.");
-    }
-  }
   const textures = new Map<string, Uint8Array>(), variants = new Map<string, string>();
-  const taken = new Set<string>(parsed.textures.keys());
-  for (const [name, tex] of parsed.textures) if (indexed(tex.format)) {
-    const names = [...(bindings.get(name) || [name])];
-    for (const [index, paletteName] of names.entries()) {
-      const palette = parsed.palettes.get(paletteName);
-      if (!palette) throw new Error(`Texture ${name} is missing its palette ${paletteName}`);
-      let variant = name;
-      if (index) {
-        const stem = `${name}_${paletteName}`.replace(/[^A-Za-z0-9_-]/g, "_");
-        variant = stem;
-        for (let n = 2; taken.has(variant); n++) variant = `${stem}_${n}`;
-        taken.add(variant);
-      }
-      textures.set(variant, directTexture(tex, palette, variant));
-      variants.set(`${name}\0${paletteName}`, variant);
+  const taken = new Set<string>([...parsed.textures.keys()].map((name: string) => name.toLowerCase()));
+  const getVariant = (name: string, paletteName: string) => {
+    const tex = parsed.textures.get(name);
+    if (!tex) throw new Error(`Pattern animation needs missing texture "${name}"`);
+    if (!indexed(tex.format)) return name;
+    paletteName ||= name;
+    const key = `${name}\0${paletteName}`;
+    if (variants.has(key)) return variants.get(key)!;
+    const palette = parsed.palettes.get(paletteName);
+    if (!palette) {
+      const available = [...parsed.palettes.keys()].slice(0, 8).join(", ") || "none";
+      throw new Error(`Texture "${name}" needs palette "${paletteName}", but it is not present or could not be read in this BRRES. Available palettes: ${available}. Import the complete original model with its palette resources; a texture alone does not contain its colours.`);
     }
+    let variant = name;
+    if (textures.has(name)) {
+      const stem = `${name}_${paletteName}`.replace(/[^A-Za-z0-9_-]/g, "_");
+      variant = stem;
+      for (let n = 2; taken.has(variant.toLowerCase()); n++) variant = `${stem}_${n}`;
+      taken.add(variant.toLowerCase());
+    }
+    textures.set(variant, directTexture(tex, palette, variant));
+    variants.set(key, variant);
+    return variant;
+  };
+  const staticLayers = new Map<string, string>();
+  const defaultPalette = (material: any, index: number) => {
+    const layer = material.layers[index];
+    if (layer?.palette) return layer.palette;
+    if (parsed.palettes.has(layer?.texture)) return layer.texture;
+    for (const animation of parsed.pat.values()) {
+      const key = animation.materials.get(material.name)?.find((s: any) => s.index === index)?.keys.find((k: any) => k.palette);
+      if (key) return key.palette;
+    }
+    return "";
+  };
+  for (const model of parsed.models) for (const material of model.materials) material.layers.forEach((layer: any, index: number) => {
+    if (parsed.textures.has(layer.texture)) staticLayers.set(`${model.name}\0${material.name}\0${index}`, getVariant(layer.texture, defaultPalette(material, index)));
+  });
+  // Bake each texture/palette pair once; retain the original fractional key
+  // times, loop flag, material and texture slot in the replacement PAT0.
+  const animations = new Map<string, any>();
+  for (const animation of parsed.pat.values()) {
+    const materials = new Map<string, any>();
+    for (const [materialName, slots] of animation.materials) {
+      const contexts = parsed.models.flatMap((model: any) => model.materials.filter((m: any) => m.name === materialName));
+      let converted: any = null;
+      for (const material of contexts.length ? contexts : [{ name: materialName, layers: [] }]) {
+        const next = slots.map((slot: any) => ({ index: slot.index, keys: slot.keys.map((key: any) => ({
+          frame: key.frame,
+          texture: getVariant(key.texture ?? material.layers[slot.index]?.texture, key.palette ?? defaultPalette(material, slot.index)),
+        })) }));
+        if (converted && JSON.stringify(converted) !== JSON.stringify(next)) throw new Error(`Animated material ${materialName} has conflicting palette bindings in different models`);
+        converted = next;
+      }
+      materials.set(materialName, converted);
+    }
+    animations.set(animation.name, { ...animation, materials });
   }
+  for (const [name, tex] of parsed.textures) if (indexed(tex.format) && !textures.has(name)) getVariant(name, name);
   const input = join(dir, "palette-source.brres"), extracted = join(dir, "palette-resources"), output = join(dir, "palette-direct.brres");
   await mkdir(dir, { recursive: true });
   await writeFile(input, data);
@@ -133,7 +201,7 @@ export async function normalizeBRRESPalettes(data: Uint8Array, dir: string): Pro
       for (let i = 0; i < v.getUint32(material.offset + 44); i++) {
         const layer = layers + i * 52, binding = original?.layers[i];
         v.setInt32(layer + 4, 0); v.setInt32(layer + 12, 0); v.setUint32(layer + 20, 0);
-        const variant = binding && variants.get(`${binding.texture}\0${binding.palette}`);
+        const variant = staticLayers.get(`${file}\0${material.name}\0${i}`);
         if (variant && variant !== binding.texture) {
           const name = new TextEncoder().encode(variant), start = Math.ceil(model.length / 4) * 4;
           const grown = new Uint8Array(align(start + 4 + name.length + 1));
@@ -149,6 +217,11 @@ export async function normalizeBRRESPalettes(data: Uint8Array, dir: string): Pro
     const path = resolve(extracted, "Textures(NW4R)", name);
     if (!path.startsWith(resolve(extracted, "Textures(NW4R)") + sep)) throw new Error("Invalid texture name");
     await writeFile(path, bytes);
+  }
+  for (const [name, animation] of animations) {
+    const folder = resolve(extracted, "AnmTexPat(NW4R)"), path = resolve(folder, name);
+    if (!path.startsWith(folder + sep)) throw new Error("Invalid pattern animation name");
+    await writeFile(path, writePAT0(animation));
   }
   const palettesDir = resolve(extracted, "Palettes(NW4R)");
   if (!palettesDir.startsWith(resolve(dir) + sep)) throw new Error("Unsafe palette working directory");
@@ -190,4 +263,74 @@ export async function transplantBRRESTextures(source: Uint8Array, result: Uint8A
   }
   await run("CREATE", "--brres", resultDir, "--dest", outputPath);
   return new Uint8Array(await readFile(outputPath));
+}
+
+function sameTextureResource(a: any, b: any) {
+  if (!a || !b || a.size !== b.size) return false;
+  const x = a.reader.d.subarray(a.offset, a.offset + a.size);
+  const y = b.reader.d.subarray(b.offset, b.offset + b.size);
+  if (x.length !== a.size || y.length !== b.size) return false;
+  for (let i = 0; i < x.length; i++) {
+    // Container relocation changes the BRRES-relative and name pointers.
+    if ((i >= 12 && i < 16) || (i >= 20 && i < 24)) continue;
+    if (x[i] !== y[i]) return false;
+  }
+  return true;
+}
+
+// ABMatt's patch cleanup can drop unreferenced textures or re-encode existing
+// ones. Neither is an intended side effect of adding geometry. Restore only
+// changed/missing original TEX0 resources and verify their complete contents,
+// including LOD settings, dimensions, alpha and every compressed mip level.
+export async function preserveExistingBRRESTextures(original: Uint8Array, result: Uint8Array, dir: string) {
+  const before = parseBRRES(original).textures, after = parseBRRES(result).textures;
+  const names: Record<string, string> = Object.create(null);
+  for (const [name, texture] of before) if (!sameTextureResource(texture, after.get(name))) names[name] = name;
+  if (!Object.keys(names).length) return result;
+  const restored = await transplantBRRESTextures(original, result, names, dir);
+  const textures = parseBRRES(restored).textures;
+  for (const [name, texture] of before) {
+    if (!sameTextureResource(texture, textures.get(name))) throw new Error(`Could not preserve existing texture ${name}`);
+  }
+  return restored;
+}
+
+// ABMatt only handles the first PAT0 slot. Keep complete original animations
+// and attach imported patterns natively after it has finished the geometry.
+export async function preserveBRRESPatterns(original: Uint8Array, result: Uint8Array, dir: string, additions: any[] = []) {
+  const before = parseBRRES(original).pat, after = parseBRRES(result).pat;
+  const signature = (animation: any) => JSON.stringify([animation.name, animation.frames, animation.loop, [...animation.materials]]);
+  if (!additions.length && before.size === after.size && [...before].every(([name, animation]) => after.has(name) && signature(animation) === signature(after.get(name)))) return result;
+  if (!before.size && !additions.length) return result;
+  const exe = wszstPath();
+  if (!exe) throw new Error("Preserving pattern animations requires the included Wiimm tools");
+  await mkdir(dir, { recursive: true });
+  const sourcePath = join(dir, "original.brres"), resultPath = join(dir, "result.brres"), output = join(dir, "output.brres");
+  const sourceDir = join(dir, "original"), resultDir = join(dir, "result"), patternDir = join(resultDir, "AnmTexPat(NW4R)");
+  const run = async (...args: string[]) => {
+    const child = Bun.spawn([exe, ...args], { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
+    const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    if (code) throw new Error(`Could not preserve pattern animations: ${(out + "\n" + err).trim().slice(-600)}`);
+  };
+  await writeFile(resultPath, result);
+  await run("EXTRACT", resultPath, "--dest", resultDir);
+  if (!resolve(patternDir).startsWith(resolve(dir) + sep)) throw new Error("Invalid pattern working directory");
+  await rm(patternDir, { recursive: true, force: true });
+  await mkdir(patternDir, { recursive: true });
+  if (before.size) {
+    await writeFile(sourcePath, original);
+    await run("EXTRACT", sourcePath, "--dest", sourceDir);
+    await cp(join(sourceDir, "AnmTexPat(NW4R)"), patternDir, { recursive: true });
+  }
+  for (const animation of additions) {
+    const path = resolve(patternDir, animation.name);
+    if (!path.startsWith(resolve(patternDir) + sep) || before.has(animation.name)) throw new Error("Invalid or conflicting imported animation name");
+    await writeFile(path, writePAT0(animation));
+  }
+  await run("CREATE", "--brres", resultDir, "--dest", output);
+  const restored = new Uint8Array(await readFile(output)), patterns = parseBRRES(restored).pat;
+  for (const [name, animation] of [...before, ...additions.map((a) => [a.name, a])]) {
+    if (!patterns.has(name) || signature(patterns.get(name)) !== signature(animation)) throw new Error(`Pattern animation ${name} was not preserved`);
+  }
+  return restored;
 }

@@ -87,6 +87,7 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
   const body = (() => {
     switch (entry.kind) {
       case "form": return <FormDialog opts={p} close={close} />;
+      case "copyCollision": return <CopyCollisionDialog {...p} close={close} />;
       case "generator": return <TrackGeneratorDialog hasSzs={p.hasSzs} close={close} />;
       case "preferences": return <PreferencesDialog close={close} />;
       case "help": return <HelpDialog tab={p.tab} tutorial={p.tutorial} close={close} />;
@@ -149,6 +150,17 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
 }
 
 // ---- Dropped 3D models ----------------------------------------------------------------------
+function CopyCollisionDialog({ label, count, action, scope, close }: { label: string; count: number; action: string; scope: string; close: (v: any) => void }) {
+  const [include, setInclude] = React.useState(true), [remember, setRemember] = React.useState(false);
+  return <>
+    <DialogHeader><DialogTitle>{action} collision too?</DialogTitle><DialogDescription>{label}: {count ? `${count.toLocaleString()} matching course collision triangles. They will be copied to the same position as the new model, with their surface types.` : "No matching course collision was found. This does not generate new collision."} Collision built into a game object is managed by the game.</DialogDescription></DialogHeader>
+    <label className="flex cursor-pointer items-center gap-2 text-sm"><Checkbox checked={include} onCheckedChange={(v) => setInclude(v === true)} aria-label="Include collision" /> Include collision</label>
+    <label className="flex cursor-pointer items-center gap-2 text-sm"><Checkbox checked={remember} onCheckedChange={(v) => setRemember(v === true)} aria-label="Remember collision copy choice" /> Remember this choice for {scope}</label>
+    <p className="m-0 text-xs text-muted-foreground">Remembered choices can be reset in Settings. A duplicate and its collision can be undone together.</p>
+    <DialogFooter><Button variant="outline" onClick={() => close(null)}>Cancel</Button><Button onClick={() => close({ include, remember })}>{action}</Button></DialogFooter>
+  </>;
+}
+
 function ImportDropDialog({ names, extra, close }: { names: string[]; extra: number; close: (v: any) => void }) {
   const [dontAsk, setDontAsk] = React.useState(false);
   return (

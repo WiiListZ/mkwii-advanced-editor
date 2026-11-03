@@ -1,0 +1,87 @@
+import puppeteer, { type Page } from "puppeteer-core";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { join, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { buildCollisionShape } from "../web/js/editor/collision.js";
+import { buildKCL } from "../web/js/formats/kcl.js";
+import { buildKMP, emptyKMP, make } from "../web/js/formats/kmp.js";
+import { buildU8, parseU8, setFilePath } from "../web/js/formats/u8.js";
+
+const dir = await mkdtemp(join(tmpdir(), "mkwii-copy-collision-")), pathA = join(dir, "A.szs"), pathB = join(dir, "B.szs");
+await writeFile(join(dir, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false, tracksMovedNoticeSeen: true, keepBackups: false }));
+const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
+let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+const watchdog = setTimeout(() => { console.error("Collision copy UI timed out"); void browser?.close(); }, 90000); watchdog.unref();
+const check = (ok: boolean, label: string) => { if (!ok) throw Error(label); console.log("ok  " + label); };
+try {
+  const port = await new Promise<number>((done, fail) => { worker.onmessage = (e) => { if (e.data?.type === "ready") done(e.data.port); if (e.data?.type === "error") fail(Error(e.data.message)); }; worker.postMessage({ type: "start", token: "copy-collision", settingsDir: dir }); });
+  const box = buildCollisionShape("box", [[0, 0, 0], [500, 0, 500]], { height: 800 });
+  const road = [[-1000, -300, -1000, -1000, -300, 5000, 6000, -300, 5000], [-1000, -300, -1000, 6000, -300, 5000, 6000, -300, -1000]];
+  const response = await fetch(`http://127.0.0.1:${port}/api/generated-track-models`, { method: "POST", headers: { "x-token": "copy-collision", "content-type": "application/json" }, body: JSON.stringify({ materials: { road: { color: [.4, .4, .4] }, prop: { color: [.3, .8, .4] } }, tris: [...road.map((v) => ({ mat: "road", v })), ...box.map((t: number[][]) => ({ mat: "prop", v: t.flat() }))] }) });
+  if (!response.ok) throw Error(await response.text());
+  const tree = parseU8(new Uint8Array(await response.arrayBuffer())), tris = [0, 2000, 4000].flatMap((dx) => box.map((t: number[][]) => t.map((p) => [p[0] + dx, p[1], p[2]])));
+  const flags = tris.map((_, i) => 0x40c + (i % 12) * 32);
+  setFilePath(tree, "course.kcl", buildKCL(Float32Array.from(tris.flat(2)), Uint16Array.from(flags)));
+  const kmp = emptyKMP(); kmp.GOBJ.push(make.GOBJ(0x7ffd, [2000, 0, 0]), make.GOBJ(0x7ffe, [4000, 0, 0])); setFilePath(tree, "course.kmp", buildKMP(kmp));
+  const data = buildU8(tree); await writeFile(pathA, data); await writeFile(pathB, data);
+  browser = await puppeteer.launch({ executablePath: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
+  const page = await browser.newPage(), errors: string[] = [];
+  await page.setViewport({ width: 1440, height: 1000 }); page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(`http://127.0.0.1:${port}/?t=copy-collision`, { waitUntil: "networkidle0" });
+  const load = async (path: string) => {
+    await page.evaluate(async ({ path, bytes }) => { const a = (window as any).app; a.doc.dirty = false; await a.loadFile({ path, name: path.split(/[\\/]/).pop(), data: new Uint8Array(bytes) }); await a.assets.setTrack(a.doc.szs); }, { path, bytes: [...data] });
+    await page.waitForFunction(() => (window as any).app.viewport.hasCourseModel);
+  };
+  const model = async () => page.evaluate(() => { const a = (window as any).app, parsed = a.assets.brres(a.doc.szs, "course_model.brres"); a.viewport.selectModelPiece(parsed.models[0].objects.findIndex((o: any) => o.name === "prop"), 0); });
+  const counts = () => page.evaluate(() => { const a = (window as any).app; return { kcl: a.doc.kcl.count, parts: a.assets.brres(a.doc.szs, "course_model.brres").models[0].objects.length, objects: a.doc.kmp.GOBJ.length }; });
+  const undo = () => page.evaluate(async () => { const a = (window as any).app; await a.cmd("undo"); await a.assets.setTrack(a.doc.szs); });
+  const answer = async (action: string, include: boolean, remember: boolean) => {
+    await page.waitForFunction((action) => [...document.querySelectorAll('[role="dialog"][data-state="open"]')].some((d) => d.textContent?.includes(`${action} collision too?`)), {}, action);
+    check(await page.evaluate(() => document.querySelector('[role="dialog"][data-state="open"]')?.textContent?.includes("12 matching course collision triangles")), "the prompt identifies the matching collision");
+    if (!include) await page.click('[aria-label="Include collision"]');
+    if (remember) await page.click('[aria-label="Remember collision copy choice"]');
+    await page.evaluate((action) => { ([...document.querySelectorAll('[role="dialog"][data-state="open"] button')].find((b) => b.textContent?.trim() === action) as HTMLElement).click(); }, action);
+  };
+  await load(pathA); await model();
+  let action = page.evaluate(() => (window as any).app.cmd("duplicate"));
+  await page.waitForSelector('[aria-label="Include collision"]');
+  await page.evaluate(() => { ([...document.querySelectorAll('[role="dialog"][data-state="open"] button')].find((b) => b.textContent?.trim() === "Cancel") as HTMLElement).click(); }); await action;
+  check((await counts()).kcl === 36 && (await counts()).parts === 2, "cancelling does not duplicate the model or collision");
+  action = page.evaluate(() => (window as any).app.cmd("duplicate")); await answer("Duplicate", true, false); await action;
+  check((await counts()).kcl === 48 && (await counts()).parts === 3, "model duplication includes exactly its matching collision");
+  await undo(); check((await counts()).kcl === 36 && (await counts()).parts === 2, "one Undo restores both model and collision");
+  await model(); action = page.evaluate(() => (window as any).app.cmd("copy")); await answer("Copy", false, true); await action;
+  await page.evaluate(() => (window as any).app.cmd("paste"));
+  check((await counts()).kcl === 36 && (await counts()).parts === 3, "copy and paste respect the model-only choice"); await undo();
+  await model(); await page.evaluate(() => (window as any).app.cmd("duplicate"));
+  check((await counts()).kcl === 36 && (await counts()).parts === 3, "remembered No applies to later duplications without another prompt"); await undo();
+  await load(pathB); await model(); action = page.evaluate(() => (window as any).app.cmd("copy")); await answer("Copy", true, true); await action;
+  await page.evaluate(() => (window as any).app.cmd("paste"));
+  check((await counts()).kcl === 48, "a different track has its own choice and copies collision when requested"); await undo();
+  await page.evaluate(async () => { const a = (window as any).app; await a.flushSettings(); a.doc.dirty = false; }); await page.reload({ waitUntil: "networkidle0" }); await load(pathB); await model();
+  await page.evaluate(() => (window as any).app.cmd("duplicate"));
+  check((await counts()).kcl === 48, "the remembered Yes survives reopening the editor"); await undo();
+  await model(); await page.evaluate(() => (window as any).app.cmd("copy")); await load(pathA);
+  await page.evaluate(() => (window as any).app.cmd("paste"));
+  check((await counts()).parts === 3 && (await counts()).kcl === 48, "the clipboard carries the chosen model and collision into a different track"); await load(pathB);
+  // Supply a real loaded model template for the two fixture object IDs.
+  await page.evaluate(() => { const a = (window as any).app, provider = a.assets.objectModel.bind(a.assets); let mesh: any; a.viewport.courseGroup.traverse((m: any) => { if (m.isMesh && m.userData.modelPart?.name === "prop") mesh = m; }); a.assets.objectModel = (id: number) => id === 0x7ffd || id === 0x7ffe ? { template: mesh } : provider(id); a.viewport.selectGeometry(null); a.doc.select(String(a.doc.kmp.GOBJ[0].uid)); });
+  action = page.evaluate(() => (window as any).app.cmd("duplicate")); await answer("Duplicate", true, true); await action;
+  check((await counts()).objects === 3 && (await counts()).kcl === 48, "GOBJ duplication moves the matched static collision with the new object"); await undo();
+  await page.evaluate(() => { const a = (window as any).app; a.viewport.selectGeometry(null); a.doc.select(String(a.doc.kmp.GOBJ[1].uid)); });
+  action = page.evaluate(() => (window as any).app.cmd("duplicate")); await answer("Duplicate", false, false); await action;
+  check((await counts()).objects === 3 && (await counts()).kcl === 36, "another object type has an independent choice"); await undo();
+  await page.evaluate(() => { const a = (window as any).app; a.viewport.selectGeometry(null); a.doc.select(String(a.doc.kmp.GOBJ[0].uid)); });
+  await page.evaluate(() => (window as any).app.cmd("copy")); await page.evaluate(() => (window as any).app.cmd("paste"));
+  check((await counts()).objects === 3 && (await counts()).kcl === 48, "GOBJ copy and paste also retain the chosen collision");
+  await page.evaluate(async () => { const a = (window as any).app; await a.flushSettings(); await Promise.all([fetch('/api/settings', { method: 'POST', headers: { 'x-token': 'copy-collision', 'content-type': 'application/json' }, body: JSON.stringify({ collisionCopyChoices: { parallelA: true } }) }), fetch('/api/settings', { method: 'POST', headers: { 'x-token': 'copy-collision', 'content-type': 'application/json' }, body: JSON.stringify({ collisionCopyChoices: { parallelB: false } }) })]); });
+  const settings = JSON.parse(await readFile(join(dir, "settings.json"), "utf8")); check(settings.collisionCopyChoices.parallelA === true && settings.collisionCopyChoices.parallelB === false, "concurrent windows preserve independent remembered choices");
+  await page.evaluate(async () => { const a = (window as any).app; a.resetCollisionCopyChoices(); await a.flushSettings(); a.viewport.selectGeometry(null); a.doc.select(String(a.doc.kmp.GOBJ[0].uid)); });
+  action = page.evaluate(() => (window as any).app.cmd("copy")); await page.waitForSelector('[aria-label="Include collision"]');
+  await page.evaluate(() => { ([...document.querySelectorAll('[role="dialog"][data-state="open"] button')].find((b) => b.textContent?.trim() === "Cancel") as HTMLElement).click(); }); await action;
+  check(true, "resetting choices makes Copy ask again");
+  check(!errors.length, "copy dialogs and operations produce no browser errors: " + errors.join("; "));
+} finally {
+  clearTimeout(watchdog); await browser?.close(); worker.terminate();
+  if (!resolve(dir).startsWith(resolve(tmpdir()) + sep)) throw Error("Unsafe collision-copy test directory"); await rm(dir, { recursive: true, force: true });
+}

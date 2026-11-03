@@ -307,7 +307,7 @@ export class Ops {
 
   // Inserts fresh copies moved by `delta` ([dx, dy, dz]); route points go after their original
   // when it still exists, otherwise at the end of the last group or route. Returns the number added.
-  pasteCopies(entries, delta, label = 'Paste') {
+  pasteCopies(entries, delta, label = 'Paste', withCopies = null) {
     const doc = this.doc, k = this.k;
     const [dx, dy, dz] = delta;
     const shift = (it) => {
@@ -344,6 +344,7 @@ export class Ops {
       }
       doc.invalidate();
       doc.selection = new Set(newKeys);
+      if (newKeys.length) withCopies?.();
     });
     doc.emit('selection');
     return newKeys.length;

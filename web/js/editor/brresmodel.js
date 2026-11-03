@@ -32,7 +32,7 @@ export class BrresModelBuilder {
 
   // raw: no colour space conversion (TEV materials combine colours in the console's gamma space).
   texture(name, layer, raw = false) {
-    const key = `${name}|${layer.wrapS}|${layer.wrapT}${raw ? '|raw' : ''}`;
+    const key = `${name}|${layer.palette || ''}|${layer.wrapS}|${layer.wrapT}${raw ? '|raw' : ''}`;
     if (this.textures.has(key)) return this.textures.get(key);
     const tex0 = this.brres.textures.get(name);
     let tex = null;
@@ -237,7 +237,10 @@ export function bindPAT(pat, group, builder, claimed = new Set()) {
       const layer = source?.layers[slot.index];
       const uniform = layer && mat.uniforms[`uTex${layer.texId}`];
       if (!uniform) continue;
-      const keys = slot.keys.map((k) => ({ frame: k.frame, tex: builder.brres.textures.has(k.texture) ? builder.texture(k.texture, layer, true) : null })).filter((k) => k.tex);
+      const keys = slot.keys.map((k) => {
+        const texture = k.texture ?? layer.texture, palette = k.palette ?? layer.palette;
+        return { frame: k.frame, tex: builder.brres.textures.has(texture) ? builder.texture(texture, { ...layer, palette }, true) : null };
+      }).filter((k) => k.tex);
       if (keys.length) targets.push({ uniform, keys });
     }
   }

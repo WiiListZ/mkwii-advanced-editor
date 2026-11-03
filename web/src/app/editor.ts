@@ -16,6 +16,7 @@ import { parseKMP, buildKMP, make } from "../../js/formats/kmp.js";
 import { introChain, introIndex, introPose, introTimeline, selectionIndex, setCameraHeader, setIntroChain, simulateCamera } from "../../js/editor/cameras.js";
 import { appendShot, fixIntroShots, introKeyframes, introShotIssues, moveKey, removeKey, setKeyPose, shotSpeedLimits, splitShot } from "../../js/editor/intro-keys.js";
 import { COLLISION_SHAPES, KCL_MAX_TRIANGLES, appendCollisionTriangles, buildCollisionShape, collisionBoxFromTriangles, collisionCoverage, collisionOfModel, deleteCollisionTriangles, duplicateCollisionTriangles, flipCollisionTriangles, isFloorTriangle, modelCollisionTriangles, simplifyCollisionTriangles, transformCollisionTriangles } from "../../js/editor/collision.js";
+import { snapshotCollision, appendCopiedCollision } from "../../js/editor/copy-collision.js";
 import { parseKCL, buildKCL, patchKCLFlags } from "../../js/formats/kcl.js";
 import { parseOBJ, kclToOBJ, modelToOBJ } from "../../js/formats/obj.js";
 import { clearBRRESPolygon, isBRRES, parseBRRES, polygonPieces, resetPieceMemory, replaceBRRESTexture, restBRRESPartsOnPoint, setCHR0Loop, transformBRRESPart, translateBRRESPart } from "../../js/formats/brres.js";
@@ -29,7 +30,7 @@ import { isItemSlot, isStatsFile } from "../../js/formats/params.js";
 
 export const PATH_KINDS = ["ENPT", "ITPT", "CKPT", "POTI"];
 export const LAYER_LABEL: Record<string, string> = { VISUAL: "Track model", SKY: "Sky", KCL: "Collision", MODEL: "Reference model", GRID: "Grid", ...SECTION_LABEL };
-const PERSISTED = ["workspace", "riivolutionXml", "cameraPreview", "hideGrid", "confirmModelDrop", "partsFolder", "favoriteObjects", "favoriteModelSources", "favoriteModelParts", "iconSize", "checkpointWidth", "autoCheckpointWidth", "pathWidth", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "showDescriptions", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "textureBrushSize", "uiFont", "offerCopyUpdates", "keepBackups", "map2DAddSeveral", "introFollow", "introTimelineHeight", "dragToMove", "hideMoveArrows", "trackVideoPreviews", "discordActivity"] as const;
+const PERSISTED = ["workspace", "riivolutionXml", "cameraPreview", "hideGrid", "confirmModelDrop", "partsFolder", "favoriteObjects", "favoriteModelSources", "favoriteModelParts", "iconSize", "checkpointWidth", "autoCheckpointWidth", "pathWidth", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "showDescriptions", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "textureBrushSize", "uiFont", "offerCopyUpdates", "keepBackups", "map2DAddSeveral", "introFollow", "introTimelineHeight", "dragToMove", "hideMoveArrows", "trackVideoPreviews", "discordActivity", "collisionCopyChoices"] as const;
 const VIEW_SETTINGS = new Set<keyof Settings>(["hideGrid", "iconSize", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "dragToMove", "hideMoveArrows"]);
 const textEncoder = new TextEncoder();
 const sameBytes = (a: Uint8Array, b: Uint8Array) => {
@@ -48,6 +49,7 @@ export interface Settings {
   flySpeed: number; lookSensitivity: number; hideCursorWhileLooking: boolean; textureBrushSize: number;
   dragToMove: boolean; hideMoveArrows: boolean;
   trackVideoPreviews: boolean; discordActivity: boolean;
+  collisionCopyChoices: Record<string, boolean>;
   workspace: string; riivolutionXml: string; partsFolder: string; favoriteObjects: number[]; favoriteModelSources: string[]; favoriteModelParts: string[];
   confirmModelDrop: boolean; hideGrid: boolean; cameraPreview: boolean; offerCopyUpdates: boolean; keepBackups: boolean; map2DAddSeveral: boolean;
   introFollow: boolean; // Cameras tab: the 3D view jumps to the intro camera at the playhead
@@ -58,6 +60,7 @@ export interface Settings {
 
 // Preferences that "Reset to defaults" restores. Recent files, favourites and folders are kept.
 export const DEFAULT_SETTINGS = {
+  collisionCopyChoices: {},
   iconSize: 150, checkpointWidth: 3000, autoCheckpointWidth: true, pathWidth: 20, trackVideoPreviews: true, discordActivity: true,
   modelMode: "real", displayMode: "visual", modelEditing: true, smartAlignment: false, animations: true, showLabels: true, selectionBox: false, showAreaVolumes: true, areaOutlinesThroughWalls: false, showEffects: true, showDescriptions: true, quality: "high",
   flySpeed: 1, lookSensitivity: 1, hideCursorWhileLooking: true, dragToMove: false, hideMoveArrows: false, textureBrushSize: 8, confirmModelDrop: true, hideGrid: true, cameraPreview: true, uiFont: "default", offerCopyUpdates: true, keepBackups: true, map2DAddSeveral: false, introFollow: true, introTimelineHeight: 118,
@@ -67,6 +70,7 @@ export type CollisionShapeKind = keyof typeof COLLISION_SHAPES;
 export interface CollisionShapeState { kind: CollisionShapeKind; height: number; segments: number }
 
 export interface PaintState { type: number; variant: number; shadow: number; brush: "single" | "radius" | "fill" | "plane"; radius: number; showAll: boolean }
+type ModelCopySource = { modelName: string; partName: string; pieceIndex: number; center: number[]; size: number[]; triangles: number[]; choiceKey: string; data?: Uint8Array; collision?: ReturnType<typeof snapshotCollision> };
 
 const MODEL_FILE = /\.(obj|fbx|gltf|glb|dae|stl|ply|blend)$/i;
 
@@ -133,7 +137,7 @@ export class Editor {
   assets: any = null;
   settings: Settings = {
     ...DEFAULT_SETTINGS, recent: [],
-    workspace: "", riivolutionXml: "", partsFolder: "", favoriteObjects: [], favoriteModelSources: [], favoriteModelParts: [],
+    workspace: "", riivolutionXml: "", partsFolder: "", favoriteObjects: [], favoriteModelSources: [], favoriteModelParts: [], collisionCopyChoices: {},
     viewCenter: () => this.viewport?.viewCenterPoint() ?? [0, 0, 0],
   };
   objectNames: Record<number, string> = { ...BUILTIN_OBJECTS };
@@ -176,7 +180,8 @@ export class Editor {
   collisionDraft: number[][] = [];
   collisionShape: CollisionShapeState = { kind: "triangle", height: 1000, segments: 16 };
   geometrySelection: any = null;
-  modelClipboard: { modelName: string; partName: string; center: number[]; size: number[]; triangles: number[] } | null = null;
+  modelClipboard: ModelCopySource | null = null;
+  private collisionChoiceTrack: string | null = null;
   kmpClipboard: any[] | null = null; // copied KMP elements (Ctrl+C on points, objects, areas…)
   lastClipboard: "model" | "kmp" | null = null; // what Ctrl+V pastes
   // The 2D map's view and the world X/Z under the mouse, so paste and duplicate can use them.
@@ -197,7 +202,7 @@ export class Editor {
     this.ops = new Ops(this.doc, this.settings);
     const d = this.doc;
     d.on("change", () => { this.introCache.clear(); this.bump("doc"); this.scheduleValidate(); this.refreshCameraViews(); });
-    d.on("load", () => { resetPieceMemory(); this.textureOriginals.clear(); this.bump("doc"); this.bump("selection"); this.scheduleValidate(); });
+    d.on("load", () => { this.collisionChoiceTrack = null; resetPieceMemory(); this.textureOriginals.clear(); this.bump("doc"); this.bump("selection"); this.scheduleValidate(); });
     d.on("selection", () => { if (d.selection.size) this.selectedAnimation = null; this.cameraFrame = 0; this.bump("selection"); this.refreshCameraViews(); });
     d.on("live", () => { this.introCache.clear(); this.bump("live"); this.refreshCameraViews(); });
     d.on("kcl", () => { this.bump("kcl"); this.scheduleValidate(); });
@@ -305,6 +310,9 @@ export class Editor {
     });
     this.applyViewSettings();
     void this.loadSettings().finally(() => {
+      // Let React lay out the loaded editor before releasing the opener's loading screen.
+      setTimeout(() => void api.editorWindowReady((startupFile || startupDocument) && this.homeVisible
+        ? "The track could not be loaded in the 3D editor. Check the error in its window." : undefined).catch(console.warn), 30);
       void this.refreshTrackFiles();
       if (!this.trackRefreshTimer) this.trackRefreshTimer = setInterval(() => void this.refreshTrackFiles(), 2000);
     });
@@ -417,6 +425,7 @@ export class Editor {
     this.saveSettings({ [key]: value });
     if (key === "uiFont") applyUiFont(this.settings.uiFont);
     if (VIEW_SETTINGS.has(key)) this.applyViewSettings();
+    if (key === "displayMode") this.syncCollisionView(value as Settings["displayMode"]);
     this.bump("settings");
   }
 
@@ -425,6 +434,7 @@ export class Editor {
     this.saveSettings(patch as any);
     if ("uiFont" in patch) applyUiFont(this.settings.uiFont);
     if (Object.keys(patch).some((key) => VIEW_SETTINGS.has(key as keyof Settings))) this.applyViewSettings();
+    if (patch.displayMode) this.syncCollisionView(patch.displayMode);
     this.bump("settings");
   }
 
@@ -615,7 +625,12 @@ export class Editor {
   // The Collision tab shows the collision over the model: the view switches to Both there (the toolbar
   // shows it) and back to Model when the tab is left, unless another view was chosen in between.
   collisionTabView = false;
-  setTab(tab: string) {
+  private syncCollisionView(mode: Settings["displayMode"]) {
+    this.collisionTabView = false;
+    if (mode === "collision") this.setTab("collision");
+    else if (this.tool?.type === "paint" || this.tool?.type === "collision-create" || (this.tool?.type === "geometry" && this.tool.target === "collision")) this.stopTool();
+  }
+  setTab(tab: string, keepCollisionTool = false) {
     this.tab = tab;
     const s = this.settings;
     if (tab === "collision" && s.displayMode === "visual") {
@@ -627,6 +642,10 @@ export class Editor {
       this.collisionTabView = false;
       if (s.displayMode === "both") { s.displayMode = "visual"; this.applyViewSettings(); this.bump("settings"); }
     }
+    const collisionTool = this.tool?.type === "paint" || this.tool?.type === "collision-create" || (this.tool?.type === "geometry" && this.tool.target === "collision");
+    if (tab === "collision" && !keepCollisionTool && this.doc.kcl && !(this.tool?.type === "geometry" && this.tool.target === "collision")) this.viewport?.setTool({ type: "geometry", target: "collision" });
+    else if (tab === "collision" && !keepCollisionTool && !this.doc.kcl && collisionTool) this.stopTool();
+    else if (tab !== "collision" && collisionTool) this.stopTool();
     this.bump("ui");
     if (tab === "validate") this.runValidate();
   }
@@ -778,7 +797,11 @@ export class Editor {
   async openPath(path: string, options: { newWindow?: boolean } = {}) {
     try {
       const managed = hasBackend && !options.newWindow && /[\\/]cup-tracks[\\/]/i.test(path) ? await api.cupTrackInfo(path) : null;
-      await this.loadFile(await api.readPath(managed?.path || path), options);
+      const read = () => api.readPath(managed?.path || path);
+      const file = options.newWindow
+        ? await this.withBusy(`Opening 3D editor for ${path.split(/[\\/]/).pop()}…`, read)
+        : await read();
+      await this.loadFile(file, options);
       if (managed && this.doc.filePath === managed.path) {
         this.cupTrackLink = { draft: path, label: managed.label, pending: managed.pending, target: managed.path };
         if (managed.pending) this.cupTrackTimer = setInterval(() => void this.refreshCupTrackTarget().catch(console.warn), 1000);
@@ -810,7 +833,7 @@ export class Editor {
     if (loose) return this.openLooseFile({ path, name, data: quick || data }, loose);
     const archiveOnly = !!quick && isU8(quick) && (() => { const t = parseU8(quick); return !["course.kmp", "course.kcl", "course_model.brres"].some((f) => findFile(t, f)); })();
     if (newWindow && hasBackend && !archiveOnly) {
-      await api.openEditorWindow(path ? { path } : { name, data });
+      await this.withBusy(`Opening 3D editor for ${name}…`, () => api.openEditorWindow(path ? { path } : { name, data }));
       this.addRecent(path);
       return;
     }
@@ -850,7 +873,7 @@ export class Editor {
         d.loaded();
         this.enterEditor();
         if (!path || !/[\\/]cup-tracks[\\/]/i.test(path)) this.addRecent(path);
-        this.loadTrackAssets();
+        await this.loadTrackAssets();
         const k = d.kmp;
         toast.success(`Opened ${name}`, { description: `${k.GOBJ.length} objects · ${k.CKPT.reduce((s: number, g: any) => s + g.points.length, 0)} checkpoints${d.kcl ? ` · ${d.kcl.count.toLocaleString()} collision triangles` : ""}` });
       } catch (e: any) {
@@ -961,6 +984,7 @@ export class Editor {
           this.diskVersion = { path, data: disk.slice() };
         }
         d.filePath = hasBackend ? path : null;
+        this.collisionChoiceScope();
         d.fileName = path.split(/[\\/]/).pop();
         d.fileKind = kind;
         d.dirty = false;
@@ -985,12 +1009,13 @@ export class Editor {
     return path;
   }
 
-  modelSource(partIndex: number, pieceIndex: number) {
+  modelSource(partIndex: number, pieceIndex: number): ModelCopySource | null {
     const brres = this.doc.szs && this.assets?.brres(this.doc.szs, "course_model.brres");
     const model = brres && mainModel(brres, "course");
     const part = model?.objects[partIndex], piece = part && polygonPieces(part).pieces[pieceIndex];
     if (!model || !part || !piece) return null;
-    return { modelName: model.name, partName: part.name, triangles: [...piece.triangles] as number[],
+    return { modelName: model.name, partName: part.name, pieceIndex, triangles: [...piece.triangles] as number[],
+      choiceKey: JSON.stringify([this.collisionChoiceScope(), "model", model.name, part.name, pieceIndex]),
       center: piece.min.map((v: number, i: number) => (v + piece.max[i]) / 2),
       size: piece.min.map((v: number, i: number) => piece.max[i] - v) };
   }
@@ -1177,26 +1202,109 @@ export class Editor {
     } catch (e: any) { toast.error("Could not replace the sky", { description: e.message }); }
   }
 
-  copySelectedModel() {
+  async copySelectedModel() {
     const s = this.geometrySelection;
     if (s?.type !== "model") return false;
     const source = this.modelSource(s.partIndex, s.pieceIndex);
     if (!source) return false;
-    this.modelClipboard = source;
+    const copy = await this.prepareModelCopy(source, "Copy");
+    if (!copy) return true;
+    this.modelClipboard = copy;
     this.lastClipboard = "model";
     toast.success(`Copied ${s.name}`, { duration: 1500 });
     this.bump("ui");
     return true;
   }
 
-  copyElements() {
-    const entries = this.ops.copySelection();
+  async copyElements() {
+    const entries = await this.prepareObjectCopies(this.ops.copySelection(), "Copy");
+    if (!entries) return false;
     if (!entries.length) { toast.warning("Select something to copy"); return false; }
     this.kmpClipboard = entries;
     this.lastClipboard = "kmp";
     toast.success(`Copied ${entries.length} element${entries.length > 1 ? "s" : ""}`, { duration: 1500 });
     this.bump("ui");
     return true;
+  }
+
+  private collisionChoiceScope() {
+    const path = this.doc.filePath?.replace(/\\/g, "/").toLowerCase();
+    const scope = path || this.collisionChoiceTrack || `unsaved:${crypto.randomUUID()}`;
+    if (this.collisionChoiceTrack && scope !== this.collisionChoiceTrack) {
+      const migrated: Record<string, boolean> = {};
+      for (const [key, value] of Object.entries(this.settings.collisionCopyChoices || {})) {
+        try { const parts = JSON.parse(key); if (parts[0] === this.collisionChoiceTrack) { parts[0] = scope; migrated[JSON.stringify(parts)] = value; } } catch {}
+      }
+      if (Object.keys(migrated).length) {
+        this.settings.collisionCopyChoices = { ...this.settings.collisionCopyChoices, ...migrated };
+        this.saveSettings({ collisionCopyChoices: migrated });
+      }
+    }
+    this.collisionChoiceTrack = scope;
+    return scope;
+  }
+
+  resetCollisionCopyChoices() {
+    this.setSetting("collisionCopyChoices", {});
+    toast.success("Collision copy choices reset", { description: "Copy and Duplicate will ask again for each object or model part." });
+  }
+
+  private async chooseCollisionCopy(key: string, label: string, count: number, action: string, model: boolean) {
+    if (hasBackend) {
+      await this.flushSettings();
+      try { this.settings.collisionCopyChoices = (await api.getSettings()).collisionCopyChoices || {}; } catch {}
+    }
+    const remembered = this.settings.collisionCopyChoices?.[key];
+    if (typeof remembered === "boolean") return remembered;
+    const answer = await dialogs.open<{ include: boolean; remember: boolean }>("copyCollision", {
+      label, count, action, scope: model ? "this model part in this track" : "this object type in this track",
+    });
+    if (!answer) return null;
+    if (answer.remember) {
+      this.settings.collisionCopyChoices = { ...this.settings.collisionCopyChoices, [key]: answer.include };
+      this.saveSettings({ collisionCopyChoices: { [key]: answer.include } });
+      this.bump("settings");
+    }
+    return answer.include;
+  }
+
+  private async prepareModelCopy(source: ModelCopySource, action: string): Promise<ModelCopySource | null> {
+    const archive = this.doc.szs, kcl = this.doc.kcl, node = archive && findFile(archive, "course_model.brres");
+    if (!node) return null;
+    const bytes = node.data;
+    let piece: any = null;
+    this.viewport?.courseGroup?.traverse((mesh: any) => {
+      if (!piece && mesh.isMesh && mesh.userData.modelName === source.modelName && mesh.userData.modelPart?.name === source.partName)
+        piece = this.viewport?.modelPieceSelection(mesh, source.triangles[0]);
+    });
+    const collision = snapshotCollision(kcl, piece ? this.collisionOfSelectedModelParts([piece]) : []);
+    const include = await this.chooseCollisionCopy(source.choiceKey, `${source.partName} ${source.pieceIndex + 1}`, collision.tris.length, action, true);
+    if (include === null) return null;
+    if (this.doc.szs !== archive || node.data !== bytes || this.doc.kcl !== kcl) { toast.info("The track changed. Select the model again."); return null; }
+    return { ...source, data: bytes.slice(), ...(include ? { collision } : {}) };
+  }
+
+  private async prepareObjectCopies(entries: any[], action: string) {
+    const archive = this.doc.szs, kcl = this.doc.kcl, kmp = this.doc.kmp, groups = new Map<number, any[]>();
+    for (const entry of entries.filter((e) => e.kind === "GOBJ")) {
+      if (!groups.has(entry.item.objectId)) groups.set(entry.item.objectId, []);
+      groups.get(entry.item.objectId)!.push({ entry, collision: snapshotCollision(kcl, this.collisionOfObjects([entry.item])) });
+    }
+    for (const [id, group] of groups) {
+      const key = JSON.stringify([this.collisionChoiceScope(), "object", id]);
+      const label = `${this.objectLabel(id)}${group.length > 1 ? ` (${group.length} objects)` : ""}`;
+      const include = await this.chooseCollisionCopy(key, label, group.reduce((n, item) => n + item.collision.tris.length, 0), action, false);
+      if (include === null) return null;
+      if (include) for (const item of group) item.entry.collision = item.collision;
+    }
+    if (this.doc.szs !== archive || this.doc.kcl !== kcl || this.doc.kmp !== kmp) { toast.info("The track changed. Select the objects again."); return null; }
+    return entries;
+  }
+
+  private pasteCopiesWithCollision(entries: any[], delta: number[], label: string) {
+    const collision = appendCopiedCollision(this.doc.kcl, entries.map((entry) => entry.collision), delta);
+    if (collision !== this.doc.kcl) buildKCL(collision.verts, collision.flags);
+    return this.ops.pasteCopies(entries, delta, label, collision !== this.doc.kcl ? () => this.doc.setKCL(collision, true) : null);
   }
 
   // Pastes the copied elements under the mouse on the 2D map, or around the point the 3D view
@@ -1221,7 +1329,9 @@ export class Editor {
       const from = h.heightAt(center[0], center[2], center[1]), to = h.heightAt(center[0] + delta[0], center[2] + delta[2], center[1]);
       if (from !== null && to !== null) delta[1] = to - from;
     }
-    const n = this.ops.pasteCopies(entries, delta, "Paste");
+    let n = 0;
+    try { n = this.pasteCopiesWithCollision(entries, delta, "Paste"); }
+    catch (error: any) { return toast.error("Could not paste", { description: error.message }); }
     if (n) toast(`Pasted ${n} element${n > 1 ? "s" : ""}`, { duration: 1500 });
   }
 
@@ -1718,7 +1828,12 @@ export class Editor {
   collisionOfSelectedObjects(): number[] {
     const d = this.doc;
     if (!d.kcl?.count) return [];
-    const objects = d.selectedInfos().filter((info: any) => info.kind === "GOBJ").map((info: any) => info.item);
+    return this.collisionOfObjects(d.selectedInfos().filter((info: any) => info.kind === "GOBJ").map((info: any) => info.item));
+  }
+
+  private collisionOfObjects(objects: any[]): number[] {
+    const d = this.doc;
+    if (!d.kcl?.count) return [];
     const local = new Map<number, number[][][]>();
     const found = new Set<number>();
     for (const object of objects) {
@@ -1741,11 +1856,11 @@ export class Editor {
     return [...found];
   }
 
-  collisionOfSelectedModelParts(): number[] {
+  collisionOfSelectedModelParts(selected?: any[]): number[] {
     const part = this.geometrySelection;
-    if (part?.type !== "model" || !this.doc.kcl?.count) return [];
+    if ((!selected && part?.type !== "model") || !this.doc.kcl?.count) return [];
     const found = new Set<number>();
-    for (const piece of part.pieces || [part]) {
+    for (const piece of selected || part.pieces || [part]) {
       if (!piece.mesh?.parent) continue;
       const tris = modelCollisionTriangles(piece.mesh, { vertexIndices: piece.vertexIndices });
       if (!tris.length) continue;
@@ -1891,7 +2006,7 @@ export class Editor {
     this.collisionDraft = [];
     this.viewport?.showCollisionDraft([]);
     this.viewport?.setTool({ type: "collision-create" });
-    this.setTab("collision");
+    this.setTab("collision", true);
     this.setHint(this.collisionHint());
   }
 
@@ -1961,7 +2076,7 @@ export class Editor {
       this.collisionDraft = [];
       this.viewport?.setTool({ type: "geometry", target: "collision" });
       this.viewport?.selectGeometry({ type: "collision", tris: tris.map((_, i) => first + i), tri: first + tris.length - 1 });
-      this.setHint(`${COLLISION_SHAPES[kind].label} added (${tris.length} triangle${tris.length === 1 ? "" : "s"}). Move, rotate or scale it with the gizmo; change its surface in Collision › Edit.`);
+      this.setHint(`${COLLISION_SHAPES[kind].label} added (${tris.length} triangle${tris.length === 1 ? "" : "s"}). Move, rotate or scale it with the gizmo; change its surface in Collision › Show.`);
     } catch (e: any) {
       // The last click did not make a valid shape: keep the others.
       if (Number.isFinite(COLLISION_SHAPES[kind].points)) this.collisionDraft.pop();
@@ -2003,31 +2118,43 @@ export class Editor {
 
   async pasteModel(source = this.modelClipboard, atView = true) {
     if (!source) return toast.warning("Copy a track model object first");
+    if (!source.data) source = await this.prepareModelCopy(source, atView ? "Copy" : "Duplicate");
+    if (!source?.data) return;
     const node = this.doc.szs && findFile(this.doc.szs, "course_model.brres");
     if (!node) return toast.error("This track has no course_model.brres");
+    const archive = this.doc.szs, bytes = node.data;
     const offset = Math.max(1500, source.size[0] * 1.5);
     const target = atView ? this.viewport?.viewCenterPoint() : null;
     const delta = target?.every(Number.isFinite) ? target.map((v: number, i: number) => v - source.center[i]) : [offset, 0, 0];
     if (Math.hypot(...delta) < Math.max(...source.size, 300)) { delta[0] += offset; }
     try {
+      const collision = appendCopiedCollision(this.doc.kcl, [source.collision], delta);
+      if (collision !== this.doc.kcl) buildKCL(collision.verts, collision.flags);
       await this.withBusy("Adding track model…", async () => {
         // The copy becomes a polygon of its own, so it never merges with the original (or with
         // other copies) when they are placed next to each other.
-        const before = parseBRRES(node.data), prior = before.models.find((m: any) => m.name === source.modelName);
+        const before = parseBRRES(node.data), prior = mainModel(before, "course");
         const oldNames = new Set(prior?.objects.map((o: any) => o.name));
         const targetCenter = source.center.map((v: number, i: number) => v + delta[i]);
-        const next = await api.importModelPart(node.data, node.data, { model: source.modelName, part: source.partName, triangles: source.triangles, target: targetCenter, tag: "Copy" });
-        const model = parseBRRES(next).models.find((m: any) => m.name === source.modelName);
+        const next = await api.importModelPart(source!.data!, node.data, { model: source!.modelName, part: source!.partName, triangles: source!.triangles, target: targetCenter, tag: "Copy" });
+        if (this.doc.szs !== archive || node.data !== bytes) throw new Error("The track changed while the model was being copied. Try again.");
+        const model = parseBRRES(next).models.find((m: any) => m.name === prior?.name);
         const partIndex = model?.objects.findIndex((o: any) => !oldNames.has(o.name)) ?? -1;
         if (partIndex < 0) throw new Error("The copied model object is missing");
+        const remembered = this.settings.collisionCopyChoices[source!.choiceKey];
+        if (typeof remembered === "boolean") {
+          const key = JSON.stringify([this.collisionChoiceScope(), "model", model.name, model.objects[partIndex].name, 0]);
+          this.settings.collisionCopyChoices = { ...this.settings.collisionCopyChoices, [key]: remembered };
+          this.saveSettings({ collisionCopyChoices: { [key]: remembered } });
+        }
         this.viewport?.selectGeometry(null);
-        this.doc.change("Add track model object", () => { node.data = next; }, { structural: true });
+        this.doc.change("Add track model object", () => { node.data = next; if (collision !== this.doc.kcl) this.doc.setKCL(collision, true); }, { structural: true });
         this.doc.emit("model");
         await this.assets?.setTrack(this.doc.szs);
         this.viewport?.selectModelPiece(partIndex, 0);
         this.bump("doc");
       });
-      toast.success("Track model object added", { description: "Drag the arrows to move it, then save the SZS." });
+      toast.success("Track model object added", { description: source.collision?.tris.length ? "Its collision was copied to the same place. Ctrl+Z undoes both. Save the SZS to keep the change." : "Drag the arrows to move it, then save the SZS." });
     } catch (e: any) { toast.error("Could not add the model object", { description: e.message }); }
   }
 
@@ -2118,7 +2245,7 @@ export class Editor {
         }
         break;
       }
-      case "copy": if (!this.copySelectedModel()) this.copyElements(); break;
+      case "copy": if (!(await this.copySelectedModel())) await this.copyElements(); break;
       case "paste":
         if (this.lastClipboard === "model" || (!this.kmpClipboard && this.modelClipboard)) await this.pasteModel();
         else this.pasteElements();
@@ -2129,6 +2256,13 @@ export class Editor {
         else if (s?.type === "model") {
           const source = this.modelSource(s.partIndex, s.pieceIndex);
           if (source) await this.pasteModel(source, false);
+        } else if (d.selectedInfos().some((i: any) => i.kind === "GOBJ")) {
+          const entries = await this.prepareObjectCopies(ops.copySelection(), "Duplicate");
+          if (entries) {
+            const offset = this.map2D ? 48 / this.map2DView.scale : (this.settings.iconSize || 150) * 4;
+            try { this.pasteCopiesWithCollision(entries, [offset, 0, offset], "Duplicate"); }
+            catch (error: any) { toast.error("Could not duplicate", { description: error.message }); }
+          }
         } else if (this.map2D) ops.duplicateSelection(48 / this.map2DView.scale); // 48 px on the map
         else ops.duplicateSelection();
         break;
@@ -2478,7 +2612,7 @@ export class Editor {
   startPainting() {
     if (!this.doc.kcl) return toast.warning("Load or create a collision first.");
     this.viewport.setTool({ type: "paint" });
-    this.setTab("collision");
+    this.setTab("collision", true);
   }
 
   startGeometryEditing(target: "collision" | "model") {
@@ -2491,7 +2625,7 @@ export class Editor {
       return;
     }
     this.viewport.setTool({ type: "geometry", target });
-    this.setTab("collision");
+    this.setTab("collision", true);
   }
 
   stopTool() { this.viewport?.setTool(null); }
@@ -2877,7 +3011,7 @@ export class Editor {
 
   // ---- Window (desktop app) ------------------------------------------------------------------
   async openEditorWindow(request: { path?: string; create?: string; name?: string; data?: Uint8Array }) {
-    try { return await api.openEditorWindow(request); }
+    try { return await this.withBusy(`Opening 3D editor${request.name ? ` for ${request.name}` : ""}…`, () => api.openEditorWindow(request)); }
     catch (e: any) { toast.error("Could not open another editor window", { description: e.message }); return null; }
   }
   get hasWindowControls() { return typeof (window as any).__winctl === "function"; }

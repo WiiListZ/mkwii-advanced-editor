@@ -123,7 +123,7 @@ export const TUTORIALS = [
     title: 'Drawing new collision',
     summary: 'Adding collision with shapes that are split into triangles for you.',
     steps: [
-      'Collision › Edit. Choose the "Surface of new shapes" (Road, Wall…).',
+      'Collision › Show. Choose the "Surface of new shapes" (Road, Wall…).',
       'Pick a shape: Triangle, Rectangle, Wall, Box, Cylinder, Sphere or Polygon. Set the height (wall, box, cylinder) and the segments (cylinder, sphere).',
       'Press "Draw …" and click on the track. The shape is previewed in yellow under the cursor.',
       'Rectangle: two corners of one side, then a point for the width; it follows slopes, so it is good for ramps. Wall and Box: two points on the ground. Cylinder and Sphere: the centre, then a point on the edge. Polygon: any number of corners, Enter (or a click on the first corner) closes it.',

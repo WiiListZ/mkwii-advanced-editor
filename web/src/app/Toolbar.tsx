@@ -134,7 +134,7 @@ export function Toolbar() {
         <Hint wrap {...tip("display")}>
           <ToggleGroup type="single" value={s.displayMode} onValueChange={(v: any) => v && ed.setSetting("displayMode", v)} className="gap-0.5 bg-transparent p-0">
             {([["visual", Mountain, "Model"], ["collision", BrickWall, "Collision"], ["both", Layers, "Both"]] as const).map(([v, Icon, label]) => (
-              <ToggleGroupItem key={v} value={v} aria-label={label} className="h-7 gap-1.5 px-2 text-xs">
+              <ToggleGroupItem key={v} value={v} aria-label={label} onClick={() => { if (v === "collision" && s.displayMode === "collision") ed.setSetting("displayMode", "collision"); }} className="h-7 gap-1.5 px-2 text-xs">
                 <Icon /> <span className="hidden xl:inline">{label}</span>
               </ToggleGroupItem>
             ))}

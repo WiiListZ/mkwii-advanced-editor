@@ -9,6 +9,7 @@ import { folderDialog, openDialog, saveDialog, revealInExplorer, openInBrowser, 
 import { convert3DToBRRES, deleteBRRESModel, duplicateBRRESModel, exportBRRESModel, import3DModel, importBRRESPart, listModelAnimations, parseTriangleRanges } from "./model-operations.ts";
 import { importResourceAnimation } from "./asset-operations.ts";
 import { buildGeneratedTrackModels } from "./generated-track-models.ts";
+import { generatedTexturePreviews } from "./generated-materials.ts";
 import { indexArchives, readArchiveFile } from "./archive-library.ts";
 import { decodeWiimmArchive } from "./wiimm-archives.ts";
 import { prepareBundledTools } from "./bundled-tools.ts";
@@ -47,6 +48,7 @@ let editorWindows = new EditorWindows();
 const discordPresence = new DiscordPresence();
 let cupTracks = new CupTrackDrafts(settingsDir);
 const windowDocuments = new Map<string, { name: string; data: Uint8Array; created?: { length: number; tris: number; keptSzs: boolean } }>();
+const windowLaunches = new Map<string, { state: "opening" | "ready" | "error"; error?: string }>();
 let settingsWrite: Promise<unknown> = Promise.resolve();
 
 async function readSettings(): Promise<Record<string, unknown>> {
@@ -147,9 +149,31 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         } else if (body.create === "generator" || body.create === "empty") target.searchParams.set("new", body.create);
         else return json({ error: "Choose a track or create a new one" }, 400);
       }
+      const launch = crypto.randomUUID();
+      const progress: { state: "opening" | "ready" | "error"; error?: string } = { state: "opening" };
+      windowLaunches.set(launch, progress);
+      target.searchParams.set("launch", launch);
+      setTimeout(() => windowLaunches.delete(launch), 300000).unref();
       try {
-        return json(editorWindows.open(target.href, () => { if (documentId) windowDocuments.delete(documentId); }));
-      } catch (error) { if (documentId) windowDocuments.delete(documentId); throw error; }
+        return json({ ...editorWindows.open(target.href, () => {
+          if (documentId) windowDocuments.delete(documentId);
+          progress.state = "error";
+          progress.error = "The editor window closed before the track was ready.";
+        }), launch });
+      } catch (error) { windowLaunches.delete(launch); if (documentId) windowDocuments.delete(documentId); throw error; }
+    }
+
+    case "editor-window-status": {
+      const progress = windowLaunches.get(url.searchParams.get("id") || "");
+      if (!progress) return json({ error: "The editor window could not be reached. Try opening the track again." }, 404);
+      if (req.method === "POST") {
+        const body = await req.json() as { error?: string };
+        if (progress.state === "opening") {
+          progress.error = typeof body.error === "string" ? body.error.slice(0, 1000) : undefined;
+          progress.state = progress.error ? "error" : "ready";
+        }
+      } else if (req.method !== "GET") return json({ error: "GET or POST required" }, 405);
+      return json(progress);
     }
 
     case "editor-document": {
@@ -373,9 +397,20 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       return new Response(result, { headers: { "content-type": "application/octet-stream" } });
     }
 
+    case "generated-track-textures": {
+      if (req.method !== "POST") return json({ error: "POST required" }, 405);
+      const settings = await readSettings();
+      return json(await generatedTexturePreviews((await req.json()).materials, {
+        workspace: String(settings.workspace || ""), commonPath: String(settings.commonPath || ""), partsFolder: String(settings.partsFolder || ""),
+      }));
+    }
+
     case "generated-track-models": {
       if (req.method !== "POST") return json({ error: "POST required" }, 405);
-      return new Response(await buildGeneratedTrackModels(await req.json()), { headers: { "content-type": "application/octet-stream" } });
+      const settings = await readSettings();
+      return new Response(await buildGeneratedTrackModels(await req.json(), {
+        workspace: String(settings.workspace || ""), commonPath: String(settings.commonPath || ""), partsFolder: String(settings.partsFolder || ""),
+      }), { headers: { "content-type": "application/octet-stream" } });
     }
 
     case "import-part": {
@@ -419,7 +454,13 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       // Windows can change preferences at the same time: merge each patch after the preceding
       // write finishes, rather than reading the same old settings and overwriting one another.
       const write = settingsWrite.then(async () => {
-        const next = { ...(await readSettings()), ...patch };
+        const previous = await readSettings(), next = { ...previous, ...patch };
+        // Remembered copy choices are independent, including when two editor
+        // windows save choices for different objects at the same time.
+        if (patch.collisionCopyChoices && typeof patch.collisionCopyChoices === "object" && !Array.isArray(patch.collisionCopyChoices)) {
+          const choices = Object.fromEntries(Object.entries(patch.collisionCopyChoices).filter(([, value]) => typeof value === "boolean"));
+          next.collisionCopyChoices = Object.keys(choices).length ? { ...(previous.collisionCopyChoices || {}), ...choices } : {};
+        }
         await mkdir(settingsDir, { recursive: true });
         const temporary = `${settingsFile}.${crypto.randomUUID()}.tmp`;
         try {

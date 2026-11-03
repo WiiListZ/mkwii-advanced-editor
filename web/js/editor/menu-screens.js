@@ -95,8 +95,28 @@ export class MenuAssets {
     return v ? { x: v.standard.x, y: v.standard.y, scale: v.standard.sx } : { x: 0, y: 0, scale: 1 };
   }
 
+  // A control attached by the game to a named pane in another layout (e.g. the controller
+  // illustration inside RecognizePadWindow). Include ancestor transforms and modded positions.
+  panePlacement(folder, ctrlName, variant, paneName) {
+    const ctrl = this.ctrl(`${folder}/ctrl/${ctrlName}.brctr`);
+    const layout = ctrl && this.layout(`${folder}/blyt/${ctrl.layout}.brlyt`);
+    if (!layout) return null;
+    const base = this.place(folder, ctrlName, variant);
+    const visit = (pane, m) => {
+      const r = pane.rot[2] * Math.PI / 180, co = Math.cos(r), si = Math.sin(r);
+      const [sx, sy] = pane.scale, [x, y] = pane.trans;
+      const n = { a: (m.a * co + m.c * si) * sx, b: (m.b * co + m.d * si) * sx,
+        c: (-m.a * si + m.c * co) * sy, d: (-m.b * si + m.d * co) * sy,
+        x: m.x + m.a * x + m.c * y, y: m.y + m.b * x + m.d * y };
+      if (pane.name === paneName) return { x: n.x, y: n.y, scale: Math.hypot(n.a, n.b) };
+      for (const child of pane.children) { const found = visit(child, n); if (found) return found; }
+      return null;
+    };
+    return visit(layout.root, { a: base.scale, b: 0, c: 0, d: base.scale, x: base.x, y: base.y });
+  }
+
   // Draws one control (BRCTR) at its placement (moved by `at`), posed by animations at a frame.
-  drawControl(ctx, folder, ctrlName, variant, { at = null, anims = [], text = {}, texture = {}, hide = [], show = [], frame = 0 } = {}) {
+  drawControl(ctx, folder, ctrlName, variant, { at = null, anims = [], text = {}, texture = {}, hide = [], show = [], frame = 0, unlimitedText = false } = {}) {
     const ctrl = this.ctrl(`${folder}/ctrl/${ctrlName}.brctr`);
     if (!ctrl) return false;
     const layout = this.layout(`${folder}/blyt/${ctrl.layout}.brlyt`);
@@ -105,18 +125,18 @@ export class MenuAssets {
     const prefix = `${folder}/anim/${ctrl.layout}_`;
     this.drawLayout(ctx, layout, {
       x: place.x * (at?.scale ?? 1) + (at?.x ?? 0), y: place.y * (at?.scale ?? 1) + (at?.y ?? 0), scale: place.scale * (at?.scale ?? 1),
-      anims: anims.map((a) => (a.includes('/') ? a : `${prefix}${a.replace(/@.*$/, '')}.brlan${a.match(/@.*$/)?.[0] ?? ''}`)), text, texture, hide, show, frame,
+      anims: anims.map((a) => (a.includes('/') ? a : `${prefix}${a.replace(/@.*$/, '')}.brlan${a.match(/@.*$/)?.[0] ?? ''}`)), text, texture, hide, show, frame, unlimitedText,
     });
     return true;
   }
 
-  drawLayout(ctx, layout, { x = 0, y = 0, scale = 1, folder = '', anims = [], text = {}, texture = {}, hide = [], show = [], frame = 0 } = {}) {
+  drawLayout(ctx, layout, { x = 0, y = 0, scale = 1, folder = '', anims = [], text = {}, texture = {}, hide = [], show = [], frame = 0, unlimitedText = false } = {}) {
     // "name@end" poses an animation at its last frame (a settled state), "name@12" at frame 12.
     const poses = anims.map((spec) => {
       const [path, at] = spec.split('@');
       const anim = this.anim(path.includes('/') ? path : `${folder}/anim/${path}`);
       return { anim, frame: at === 'end' ? anim?.frames ?? 0 : at ? Number(at) : frame };
     }).filter((a) => a.anim);
-    this.renderer.draw(ctx, layout, { x, y, scale, pose: posed(layout, poses), overrides: { text, texture, hide: new Set(hide), show: new Set(show) } });
+    this.renderer.draw(ctx, layout, { x, y, scale, pose: posed(layout, poses), overrides: { text, texture, hide: new Set(hide), show: new Set(show), unlimitedText } });
   }
 }

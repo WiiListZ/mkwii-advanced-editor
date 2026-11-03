@@ -1,9 +1,12 @@
 # Bundled command-line tools (Windows x64)
 
 The editor runs these programs as separate processes. Their binaries and
-upstream program source archives are inside `tools-win-x64.zip`; on first use
+upstream program source archives are inside `tools-win-x64.br`; on first use
 the editor unpacks them into its settings directory under `%APPDATA%`. No Mario
 Kart Wii game files are included.
+
+The package uses solid Brotli compression; every tool binary, runtime file,
+license and upstream source archive is kept intact.
 
 - **ABMatt 1.3.2**, by Robert Nelson, is GPL-3.0 licensed. The archive contains
   the unmodified command-line executable and its required runtime files from
@@ -22,6 +25,6 @@ Kart Wii game files are included.
   [source packages](https://cygwin.com/packages/).
 
 The editor's own code remains under MIT. The bundled programs retain their own
-licenses. The ZIP also contains ABMatt's and Wiimm's original license texts and
+licenses. The package also contains ABMatt's and Wiimm's original license texts and
 upstream source archives so recipients of the single-file editor can inspect
 their program code.

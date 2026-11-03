@@ -25,7 +25,7 @@ Built with **Bun** (backend and executable), **React + shadcn/ui** (Radix primit
 <table>
   <tr>
     <td width="50%"><img src="docs/images/collision.png" alt="Collision Paint: semitransparent surface colours and triangle edges over the original track model"><br><sub><b>Collision Paint</b>: translucent surface colours over the model, adjustable opacity and visible triangle edges.</sub></td>
-    <td width="50%"><img src="docs/images/collision-edit.png" alt="Collision Edit: draw new triangles and select several"><br><sub><b>Collision Edit</b>: draw custom triangles, select several, then transform or change them together.</sub></td>
+    <td width="50%"><img src="docs/images/collision-edit.png" alt="Collision editing: draw new triangles and select several"><br><sub><b>Collision editing</b>: draw custom triangles, select several, then transform or change them together. These tools are now in <b>Show</b>.</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/images/game-text.png" alt="Game text editor showing a live course-selection screen with the game's font"><br><sub><b>Game text</b>: edit a message and preview its place on a game selection screen with the game's font.</sub></td>
@@ -289,6 +289,7 @@ Every setting is stored as an unsigned 16-bit number (`0–65535`). Without `min
 - **Mods with their own cups** (beta): the cups of a Pulsar pack (such as Insane Kart Wii, 1208 cups) or of an LE-CODE distribution open in the same window. There, cups can also be added (with their own icon and four new tracks from files or drawn with the track generator), moved and removed, and hundreds of cups searched by cup, track or author. See [Mods with their own cups](#mods-with-their-own-cups). **Backups** puts them back. With `.bak` backups turned off in Settings, the editor still asks whether to make this backup, and recommends it.
 
 **Track model**
+- **Animated palettes:** the preview plays PAT0 texture and palette changes, including palette-only animation. Importing a BRRES model part converts indexed C4/C8/C14X2 texture/palette combinations into lossless direct-colour textures and equivalent PAT0 texture changes. Colours, transparency, mipmaps, keyframe times, texture slots and looping are retained without relying on ABMatt's palette-animation support. Existing patterns are preserved when adding or editing geometry. Reusing each combination avoids duplicate frames, but the converted BRRES can be larger.
 - Use **Track → Track model → Import 3D model** (or **File → Import**) to add OBJ, FBX, glTF, GLB, DAE, STL, PLY or Blender `.blend` models. They appear near the camera target and are selected for moving, rotating or scaling. Keep a `.gltf` file beside its `.bin` and image files. Base-color image textures are carried into the BRRES when available; an OBJ texture written with a path from another computer is looked up by name in the model's folder and its subfolders. A texture that cannot be found is skipped with a warning and the model is imported without it.
 - FBX, glTF, GLB, DAE and `.blend` imports can carry animation into the course model. Bone and object motion becomes CHR0; Blender shape key motion becomes SHP0 with alternative vertex sets; animated material Mapping nodes become SRT0 UV transforms; animated base colour becomes CLR0. Animations are sampled at 60 fps. A rigged model is first converted by ABMatt as its own BRRES, then its bones, materials, geometry and weighted matrices are merged into the course model. This retains multiple bone influences per vertex; the real-track smoke test checks a 50/50 two-bone vertex. The existing course objects and animation resources are checked after import. When a file holds several animations, choose one in the import dialog or import a static model. UV conversion covers Blender Mapping-node scale, rotation and translation; other shader graphs may need manual conversion.
 - Animated imports require [Blender](https://www.blender.org/) and [RiiStudio's](https://github.com/riidefi/RiiStudio) `rszst.exe` in `Documents\RiiStudio` or `MKWII_RSZST`. ABMatt and Wiimm's `wszst` are included in the Windows executable. SHP0 v4 is written and read back in the smoke test; whether Mario Kart Wii plays a SHP0 in `course_model.brres` still needs an in-game or Dolphin check. Shape morphs are not yet animated in the editor's 3D viewport.
@@ -327,6 +328,7 @@ Every setting is stored as an unsigned 16-bit number (`0–65535`). Without `min
 
 **Game text**
 - Open *Game text* from Home or *Tools › Game text* to edit menu and race messages (`Scene/UI/*_<language>.szs`, including `Common.bmg`, `Menu.bmg` and `Race.bmg`) in any available language. Search by text, ID or place. **Game screen** draws a representative screen from the game's own UI layouts, textures and fonts; choose another screen from the selector or turn it off for a font-only preview. When that screen's scene files are missing, the font-only preview grows to fit the full message. Some runtime 3D and video layers are approximated.
+- **Text colour** applies native game colours to selected text, or the whole message when nothing is selected. **Default (layout)** restores the screen's original colour. **Ctrl+X** cuts without splitting a game code; **Ctrl+Z / Ctrl+Y** undo and redo text, colours, icons and font-size edits.
 - Text wider than its box is squeezed horizontally to fit, as the game does with long names. The font-size percentage can also be changed by hand; it uses Mario Kart Wii's native BMG font-size code, so the change is saved for the game, not only shown in the preview. The preview is drawn at twice the Wii's resolution so small menu text stays sharp. The modal has an X at the top right and a fixed **Save** button at the bottom right.
 - The editor reads each text box's capacity from the game's layouts and shows a used/maximum counter. Typing, pasting, icons and font-size codes must fit that capacity; names and button labels stay on one line. The original course-selection track-name boxes hold 32 characters, character and vehicle names 40, and cup names 20, including game codes. When a layout is unavailable or a message has no known layout, no arbitrary limit is imposed.
 - **Insert icon** lists the game's icons (controller buttons, battle modes, ranks… from `tt_kart_extension_font`) and inserts the one you click at the cursor, as the `{1A:08010000XXXX}` code the original messages use.
@@ -519,7 +521,7 @@ The menus play THP movies from the game's `thp` folder: JPEG pictures, 60 per se
 
 ## Creating a new track
 
-*File › Create new track* (Ctrl+N, or **New track** on Home) builds a drivable track from a layout drawn from above. The window has three steps, as tabs on the right; **Next step** moves through them, and **Generate track** works from any step.
+*File › Create new track* (Ctrl+N, or **New track** on Home) builds a drivable track from a layout drawn from above. The window has four steps, as tabs on the right; **Next step** moves through them, and **Generate track** works from any step.
 
 ![Create a new track: the oval layout with its control points, the height profile under it, the Shape step and the Check box](docs/images/track-generator.png)
 
@@ -533,9 +535,17 @@ Then shape the layout with **Edit points**:
 - the selected point's **Height** raises the road there (hills, dips, bridges) and **Width ×** makes the road wider or narrower there; the **height profile** under the drawing shows the road's height from the start line round to it again, with a dot for each point;
 - the toolbar can **undo** and **redo** (Ctrl+Z / Ctrl+Y) any change to the layout, **reverse** the driving direction, make the whole layout **smaller** or **larger** by 10%, and **fit** it in the view. The wheel zooms; middle-drag or Alt+drag pans. One grid square is 5000 units, about 17 karts.
 
-**2 · Road.** Road width (shown in karts, a kart is about 300 units wide), off-road grass on both sides, walls and their height, and the number of boost panels (placed on the straightest parts).
+**Height above the drawing.** Select a point and enter its exact height, or choose **Height** and drag a point up/down. Hold Shift before dragging for finer control. These controls stay visible across the settings tabs, and the height profile updates immediately.
 
-**3 · Race.** Laps, rows of item boxes, key checkpoints (they stop drivers from cutting across), checkpoint spacing and how often a respawn point is placed. With a track archive open, **Keep the other files of the open SZS** reuses its models, sky and effects so the new track can be played straight away.
+**Live 3D preview.** Choose **3D** above the drawing to inspect the generated road, walls, decks and supports. Drag to orbit, right-drag to pan and use the wheel to zoom. Click a blue point to select it and change its height above the view; the camera keeps its angle while the mesh updates. **2D** returns to the drawing. The preview stays inside the generator; the completed track opens in its own editor after generation.
+
+![The track generator's live 3D preview with editable heights and game textures](docs/images/track-generator-3d.png)
+
+**2 · Road.** Road width (shown in karts, a kart is about 300 units wide), off-road grass on both sides, walls and their height, and boost-panel dimensions. Let the generator place boost panels automatically, or choose **Boost panels** to click the road and place them yourself. Drag their markers to move them; right-click removes one. The original animated game material is used when available.
+
+**3 · Textures.** Choose a style for asphalt, rally, desert, snow or castle surfaces. Override individual surfaces with another preset or a PNG, JPEG or WebP image of your own, with adjustable repeat. Textures are embedded in the SZS, and the 2D and 3D views use the same UVs as the generated model.
+
+**4 · Race.** Laps, rows of item boxes, key checkpoints (they stop drivers from cutting across), checkpoint spacing and how often a respawn point is placed. With a track archive open, **Keep the other files of the open SZS** reuses its models, sky and effects so the new track can be played straight away.
 
 **Check.** The box under the steps checks the layout as you change it, and marks the places on the drawing. What would break the track is handled by the generator itself, so you can draw freely:
 - *blue*, **the road crosses itself**: one side becomes a **bridge**, high enough to drive under (the wall height plus 800, plus a margin), with gentle ramps on both sides (the steepest part is well below what karts can climb). The side that is already higher goes over; when both are at the same height, the later part of the lap does. To choose, raise a point of that side with **Height**. The height profile under the drawing shows the bridge.
@@ -551,7 +561,7 @@ After **Generate track**, the editor opens the new track with its collision, sta
 
 ## Collision editor
 
-`course.kcl` is the invisible surface the karts actually drive on. Every triangle has a **type** (road, off-road, wall, boost, fall boundary, cannon…) plus a **variant** and a **shadow** value that fine-tune sounds, effects and lighting. Open the **Collision** tab in the left sidebar; it has three modes.
+`course.kcl` is the invisible surface the karts actually drive on. Every triangle has a **type** (road, off-road, wall, boost, fall boundary, cannon…) plus a **variant** and a **shadow** value that fine-tune sounds, effects and lighting. Choosing **Collision** in the viewport opens the **Collision** sidebar on **Show**. The sidebar has two modes: **Show**, including selection and editing, and **Paint**.
 
 ### Show
 - Lists the surface types used by the track with their colour and triangle count. Click a type to hide or show it (fall boundaries start hidden so they do not cover the track).
@@ -570,8 +580,8 @@ After **Generate track**, the editor opens the new track with its collision, sta
 
 The colours always show the collision surface nearest to the camera, drawn over the model even where the model and the collision do not line up exactly, so the triangle you paint is the one that changes colour.
 
-### Edit: drawing new collision
-1. Choose **Edit** and the **Surface of new shapes**.
+### Show: drawing new collision
+1. In **Show**, expand **Create collision** and choose the **Surface of new shapes**.
 2. Pick a shape and click on the track. A yellow preview follows the cursor.
 
 | Shape | Clicks | Notes |
@@ -587,7 +597,7 @@ The colours always show the collision surface nearest to the camera, drawn over 
 3. **Backspace** removes the last point, **Esc** cancels.
 4. When the shape is complete it is split into triangles and selected. Floors and walls face the camera; boxes, cylinders and spheres face outwards.
 
-### Edit: changing existing triangles
+### Show: changing existing triangles
 - Click a triangle to select it, **Shift+click** to add, **Ctrl+click** to toggle, **Shift+drag** to select an area.
 - Move, rotate or scale the selection with the gizmo (**W / E / R**), or type the coordinates of each vertex of a single triangle.
 - Change the surface type of all selected triangles at once, **Duplicate**, **Flip normal** or **Delete** them.
@@ -677,9 +687,11 @@ bun run build
 
 This creates `release/MKWiiAdvancedEditor.exe`: a single file with the runtime, the UI, the WebView library, ABMatt and Wiimm's command-line tools inside. The file passed on the command line is opened at startup. The executable uses Bun's *baseline* runtime (it runs on every x64 CPU): the build downloads `bun-windows-x64-baseline.zip` of the same Bun version from the Bun releases, checks it against their `SHASUMS256.txt` and keeps it in `.cache/`.
 
+The build compresses the full runtime with [UPX 5.3.0](https://github.com/upx/upx/releases/tag/v5.3.0) before embedding the application. UPX is a build tool only: its download and executable are checksum-verified and cached, along with the prepared runtime, so later builds reuse them. The application icon is applied before compression. The bundled model tools use solid Brotli compression, retaining every binary, DLL, license and source archive; they still work offline, and existing tool installations are reused. To build without runtime packing, use `bun run build --uncompressed-runtime`; `--outfile release/AnotherName.exe` selects another output file.
+
 The [Windows build workflow](.github/workflows/build-windows.yml) installs the dependencies, runs the tests and `bun run build`, then uploads the EXE and its SHA-256 file as an artifact. It publishes them in two ways:
 - **Every push to `main` without a version tag** replaces the **Auto** pre-release (tag `auto`) with the build of that commit, so the newest executable is always at [Releases › Auto](https://github.com/WiiListZ/mkwii-advanced-editor/releases/tag/auto). Its notes name the commit. Being a pre-release, it is not offered by the in-app updater.
-- **A version tag** matching `package.json` (for example `git tag v1.1.0 && git push origin v1.1.0`) publishes that version as a GitHub Release with generated notes. This is what the in-app updater offers.
+- **A version tag** matching `package.json` (for example `git tag v1.1.0 && git push origin v1.1.0`) publishes that version as a GitHub Release, using `docs/releases/v1.1.0.md` when present and generated notes otherwise. This is what the in-app updater offers.
 
 To serve in-app updates, run that workflow in the [WiiListZ repository](https://github.com/WiiListZ/mkwii-advanced-editor); releases in another fork are not used by the updater.
 

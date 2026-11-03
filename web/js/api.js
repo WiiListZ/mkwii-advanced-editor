@@ -119,8 +119,25 @@ export const api = {
         : { method: 'POST', body: { path, create } });
       if (result.url && popup) popup.location.replace(result.url);
       else popup?.close();
+      // Spawning a process is not enough: keep the caller's loading indicator until the new
+      // editor has read the track, built its models and mounted the 3D view.
+      if (result.launch && (path || data)) {
+        const deadline = Date.now() + 180000;
+        for (;;) {
+          if (popup?.closed) throw new Error('The editor window was closed before the track was ready');
+          const progress = await call('editor-window-status', { query: { id: result.launch } });
+          if (progress.state === 'ready') break;
+          if (progress.state === 'error') throw new Error(progress.error || 'Could not open the 3D editor');
+          if (Date.now() >= deadline) throw new Error('The 3D editor is taking too long to open. Check its window, then try again.');
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      }
       return result;
     } catch (error) { popup?.close(); throw error; }
+  },
+  editorWindowReady(error) {
+    const id = params.get('launch');
+    return id && hasBackend ? call('editor-window-status', { method: 'POST', query: { id }, body: { error } }) : Promise.resolve();
   },
   async editorDocument(id) {
     const result = await call('editor-document', { query: { id }, raw: true, headers: true });
@@ -316,6 +333,10 @@ export const api = {
   async convertModelBRRES(path, animation = '', name = '') {
     if (!hasBackend || !path) throw new Error('BRRES conversion requires the desktop app and a model file on disk');
     return call('convert-model-brres', { method: 'POST', query: { path, animation, ...(name ? { name } : {}) }, raw: true });
+  },
+
+  async generatedTrackTextures(materials) {
+    return call('generated-track-textures', { method: 'POST', body: { materials } });
   },
 
   async generatedTrackModels(model) {

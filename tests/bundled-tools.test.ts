@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { extractBundledTools } from "../src/bundled-tools.ts";
@@ -28,6 +28,11 @@ test("bundled command-line tools extract and convert OBJ to BRRES", async () => 
     const wiimm = Bun.spawn([tools.wszst, "VERSION"], { cwd: dir, env, stdout: "pipe", stderr: "pipe", windowsHide: true });
     expect(await wiimm.exited).toBe(0);
     expect(await new Response(wiimm.stdout).text()).toContain("v2.42a");
+    const oldHash = "a8c27150dbd835f525503631e4be3e89d7b291eb3f7cf534c08d9b0d8c4169ca";
+    const legacyRoot = join(dir, "cache", oldHash.slice(0, 16));
+    await rename(tools.root, legacyRoot); await writeFile(join(legacyRoot, ".ready"), oldHash);
+    expect((await extractBundledTools(join(dir, "cache"))).root).toBe(legacyRoot);
+    expect(existsSync(tools.root)).toBe(false);
   } finally {
     const target = resolve(dir);
     if (!target.startsWith(resolve(tmpdir()) + sep)) throw new Error("Unsafe temporary tool test path");

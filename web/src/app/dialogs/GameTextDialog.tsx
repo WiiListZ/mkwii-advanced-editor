@@ -3,7 +3,7 @@
 // almost every scene), so a change is written into every copy of the chosen language.
 
 import * as React from "react";
-import { FolderOpen, LoaderCircle, RotateCcw, Save, Search, Smile, X } from "lucide-react";
+import { FolderOpen, LoaderCircle, Palette, RotateCcw, Save, Search, Smile, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,8 @@ import { api } from "../../../js/api.js";
 import { buildU8, findFile, listFiles, newSzsTree, parseU8, setFilePath } from "../../../js/formats/u8.js";
 import { buildBMG, escapes, fontSizePercent, messagePlace, messageTextLength, parseBMG, plainText, setFontSizePercent, stripFontSizePrefix } from "../../../js/formats/bmg.js";
 import { messageTextError, messageTextLimit } from "../../../js/editor/text-limits.js";
+import { BMG_COLOURS, bmgSelectionRange, colourBmgSelection } from "../../../js/formats/bmg-style.js";
+import { TextEditHistory } from "../../../js/editor/text-history.js";
 import { gameTextAssetsFor } from "../game-text-assets";
 import { drawText, parseBRFNT } from "../../../js/formats/brfnt.js";
 import { editor, type LooseFile } from "../editor";
@@ -27,6 +29,8 @@ const LIST_LIMIT = 400;
 // `loose`: a .bmg opened on its own; its tree holds just that file, saved back as the .bmg.
 interface Archive { path: string; name: string; tree: any; bmgs: Map<string, { path: string; bmg: any }>; loose?: LooseFile }
 interface Message { key: string; file: string; id: number; text: string; place: string; copies: number }
+interface TextSelection { key: string; start: number; end: number }
+interface TextEditAction { before: { start: number; end: number }; after: { start: number; end: number }; group?: string | null }
 
 const hex = (n: number) => "0x" + n.toString(16).toUpperCase().padStart(4, "0");
 const join = (dir: string, name: string) => `${dir.replace(/[\\/]+$/, "")}\\${name}`;
@@ -57,6 +61,10 @@ export function GameTextDialog({ search: initialSearch = "", folder: initialFold
   });
   const [selected, setSelected] = React.useState<string | null>(null);
   const [edits, setEdits] = React.useState<Record<string, string>>({});
+  const editsRef = React.useRef(edits);
+  const history = React.useRef(new TextEditHistory());
+  const [restoredSelection, setRestoredSelection] = React.useState<TextSelection | null>(null);
+  const replaceEdits = (next: Record<string, string>) => { editsRef.current = next; setEdits(next); };
   const [saving, setSaving] = React.useState(false);
   const [limitAssets, setLimitAssets] = React.useState<any>(null);
   const [limitsReady, setLimitsReady] = React.useState(!folder);
@@ -66,7 +74,7 @@ export function GameTextDialog({ search: initialSearch = "", folder: initialFold
     setLimitAssets(null); setLimitsReady(!folder);
     if (folder) {
       const assets = gameTextAssetsFor(folder);
-      assets.load(["MenuSingle.szs", "Race.szs"]).then(() => {
+      assets.load(["MenuSingle.szs", "Race.szs", "Title.szs", "Award.szs"]).then(() => {
         if (!cancelled) { setLimitAssets(assets); setLimitsReady(true); }
       }).catch(() => { if (!cancelled) setLimitsReady(true); });
     }
@@ -108,7 +116,7 @@ export function GameTextDialog({ search: initialSearch = "", folder: initialFold
     }
     if (!files || !language) return;
     let cancelled = false;
-    setArchives(null); setSelected(null); setEdits({});
+    setArchives(null); setSelected(null); replaceEdits({}); history.current.clear(); setRestoredSelection(null);
     (async () => {
       const names = files.filter((f) => new RegExp(`_${language}\\.szs$`, "i").test(f));
       const out: Archive[] = [];
@@ -166,6 +174,26 @@ export function GameTextDialog({ search: initialSearch = "", folder: initialFold
     if (!filtered.some((m) => m.key === selected)) setSelected(filtered[0]?.key ?? null);
   }, [filtered, selected]);
   const changedKeys = Object.keys(edits);
+  const restoreHistory = (redo: boolean) => {
+    if (!limitsReady || saving) return;
+    const change = redo ? history.current.redo() : history.current.undo();
+    if (!change) return;
+    const next = { ...editsRef.current };
+    for (const entry of change.changes) {
+      const original = messages.find((m) => m.key === entry.key);
+      if (!original) continue;
+      if (entry.value === original.text) delete next[entry.key]; else next[entry.key] = entry.value;
+    }
+    const target = messages.find((m) => m.key === change.selection.key);
+    if (target) {
+      // Test the restored value: undo may remove the edit or the search term that made it visible.
+      const text = (next[target.key] ?? target.text).toLowerCase();
+      const visible = (fileFilter === "all" || fileFilter === target.file) && (!onlyChanged || next[target.key] !== undefined)
+        && (!q ? target.text !== "" || next[target.key] !== undefined : text.includes(q) || hex(target.id).toLowerCase().includes(q) || target.id.toString(16) === q.replace(/^0x/, "") || target.place.toLowerCase().includes(q));
+      if (!visible) { setQuery(hex(target.id)); setFileFilter(target.file); setOnlyChanged(false); }
+    }
+    replaceEdits(next); setEditError(""); setSelected(change.selection.key); setRestoredSelection({ ...change.selection });
+  };
 
   const save = async () => {
     if (!archives || !changedKeys.length || !limitsReady) return;
@@ -205,7 +233,7 @@ export function GameTextDialog({ search: initialSearch = "", folder: initialFold
         written++;
       }
       setArchives([...archives]);
-      setEdits({});
+      replaceEdits({}); history.current.breakGroup();
       if (!archives.some((a) => a.loose)) toast.success(`Game text saved in ${written} archive${written === 1 ? "" : "s"}`, { description: `${changedKeys.length} message${changedKeys.length === 1 ? "" : "s"} changed. ${editor.settings.keepBackups ? "The first save keeps a .bak copy of each original archive." : "Backups are off in Settings."}` });
     } catch (e: any) {
       toast.error("Could not save the game text", { description: e.message });
@@ -294,22 +322,25 @@ export function GameTextDialog({ search: initialSearch = "", folder: initialFold
               screenVh={screenVh} onScreenVhChange={(vh) => { setScreenVh(vh); localStorage.setItem("mkwii-game-screen-vh", String(vh)); }}
               twins={current.text ? messages.filter((m) => m.key !== current.key && m.text === current.text) : []}
               limit={messageTextLimit(limitAssets, current.file, current.id, current.text)} limitsReady={limitsReady} editError={editError}
-              onChange={(text, keys = [current.key]) => {
-                if (!limitsReady) return;
+              restoredSelection={restoredSelection} onSelectionRestored={() => setRestoredSelection(null)} onHistory={restoreHistory}
+              onChange={(text, keys = [current.key], action) => {
+                if (!limitsReady || saving) return false;
                 for (const key of keys) {
                   const m = messages.find((m) => m.key === key)!;
                   const problem = text === m.text ? "" : messageTextError(text, messageTextLimit(limitAssets, m.file, m.id, m.text));
-                  if (problem) { setEditError(problem); return; }
+                  if (problem) { setEditError(problem); return false; }
                 }
                 setEditError("");
-                setEdits((e) => {
-                  const next = { ...e };
-                  for (const key of keys) {
-                    const original = messages.find((m) => m.key === key)!.text;
-                    if (text === original) delete next[key]; else next[key] = text;
-                  }
-                  return next;
-                });
+                const changes = keys.map((key) => ({ key, before: editsRef.current[key] ?? messages.find((m) => m.key === key)!.text, after: text }));
+                const selection = action || { before: { start: 0, end: 0 }, after: { start: 0, end: 0 } };
+                history.current.record(changes, { key: current.key, ...selection.before }, { key: current.key, ...selection.after }, action?.group || null);
+                const next = { ...editsRef.current };
+                for (const key of keys) {
+                  const original = messages.find((m) => m.key === key)!.text;
+                  if (text === original) delete next[key]; else next[key] = text;
+                }
+                replaceEdits(next);
+                return true;
               }} />
           ) : (
             <div className="grid flex-1 place-items-center text-xs text-muted-foreground">{loading ? <LoaderCircle className="size-5 animate-spin" /> : "Choose a message on the left."}</div>
@@ -342,7 +373,7 @@ function IconGlyph({ font, code }: { font: any; code: number }) {
 }
 
 // Inserts a game icon where the cursor is, as the code the game's own messages use for it.
-function IconPicker({ font, onInsert }: { font: any; onInsert: (code: string) => void }) {
+function IconPicker({ font, onInsert, onReturnFocus }: { font: any; onInsert: (code: string) => void; onReturnFocus: () => void }) {
   const [open, setOpen] = React.useState(false);
   const codes = font ? [...font.chars.keys()].filter((c: number) => {
     const w = font.widths.get(font.chars.get(c));
@@ -353,7 +384,7 @@ function IconPicker({ font, onInsert }: { font: any; onInsert: (code: string) =>
       <PopoverTrigger asChild>
         <Button size="sm" variant="secondary" className="h-6 px-2 text-[11px]" disabled={!codes.length} title={codes.length ? "Insert a game icon (buttons, modes…)" : "Choose the game's Scene\\UI folder to use its icons"}><Smile /> Insert icon</Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[340px] p-2">
+      <PopoverContent data-message-edit-controls align="start" className="w-[340px] p-2" onCloseAutoFocus={(e) => { e.preventDefault(); onReturnFocus(); }}>
         <div className="mb-1.5 px-1 text-[11px] text-muted-foreground">Game icons (tt_kart_extension_font). Click one to insert it at the cursor.</div>
         <div className="grid grid-cols-8 gap-1">
           {codes.map((code: number) => {
@@ -372,23 +403,84 @@ function IconPicker({ font, onInsert }: { font: any; onInsert: (code: string) =>
   );
 }
 
-function MessageEditor({ message, folder, value, font, iconFont, twins, lookup, inGamePreview, onInGamePreviewChange, screenVh, onScreenVhChange, onChange, limit, limitsReady, editError }: { message: Message; folder: string; value: string; font: any; iconFont: any; twins: Message[]; lookup: (file: string, id: number) => string | null; inGamePreview: boolean; onInGamePreviewChange: (enabled: boolean) => void; screenVh: number; onScreenVhChange: (vh: number) => void; onChange: (text: string, keys?: string[]) => void; limit: { capacity: number; singleLine: boolean; source: string } | null; limitsReady: boolean; editError: string }) {
+function TextColourPicker({ disabled, open, onOpenChange, onApply, onReturnFocus }: { disabled: boolean; open: boolean; onOpenChange: (open: boolean) => void; onApply: (id: number) => void; onReturnFocus: () => void }) {
+  return <Popover open={open} onOpenChange={onOpenChange}>
+    <PopoverTrigger asChild><Button size="sm" variant="secondary" className="h-6 px-2 text-[11px]" disabled={disabled}><Palette /> Text colour</Button></PopoverTrigger>
+    <PopoverContent data-text-colours align="start" className="w-[340px] p-3" onCloseAutoFocus={(e) => { e.preventDefault(); onReturnFocus(); }}>
+      <div className="mb-1 text-xs font-semibold">Native text colours</div>
+      <p className="mb-3 mt-0 text-[11px] leading-relaxed text-muted-foreground">Select part of the text to colour it. With no selection, the colour applies to the whole message.</p>
+      <div className="grid grid-cols-3 gap-1">
+        {BMG_COLOURS.map((c) => <button key={c.id} type="button" aria-label={`Text colour: ${c.label}`} className="flex cursor-pointer items-center gap-1.5 rounded-md border px-1.5 py-2 text-left text-[10px] hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" onClick={() => { onApply(c.id); onOpenChange(false); }}>
+            <span className="size-4 shrink-0 rounded-sm border border-white/25" style={{ background: c.rgba?.[3] === 0 ? "repeating-conic-gradient(#666 0% 25%,#bbb 0% 50%) 0 / 8px 8px" : c.rgba ? `rgb(${c.rgba[0]},${c.rgba[1]},${c.rgba[2]})` : "linear-gradient(135deg,#fff 50%,#777 50%)" }} />
+            <span>{c.label}</span>
+          </button>)}
+      </div>
+    </PopoverContent>
+  </Popover>;
+}
+
+function MessageEditor({ message, folder, value, font, iconFont, twins, lookup, inGamePreview, onInGamePreviewChange, screenVh, onScreenVhChange, onChange, limit, limitsReady, editError, onHistory, restoredSelection, onSelectionRestored }: { message: Message; folder: string; value: string; font: any; iconFont: any; twins: Message[]; lookup: (file: string, id: number) => string | null; inGamePreview: boolean; onInGamePreviewChange: (enabled: boolean) => void; screenVh: number; onScreenVhChange: (vh: number) => void; onChange: (text: string, keys?: string[], action?: TextEditAction) => boolean; limit: { capacity: number; singleLine: boolean; source: string } | null; limitsReady: boolean; editError: string; onHistory: (redo: boolean) => void; restoredSelection: TextSelection | null; onSelectionRestored: () => void }) {
   const body = stripFontSizePrefix(value);
   const percent = fontSizePercent(value);
   const codes = escapes(body);
   const area = React.useRef<HTMLTextAreaElement>(null);
-  const caret = React.useRef<number | null>(null);
+  const caret = React.useRef<{ start: number; end: number } | null>(null);
+  const inputBefore = React.useRef({ start: 0, end: 0 });
+  const [coloursOpen, setColoursOpen] = React.useState(false);
+  const selection = () => ({ start: area.current?.selectionStart ?? 0, end: area.current?.selectionEnd ?? 0 });
+  const change = (text: string, keys?: string[], action?: TextEditAction) => {
+    const before = selection(), length = stripFontSizePrefix(text).length;
+    return onChange(text, keys, action || { before, after: { start: Math.min(before.start, length), end: Math.min(before.end, length) } });
+  };
+  const focusArea = () => {
+    const el = area.current;
+    if (!el) return;
+    el.focus();
+    if (caret.current) { el.setSelectionRange(caret.current.start, caret.current.end); caret.current = null; }
+  };
   // Keeps the cursor after the inserted code once React has put the new text in the box.
   React.useLayoutEffect(() => {
     if (caret.current === null || !area.current) return;
-    area.current.focus();
-    area.current.setSelectionRange(caret.current, caret.current);
-    caret.current = null;
+    focusArea();
   }, [body]);
+  React.useLayoutEffect(() => {
+    if (restoredSelection?.key !== message.key) return;
+    caret.current = { start: restoredSelection.start, end: restoredSelection.end };
+    focusArea(); onSelectionRestored();
+  }, [restoredSelection]);
+  React.useLayoutEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (editor.busy || !limitsReady || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const target = e.target as Element | null;
+      if (!target?.closest?.('[data-message-edit-controls], [data-text-colours]')) return;
+      const k = e.key.toLowerCase();
+      if (k !== 'z' && k !== 'y') return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      setColoursOpen(false); onHistory(k === 'y' || e.shiftKey);
+    };
+    document.addEventListener('keydown', key, true);
+    return () => document.removeEventListener('keydown', key, true);
+  }, [onHistory, limitsReady]);
   const insert = (code: string) => {
     const el = area.current, start = el?.selectionStart ?? body.length, end = el?.selectionEnd ?? body.length;
-    caret.current = start + code.length;
-    onChange(setFontSizePercent(body.slice(0, start) + code + body.slice(end), percent));
+    const after = { start: start + code.length, end: start + code.length };
+    if (change(setFontSizePercent(body.slice(0, start) + code + body.slice(end), percent), undefined, { before: { start, end }, after })) caret.current = after;
+  };
+  const colour = (id: number) => {
+    const el = area.current;
+    const edit = colourBmgSelection(body, el?.selectionStart ?? 0, el?.selectionEnd ?? 0, id);
+    const after = { start: edit.start, end: edit.end };
+    if (change(setFontSizePercent(edit.text, percent), undefined, { before: selection(), after })) caret.current = after;
+  };
+  const cut = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const before = selection();
+    if (before.start === before.end || !e.clipboardData) return;
+    e.preventDefault();
+    const range = bmgSelectionRange(body, before.start, before.end), after = { start: range.start, end: range.start };
+    const next = body.slice(0, range.start) + body.slice(range.end);
+    if (change(setFontSizePercent(next, percent), undefined, { before: range, after })) {
+      e.clipboardData.setData('text/plain', body.slice(range.start, range.end)); caret.current = after;
+    }
   };
   return (
     <>
@@ -397,27 +489,33 @@ function MessageEditor({ message, folder, value, font, iconFont, twins, lookup, 
         <span className="font-mono text-[11px] text-muted-foreground">{message.file}.bmg · {hex(message.id)}</span>
         <span className="ml-auto text-[11px] text-muted-foreground">{message.copies} {message.copies === 1 ? "copy" : "copies"} in this language</span>
       </div>
-      <GameTextPreview folder={folder} file={message.file} id={message.id} font={font} text={value} originalText={message.text} place={message.place} lookup={lookup} inGamePreview={inGamePreview} onInGamePreviewChange={onInGamePreviewChange} screenVh={screenVh} onScreenVhChange={onScreenVhChange} />
-      <div className="flex shrink-0 flex-col gap-1.5">
-        <textarea ref={area} value={body} onChange={(e) => onChange(setFontSizePercent(e.target.value, percent))} onKeyDown={(e) => e.stopPropagation()} spellCheck={false} rows={limit?.singleLine ? 2 : 4} wrap={limit?.singleLine ? "off" : "soft"} disabled={!limitsReady} aria-label="Message text" aria-invalid={!!editError} aria-describedby="game-text-limit game-text-error"
+      <GameTextPreview key={`${folder}:${message.key}`} folder={folder} file={message.file} id={message.id} font={font} text={value} originalText={message.text} place={message.place} lookup={lookup} inGamePreview={inGamePreview} onInGamePreviewChange={onInGamePreviewChange} screenVh={screenVh} onScreenVhChange={onScreenVhChange} />
+      <div data-message-edit-controls className="flex shrink-0 flex-col gap-1.5">
+        <textarea ref={area} value={body} onChange={(e) => {
+          const type = (e.nativeEvent as InputEvent).inputType;
+          const group = ['insertText', 'deleteContentBackward', 'deleteContentForward'].includes(type) ? type : null;
+          change(setFontSizePercent(e.target.value, percent), undefined, { before: inputBefore.current, after: selection(), group });
+        }} onBeforeInput={() => { inputBefore.current = selection(); }} onPaste={() => { inputBefore.current = selection(); }} onCut={cut}
+          onKeyDown={(e) => { inputBefore.current = selection(); e.stopPropagation(); }} spellCheck={false} rows={limit?.singleLine ? 2 : 4} wrap={limit?.singleLine ? "off" : "soft"} disabled={!limitsReady} aria-label="Message text" aria-invalid={!!editError} aria-describedby="game-text-limit game-text-error"
           className={cn(limit?.singleLine ? "min-h-16" : "min-h-24", "w-full resize-y rounded-md border bg-background p-2.5 font-mono text-[13px] leading-relaxed outline-none focus:ring-1 focus:ring-ring")} />
-        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-          <IconPicker font={iconFont} onInsert={insert} />
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+          <IconPicker font={iconFont} onInsert={insert} onReturnFocus={focusArea} />
+          <TextColourPicker disabled={!limitsReady} open={coloursOpen} onOpenChange={setColoursOpen} onApply={colour} onReturnFocus={focusArea} />
           <span id="game-text-limit" data-text-limit={limit?.capacity}>{!limitsReady ? "Reading text limits…" : limit ? `${messageTextLength(value)} / ${limit.capacity} characters${limit.singleLine ? " · one line" : ` · ${body.split("\n").length} lines`} (including game codes)` : `${plainText(body).length} characters · limit unavailable for this message`}</span>
-          {value !== message.text && <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-[11px]" onClick={() => onChange(message.text)}><RotateCcw /> Original</Button>}
+          {value !== message.text && <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-[11px]" onClick={() => change(message.text)}><RotateCcw /> Original</Button>}
         </div>
         <p id="game-text-error" role={editError ? "alert" : undefined} className={cn("m-0 text-[11px]", editError ? "text-destructive" : "hidden")}>{editError}</p>
         <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
           <span className="w-16 shrink-0">Font size</span>
           <input type="range" min={20} max={200} step={1} value={Math.min(200, Math.max(20, percent))}
-            onChange={(e) => onChange(setFontSizePercent(value, Number(e.target.value)))} className="min-w-0 flex-1 accent-primary" />
+            onChange={(e) => change(setFontSizePercent(value, Number(e.target.value)), undefined, { before: selection(), after: selection(), group: 'font-size' })} className="min-w-0 flex-1 accent-primary" />
           <span className="w-9 text-right font-mono text-foreground">{percent}%</span>
         </label>
       </div>
       {twins.length > 0 && (
-        <div className="flex shrink-0 items-center gap-2 rounded-md border px-2.5 py-1.5 text-[11px] text-muted-foreground">
+        <div data-message-edit-controls className="flex shrink-0 items-center gap-2 rounded-md border px-2.5 py-1.5 text-[11px] text-muted-foreground">
           <span className="min-w-0 flex-1">The same text is also used by {twins.slice(0, 4).map((t) => `${hex(t.id)} (${t.place})`).join(", ")}{twins.length > 4 ? ` and ${twins.length - 4} more` : ""}: other screens show those.</span>
-          <Button size="sm" variant="secondary" className="h-6 shrink-0 px-2 text-[11px]" disabled={value === message.text} onClick={() => onChange(value, [message.key, ...twins.map((t) => t.key)])}>Apply to all {twins.length + 1}</Button>
+          <Button size="sm" variant="secondary" className="h-6 shrink-0 px-2 text-[11px]" disabled={value === message.text} onClick={() => change(value, [message.key, ...twins.map((t) => t.key)])}>Apply to all {twins.length + 1}</Button>
         </div>
       )}
       {codes.length > 0 && (

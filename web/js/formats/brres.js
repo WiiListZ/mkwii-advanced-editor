@@ -2,6 +2,7 @@
 // CHR0 bone animations and SRT0 texture animations. Output is plain data (no Three.js).
 
 import { parseGXMaterial } from './gx.js';
+import { readPAT0 } from './pat0.js';
 
 class View {
   constructor(data) {
@@ -52,7 +53,7 @@ export function parseBRRES(data) {
         else if (magic === 'PLT0') out.palettes.set(it.name, parsePLT0(r, it.offset, it.name));
         else if (magic === 'CHR0') out.chr.set(it.name, parseCHR0(r, it.offset, it.name));
         else if (magic === 'SRT0') out.srt.set(it.name, parseSRT0(r, it.offset, it.name));
-        else if (magic === 'PAT0') out.pat.set(it.name, parsePAT0(r, it.offset, it.name));
+        else if (magic === 'PAT0') out.pat.set(it.name, readPAT0(data, it.offset, it.name));
         else if (magic === 'CLR0') out.clr.set(it.name, parseCLR0(r, it.offset, it.name));
       } catch (e) {
         console.warn(`BRRES: could not read ${folder.name}/${it.name}: ${e.message}`);
@@ -773,7 +774,9 @@ function encodeTextureLevel(out, view, start, pixels, w, h, fmt) {
 
 // Decodes the base level of a texture into RGBA8 (rows top to bottom).
 export function decodeTexture(tex, palette = null) {
-  if (tex._rgba) return tex._rgba;
+  const indexed = [8, 9, 10].includes(tex.format) && palette;
+  if (indexed && tex._paletteRGBA?.has(palette)) return tex._paletteRGBA.get(palette);
+  if (!indexed && tex._rgba) return tex._rgba;
   const { width: w, height: h, format: fmt } = tex;
   const r = tex.reader, d = r.d;
   const out = new Uint8Array(w * h * 4);
@@ -827,7 +830,8 @@ export function decodeTexture(tex, palette = null) {
       p += BLOCK[fmt] ? (bw * bh * BLOCK[fmt][2]) / 8 : 32;
     }
   }
-  tex._rgba = out;
+  if (indexed) { tex._paletteRGBA ??= new WeakMap(); tex._paletteRGBA.set(palette, out); }
+  else tex._rgba = out;
   return out;
 }
 
@@ -940,35 +944,6 @@ function parseCHR0(r, o, name) {
     bones.set(e.name, { scale, rot, trans });
   }
   return { offset: o, headerSize: header, name, frames, loop, bones };
-}
-
-// PAT0: texture swap animation. Per material, per texture slot: step keyframes { frame, texture }.
-function parsePAT0(r, o, name) {
-  const version = r.u32(o + 0x08);
-  const base = o + 0x24 + (version >= 4 ? 4 : 0);
-  const frames = r.u16(base + 0x08), numTex = r.u16(base + 0x0C), loop = r.u32(base + 0x10) !== 0;
-  const texTable = o + r.s32(o + 0x14);
-  const texNames = Array.from({ length: numTex }, (_, i) => r.str(texTable + r.s32(texTable + i * 4)));
-  const materials = new Map();
-  for (const e of r.group(o + r.s32(o + 0x10))) {
-    const at = e.offset, flags = r.u32(at + 4);
-    const slots = [];
-    let p = at + 8;
-    for (let i = 0; i < 8; i++) {
-      const f = (flags >>> (i * 4)) & 0xF;
-      if (!(f & 1)) continue;
-      let keys;
-      if (f & 2) keys = [{ frame: 0, texture: texNames[r.u16(p)] }];
-      else {
-        const track = at + r.s32(p), count = r.u16(track);
-        keys = Array.from({ length: count }, (_, k) => ({ frame: r.f32(track + 8 + k * 8), texture: texNames[r.u16(track + 8 + k * 8 + 4)] }));
-      }
-      p += 4;
-      if (f & 4) slots.push({ index: i, keys: keys.filter((k) => k.texture) });
-    }
-    materials.set(e.name, slots);
-  }
-  return { name, frames, loop, materials };
 }
 
 // CLR0: colour animation of material registers (0-1 material colour, 2-3 ambient, 4-6 TEV colour, 7-10 konst).

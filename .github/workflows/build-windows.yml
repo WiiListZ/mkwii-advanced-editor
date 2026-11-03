@@ -30,6 +30,14 @@ jobs:
           bun-version: 1.4.3
       - name: Install dependencies
         run: bun install --frozen-lockfile
+      - name: Cache verified build runtimes
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/bun-windows-x64-baseline-*
+            .cache/upx-5.3.0
+            .cache/packed-runtimes
+          key: windows-runtime-${{ runner.os }}-${{ hashFiles('package.json', 'web/icon.ico', 'scripts/prepare-runtime.ts', 'scripts/pe-section-space.ts') }}
       - name: Run tests
         run: bun test
       - name: Check release tag
@@ -64,9 +72,17 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag @assets --clobber
             if ($LASTEXITCODE -ne 0) { throw "Could not update $tag assets" }
-            gh release edit $tag --title "MKWii Advanced Editor $tag"
+            if (Test-Path -LiteralPath "docs/releases/$tag.md") {
+              gh release edit $tag --title "MKWii Advanced Editor $tag" --notes-file "docs/releases/$tag.md"
+            } else {
+              gh release edit $tag --title "MKWii Advanced Editor $tag"
+            }
           } else {
-            gh release create $tag @assets --title "MKWii Advanced Editor $tag" --generate-notes
+            if (Test-Path -LiteralPath "docs/releases/$tag.md") {
+              gh release create $tag @assets --title "MKWii Advanced Editor $tag" --notes-file "docs/releases/$tag.md" --latest
+            } else {
+              gh release create $tag @assets --title "MKWii Advanced Editor $tag" --generate-notes --latest
+            }
           }
           if ($LASTEXITCODE -ne 0) { throw "Could not publish $tag" }
 

@@ -5,10 +5,11 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve, sep } from "node:path";
-import { unzipSync } from "fflate";
-import archivePath from "../vendor/tools-win-x64.zip" with { type: "file" };
+import { toolPackageEntries } from "./tool-package.ts";
+import archivePath from "../vendor/tools-win-x64.br" with { type: "file" };
 
-export const BUNDLED_TOOLS_SHA256 = "a8c27150dbd835f525503631e4be3e89d7b291eb3f7cf534c08d9b0d8c4169ca";
+export const BUNDLED_TOOLS_SHA256 = "3e6301a592312ca975e15f831b61a791f5368245db281d3d4e6c8caa68d4b732";
+const LEGACY_TOOLS_SHA256 = "a8c27150dbd835f525503631e4be3e89d7b291eb3f7cf534c08d9b0d8c4169ca";
 
 const installedAbmatt = () => [
   process.env.MKWII_ABMATT,
@@ -33,9 +34,9 @@ function paths(root: string) {
   };
 }
 
-async function ready(root: string) {
+async function ready(root: string, checksum = BUNDLED_TOOLS_SHA256) {
   const bundled = paths(root);
-  return (await Bun.file(join(root, ".ready")).text().catch(() => "")) === BUNDLED_TOOLS_SHA256 &&
+  return (await Bun.file(join(root, ".ready")).text().catch(() => "")) === checksum &&
     [bundled.abmatt, bundled.wszst, bundled.wimgt].every(existsSync);
 }
 
@@ -44,15 +45,18 @@ export async function extractBundledTools(cacheRoot: string) {
   const target = join(resolve(cacheRoot), BUNDLED_TOOLS_SHA256.slice(0, 16));
   const bundled = paths(target);
   if (await ready(target)) return bundled;
+  // Compression changed, not the executables. Reuse an existing verified
+  // installation instead of unpacking a second copy for current users.
+  const legacy = join(resolve(cacheRoot), LEGACY_TOOLS_SHA256.slice(0, 16));
+  if (await ready(legacy, LEGACY_TOOLS_SHA256)) return paths(legacy);
 
-  const zip = new Uint8Array(await readFile(archivePath));
-  const actual = createHash("sha256").update(zip).digest("hex");
+  const packed = new Uint8Array(await readFile(archivePath));
+  const actual = createHash("sha256").update(packed).digest("hex");
   if (actual !== BUNDLED_TOOLS_SHA256) throw new Error("The bundled tools failed their SHA-256 check");
-  const files = unzipSync(zip);
   const stage = join(resolve(cacheRoot), `.extract-${process.pid}-${crypto.randomUUID()}`);
   await mkdir(stage, { recursive: true });
   try {
-    for (const [name, data] of Object.entries(files)) {
+    for (const [name, data] of toolPackageEntries(packed)) {
       const destination = resolve(stage, ...name.split("/"));
       if (!destination.startsWith(stage + sep) || name.includes("\\") || name.split("/").includes(".."))
         throw new Error(`Unsafe bundled tool path: ${name}`);

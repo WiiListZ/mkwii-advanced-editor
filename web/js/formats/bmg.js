@@ -6,6 +6,8 @@
 // player names, numbers… They are kept byte for byte and shown in the text as {1A:hex}, where the
 // hex starts with the size byte.
 
+import { stripBmgStyles } from './bmg-style.js';
+
 const ESC = /\{1A:([0-9a-fA-F]+)\}/g;
 const align = (n, a) => (n + a - 1) & ~(a - 1);
 
@@ -170,7 +172,7 @@ export function createBMG(messages) {
 }
 
 // Text without escape sequences, for lists and search.
-export const plainText = (text) => text.replace(/\{1A:0800000000[0-9a-f]{2}\}/gi, '').replace(ESC, '◆');
+export const plainText = (text) => stripBmgStyles(text).replace(ESC, '◆');
 
 // MKWii's 0x1A group 0, tag 0 scales the following text (0x64 = 100%).
 const FONT_SIZE_PREFIX = /^\{1A:0800000000([0-9a-fA-F]{2})\}/;
@@ -218,10 +220,13 @@ export function fitMessageText(text, capacity) {
 const RANGES = {
   Common: [
     [0x2328, 0x2381, 'Character name'], [0x2382, 0x23ef, 'Vehicle name'], [0x23f0, 0x2453, 'Cup name'],
-    [0x2454, 0x2486, 'Track name'], [0x2487, 0x248f, 'Mode name'], [0x2490, 0x24b7, 'Track name'], [0x24b8, 0x24ff, 'Battle arena name'],
+    [0x2454, 0x2486, 'Track name'], [0x2489, 0x248a, 'Battle cup name'], [0x2487, 0x248f, 'Mode name'], [0x2490, 0x24b7, 'Track name'], [0x24b8, 0x24ff, 'Battle arena name'],
     [0x2500, 0x25ff, 'Players, scores and ranks'], [0x2600, 0x27ff, 'System message'],
   ],
   Race: [
+    [0x4b1, 0x4b5, 'Race countdown and finish banner'], [0x4b6, 0x4b7, 'Race outcome'], [0x4bb, 0x4bb, 'New record banner'],
+    [0x4c2, 0x4ca, 'Award ceremony message'], [0x515, 0x520, 'Results position'], [0x581, 0x588, 'Race introduction'],
+    [0x5dc, 0x5e0, 'Controller help'], [0x45b, 0x45c, 'Ghost data save message'], [0x53a, 0x53e, 'Online race message'],
     [0x3e8, 0x44e, 'Menu after a race'], [0x44f, 0x4b2, 'Message during a race'], [0x4b3, 0x516, 'Results screen'],
     [0x517, 0x57f, 'Positions and scores'], [0x580, 0x5dd, 'Race information'], [0x5de, 0x7ff, 'Controls'],
   ],

@@ -56,13 +56,17 @@ function sheetCanvas(font, index) {
   const tex = font.sheets[index];
   const rgba = decodeTexture(tex);
   // IA sheets: intensity is the fill (white) and its dark border, alpha the coverage. I-only
-  // sheets are plain coverage.
+  // sheets are plain coverage; RGB/RGBA sheets (controller icons, race numbers) carry their own colour.
   const img = new ImageData(tex.width, tex.height);
-  const intensityOnly = tex.format === 0 || tex.format === 1;
-  for (let i = 0; i < tex.width * tex.height; i++) {
-    const v = intensityOnly ? 255 : rgba[i * 4];
-    img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
-    img.data[i * 4 + 3] = intensityOnly ? rgba[i * 4] : rgba[i * 4 + 3];
+  if (tex.format >= 4) {
+    img.data.set(rgba);
+  } else {
+    const intensityOnly = tex.format === 0 || tex.format === 1;
+    for (let i = 0; i < tex.width * tex.height; i++) {
+      const v = intensityOnly ? 255 : rgba[i * 4];
+      img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
+      img.data[i * 4 + 3] = intensityOnly ? rgba[i * 4] : rgba[i * 4 + 3];
+    }
   }
   const c = document.createElement('canvas');
   c.width = tex.width; c.height = tex.height;
@@ -86,10 +90,11 @@ export function drawText(ctx, font, runs, x, y, { scale = 1, maxWidth = Infinity
       const w = font.widths.get(index) || font.defaultWidth;
       if (penX - x + w.advance * scale > maxWidth) { widest = Math.max(widest, penX - x); penX = x; penY += line; }
       const sheet = Math.floor(index / perSheet), cell = index % perSheet;
-      if (sheet < font.sheets.length && w.glyph > 0) {
+      if (sheet < font.sheets.length && w.glyph > 0 && run.alpha !== 0) {
         const src = sheetCanvas(font, sheet);
         const sx = (cell % font.cols) * pitchX, sy = Math.floor(cell / font.cols) * pitchY;
-        if (run.color && run.color !== '#ffffff') {
+        const colorSheet = font.sheets[sheet]?.format >= 4;
+        if (!colorSheet && run.color && run.color !== '#ffffff') {
           // Tint: draw the white glyph on a scratch canvas and colour it.
           const t = tintCanvas(w.glyph, font.cellH);
           const g = t.getContext('2d');

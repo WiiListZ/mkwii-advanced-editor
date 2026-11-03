@@ -6,6 +6,7 @@
 import { decodeTexture } from '../formats/brres.js';
 import { keyValue } from '../formats/brlyt.js';
 import { fitMessageText } from '../formats/bmg.js';
+import { bmgColour, bmgStyleRuns } from '../formats/bmg-style.js';
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -256,42 +257,61 @@ export class LayoutRenderer {
   // alignment, glyphs coloured by the material (black = outline, white = fill) and the top/bottom
   // gradient.
   drawText(ctx, m, pane, props, alpha) {
-    const rawText = fitMessageText(this.overrides.text?.[pane.name] ?? pane.text ?? '', pane.textCapacity);
+    const rawText = fitMessageText(this.overrides.text?.[pane.name] ?? pane.text ?? '', this.overrides.unlimitedText ? undefined : pane.textCapacity);
     if (!rawText) return;
-    const sizeCode = rawText.match(/\{1A:0800000000([0-9a-f]{2})\}/i);
-    const fontPercent = sizeCode ? Math.max(1, parseInt(sizeCode[1], 16)) : 100;
-    const text = rawText.replace(/\{1A:0800000000[0-9a-f]{2}\}/gi, '');
-    if (!text) return;
     const font = this.getFont(this.layout.fonts[pane.font]);
     const chain = [font, ...this.getFallbacks()].filter(Boolean);
     if (!chain.length) return;
     const main = font || chain[0];
     const mat = this.material(pane.material);
-    const scaleX = pane.fontSize[0] / (main.width || main.cellW) * fontPercent / 100;
-    const scaleY = pane.fontSize[1] / main.height * fontPercent / 100;
-    const lineH = (main.lineFeed || main.height) * scaleY + pane.lineSpace;
-    const glyphOf = (ch) => {
+    const baseScaleX = pane.fontSize[0] / (main.width || main.cellW);
+    const baseScaleY = pane.fontSize[1] / main.height;
+    const feed = main.lineFeed || main.height;
+
+    // Native inline size and colour codes affect subsequent characters independently.
+    let curScale = 1, lineChars = [];
+    const rawLines = [];
+    for (const run of bmgStyleRuns(rawText)) {
+      curScale = run.scale;
+      for (const ch of run.text) {
+        if (ch === '\n') { rawLines.push({ chars: lineChars, emptyScale: curScale }); lineChars = []; }
+        else lineChars.push({ ch, scale: curScale, colour: run.colour });
+      }
+    }
+    rawLines.push({ chars: lineChars, emptyScale: curScale });
+    if (rawLines.every((l) => !l.chars.length)) return;
+
+    const glyphOf = ({ ch, scale, colour }) => {
       const code = ch.codePointAt(0);
       const f = chain.find((x) => x.chars.has(code)) || main;
       const index = f.chars.get(code) ?? f.chars.get(f.alterChar) ?? f.alterChar;
       // Every font is scaled to the same text height.
-      const sx = scaleX * (main.height / f.height), sy = scaleY * (main.height / f.height);
-      return { font: f, index, w: f.widths.get(index) || f.defaultWidth, sx, sy };
+      const ratio = (main.height / f.height) * scale;
+      return { font: f, index, w: f.widths.get(index) || f.defaultWidth, sx: baseScaleX * ratio, sy: baseScaleY * ratio, scale, colour: bmgColour(colour) };
     };
-    const lines = text.split('\n').map((line) => {
-      const glyphs = [...line].map(glyphOf);
+    let nextTop = 0, prevScale = 1;
+    const lines = rawLines.map(({ chars, emptyScale }, row) => {
+      const glyphs = chars.map(glyphOf);
+      const lineScale = glyphs.length ? Math.max(...glyphs.map((g) => g.scale)) : emptyScale;
       const width = glyphs.reduce((sum, g, i) => sum + g.w.advance * g.sx + (i < glyphs.length - 1 ? pane.charSpace : 0), 0);
-      return { glyphs, width };
+      const top = row === 0 ? 0 : nextTop + pane.lineSpace * prevScale;
+      const height = feed * baseScaleY * lineScale;
+      nextTop = top + height;
+      prevScale = lineScale;
+      return { glyphs, width, top, height, scale: lineScale };
     });
     const [w, h] = props.size;
     const [ox, oy] = originOffset(pane.origin, w, h);
-    // Text wider than its box is squeezed horizontally to fit, as the game does with long names.
+    // Text wider or taller than its box is squeezed to fit, as the game does with long names and multi-line help screens.
     const widest = Math.max(0, ...lines.map((l) => l.width));
-    const squeeze = widest > w && w > 0 ? w / widest : 1;
-    const charSpace = pane.charSpace * squeeze;
-    if (squeeze < 1) for (const line of lines) { line.width *= squeeze; for (const g of line.glyphs) g.sx *= squeeze; }
-    const blockW = widest * squeeze;
-    const blockH = lines.length * (main.lineFeed || main.height) * scaleY + (lines.length - 1) * pane.lineSpace;
+    const rawBlockH = Math.max(0, nextTop);
+    const squeezeX = widest > w && w > 0 ? w / widest : 1;
+    const squeezeY = rawBlockH > h && h > 0 ? h / rawBlockH : 1;
+    const charSpace = pane.charSpace * squeezeX;
+    if (squeezeX < 1) for (const line of lines) { line.width *= squeezeX; for (const g of line.glyphs) g.sx *= squeezeX; }
+    if (squeezeY < 1) for (const line of lines) { line.top *= squeezeY; line.height *= squeezeY; line.scale *= squeezeY; for (const g of line.glyphs) g.sy *= squeezeY; }
+    const blockW = widest * squeezeX;
+    const blockH = rawBlockH * squeezeY;
     // Text block inside the box (y up: oy is the top edge).
     const hx = pane.textOrigin % 3, vy = Math.floor(pane.textOrigin / 3);
     const bx = ox + (hx === 0 ? 0 : hx === 1 ? (w - blockW) / 2 : w - blockW);
@@ -299,11 +319,12 @@ export class LayoutRenderer {
     const align = pane.textAlign === 0 ? hx : pane.textAlign - 1;
     // Raster of the text block, with room for glyphs past their advance and for glyphs of another
     // font that reach above or below the line (the vertical room does not shrink with the squeeze).
-    const marginX = 8 * scaleX, marginY = 12 * scaleY;
+    const padScale = Math.max(1, ...lines.map((l) => l.scale));
+    const marginX = 8 * baseScaleX * padScale, marginY = 12 * baseScaleY * padScale;
     const rect = { x: bx - marginX, y: by + marginY, w: blockW + marginX * 2, h: blockH + marginY * 2 };
     const sx = Math.hypot(m.a, m.b), sy = Math.hypot(m.c, m.d);
     const pw = Math.min(2048, Math.max(1, Math.ceil(rect.w * sx))), ph = Math.min(2048, Math.max(1, Math.ceil(rect.h * sy)));
-    const textKey = JSON.stringify(['t', pw, ph, text, fontPercent, squeeze, pane.font, pane.fontSize, pane.charSpace, pane.lineSpace, align, mat?.black, mat?.white, pane.topColor, pane.bottomColor, alpha]);
+    const textKey = JSON.stringify(['t', pw, ph, rawText, squeezeX, squeezeY, pane.font, pane.fontSize, pane.charSpace, pane.lineSpace, align, mat?.black, mat?.white, pane.topColor, pane.bottomColor, alpha]);
     const cached = this.rasters.get(textKey);
     if (cached) { this.blit(ctx, m, cached, rect, blendOp(mat)); return; }
     const img = new ImageData(pw, ph), out = img.data;
@@ -314,17 +335,21 @@ export class LayoutRenderer {
     // the line's baseline, which is the main font's baseline in its cell (not its ascent: the menu
     // font and kart_kanji_font put the baseline 36 and 40 pixels down cells of different heights).
     const baseOf = (f) => f.baseline ?? f.ascent ?? 0;
-    lines.forEach((line, row) => {
+    for (const line of lines) {
       let pen = marginX + (align === 0 ? 0 : align === 1 ? (blockW - line.width) / 2 : blockW - line.width);
-      const lineTop = marginY + row * lineH;
-      for (const { font: f, index, w: gw, sx: gsx, sy: gsy } of line.glyphs) {
+      const lineTop = marginY + line.top;
+      for (const { font: f, index, w: gw, sx: gsx, sy: gsy, colour } of line.glyphs) {
         const perSheet = f.cols * f.rows, pitchX = f.cellW + 1, pitchY = f.cellH + 1;
-        const intensityOnly = f.sheets[0]?.format === 0 || f.sheets[0]?.format === 1;
         const sheet = Math.floor(index / perSheet), cell = index % perSheet;
-        if (sheet < f.sheets.length && gw.glyph > 0) {
+        if (sheet < f.sheets.length && gw.glyph > 0 && colour?.[3] !== 0) {
+          // Native colours tint the foreground register; the outline and baked colour icons
+          // retain their own colours. Reset uses the layout's material and selection animation.
+          const foreground = colour ? [white[0] * colour[0] / 255, white[1] * colour[1] / 255, white[2] * colour[2] / 255, white[3]] : white;
           const tex = f.sheets[sheet], texels = this.sheetTexels(f, sheet);
+          const colorFont = tex.format >= 4;
+          const intensityOnly = tex.format === 0 || tex.format === 1;
           const cx = (cell % f.cols) * pitchX, cy = Math.floor(cell / f.cols) * pitchY;
-          const gx0 = pen + gw.left * gsx, gy0 = lineTop + baseOf(main) * scaleY - baseOf(f) * gsy;
+          const gx0 = pen + gw.left * gsx, gy0 = lineTop + baseOf(main) * baseScaleY * line.scale - baseOf(f) * gsy;
           const x0 = Math.max(0, Math.floor(gx0 * px)), x1 = Math.min(pw, Math.ceil((gx0 + gw.glyph * gsx) * px));
           const y0 = Math.max(0, Math.floor(gy0 * py)), y1 = Math.min(ph, Math.ceil((gy0 + f.cellH * gsy) * py));
           for (let j = y0; j < y1; j++) {
@@ -338,20 +363,43 @@ export class LayoutRenderer {
               const ta = ((cy + yA) * tex.width + cx + xA) * 4, tb = ((cy + yA) * tex.width + cx + xB) * 4;
               const tc = ((cy + yB) * tex.width + cx + xA) * 4, td = ((cy + yB) * tex.width + cx + xB) * 4;
               const blend = (channel) => (texels[ta + channel] * (1 - vx) + texels[tb + channel] * vx) * (1 - vy) + (texels[tc + channel] * (1 - vx) + texels[td + channel] * vx) * vy;
-              const intensity = intensityOnly ? 255 : blend(0), coverage = blend(intensityOnly ? 0 : 3);
+              const coverage = blend(intensityOnly ? 0 : 3);
               if (!coverage) continue;
-              const fi = intensity / 255;
-              const a = clamp01(((black[3] + (white[3] - black[3]) * (coverage / 255)) / 255) * grad[3] * alpha);
+              let sr, sg, sb, sa;
+              if (colorFont) {
+                sr = clamp01((blend(0) / 255) * grad[0]);
+                sg = clamp01((blend(1) / 255) * grad[1]);
+                sb = clamp01((blend(2) / 255) * grad[2]);
+                sa = clamp01((coverage / 255) * grad[3] * alpha);
+              } else {
+                const fi = (intensityOnly ? 255 : blend(0)) / 255;
+                sr = clamp01(((black[0] + (foreground[0] - black[0]) * fi) / 255) * grad[0]);
+                sg = clamp01(((black[1] + (foreground[1] - black[1]) * fi) / 255) * grad[1]);
+                sb = clamp01(((black[2] + (foreground[2] - black[2]) * fi) / 255) * grad[2]);
+                sa = clamp01(((black[3] + (white[3] - black[3]) * (coverage / 255)) / 255) * grad[3] * alpha);
+              }
+              if (sa <= 0) continue;
               const at = (j * pw + i) * 4;
-              // Glyphs of one string do not overlap: the later one simply wins.
-              for (let c = 0; c < 3; c++) out[at + c] = clamp01(((black[c] + (white[c] - black[c]) * fi) / 255) * grad[c]) * 255;
-              out[at + 3] = Math.max(out[at + 3], a * 255);
+              const da = out[at + 3] / 255;
+              // Glyph cells overlap at their baked borders (negative left bearing): alpha-composite in GX draw order.
+              if (da <= 0 || sa >= 1) {
+                out[at] = sr * 255;
+                out[at + 1] = sg * 255;
+                out[at + 2] = sb * 255;
+                out[at + 3] = sa * 255;
+              } else {
+                const k = da * (1 - sa), oa = sa + k;
+                out[at] = ((sr * sa + (out[at] / 255) * k) / oa) * 255;
+                out[at + 1] = ((sg * sa + (out[at + 1] / 255) * k) / oa) * 255;
+                out[at + 2] = ((sb * sa + (out[at + 2] / 255) * k) / oa) * 255;
+                out[at + 3] = oa * 255;
+              }
             }
           }
         }
         pen += gw.advance * gsx + charSpace;
       }
-    });
+    }
     this.blit(ctx, m, this.keep(textKey, img), rect, blendOp(mat));
   }
 }

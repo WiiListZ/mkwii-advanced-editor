@@ -1,13 +1,13 @@
 import { NumberField } from "../number-field";
 import * as React from "react";
 import {
-  Box, BrickWall, Circle, Copy, Cylinder, Download, Eye, EyeOff, FileUp, FlipVertical2, Globe, Hexagon, Move3D, PaintBucket, Paintbrush, RectangleHorizontal, RectangleVertical, Square, Trash2, Triangle,
+  Box, BrickWall, ChevronDown, Circle, Copy, Cylinder, Download, Eye, EyeOff, FileUp, FlipVertical2, Globe, Hexagon, MousePointer2, Move, PaintBucket, Paintbrush, Plus, RectangleHorizontal, RectangleVertical, RotateCw, Scale3d, Square, Trash2, Triangle, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { KCL_TYPES } from "../../../js/data/defs.js";
 import { COLLISION_SHAPES } from "../../../js/editor/collision.js";
@@ -17,7 +17,7 @@ import { hex, type CollisionShapeKind } from "../editor";
 import { Hint, InfoTip, SectionTitle } from "../common";
 import { cn } from "@/lib/utils";
 
-type Mode = "show" | "paint" | "edit";
+type Mode = "show" | "paint";
 
 const BRUSHES = [
   { id: "single", icon: Triangle, label: "Triangle", text: "Paints the triangle under the cursor." },
@@ -30,7 +30,21 @@ const SHAPE_ICONS: Record<CollisionShapeKind, React.ComponentType<{ className?: 
   triangle: Triangle, rectangle: RectangleHorizontal, wall: RectangleVertical, box: Box, cylinder: Cylinder, sphere: Globe, polygon: Hexagon,
 };
 
-// Shape picker and its size options, shared by the empty state and Edit mode.
+function CollisionSection({ icon: Icon, title, description, children, ...props }: {
+  icon: React.ComponentType<{ className?: string }>; title: string; description?: string; children: React.ReactNode;
+  defaultOpen?: boolean; open?: boolean; onOpenChange?: (open: boolean) => void;
+}) {
+  return <Collapsible {...props} className="mt-3 shrink-0 rounded-lg border bg-muted/10">
+    <CollapsibleTrigger className="group flex w-full cursor-pointer items-center gap-2.5 rounded-lg p-3 text-left hover:bg-accent/40">
+      <Icon className="size-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1"><span className="block text-xs font-semibold">{title}</span>{description && <span className="mt-0.5 block text-[11px] text-muted-foreground">{description}</span>}</span>
+      <ChevronDown className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+    </CollapsibleTrigger>
+    <CollapsibleContent><div className="border-t p-3">{children}</div></CollapsibleContent>
+  </Collapsible>;
+}
+
+// Shape picker and its size options, shared by the empty state and Show mode.
 function ShapeOptions() {
   const ed = useEditor("ui");
   const shape = ed.collisionShape;
@@ -43,10 +57,10 @@ function ShapeOptions() {
         {(Object.keys(COLLISION_SHAPES) as CollisionShapeKind[]).map((kind) => {
           const Icon = SHAPE_ICONS[kind];
           return (
-            <button key={kind} aria-pressed={shape.kind === kind} title={(COLLISION_SHAPES as any)[kind].help} onClick={() => ed.setCollisionShape({ kind })}
+            <Hint key={kind} title={(COLLISION_SHAPES as any)[kind].label} text={(COLLISION_SHAPES as any)[kind].help} side="right"><button aria-pressed={shape.kind === kind} onClick={() => ed.setCollisionShape({ kind })}
               className={cn("flex cursor-pointer flex-col items-center gap-1 rounded-md border py-2 text-[11px]", shape.kind === kind ? "border-primary bg-primary/15 text-foreground" : "text-muted-foreground hover:bg-accent")}>
               <Icon className="size-4" /> {(COLLISION_SHAPES as any)[kind].label}
-            </button>
+            </button></Hint>
           );
         })}
       </div>
@@ -81,16 +95,13 @@ export function CollisionPanel() {
   const p = ed.paint;
   const painting = ed.tool?.type === "paint";
   const editing = ed.tool?.type === "geometry" && ed.tool.target === "collision";
-  const drawing = ed.tool?.type === "collision-create";
   const selectedTris: number[] = ed.geometrySelection?.type === "collision" ? ed.geometrySelection.tris || [ed.geometrySelection.tri] : [];
   const selectedTri = ed.geometrySelection?.type === "collision" ? ed.geometrySelection.tri : -1;
   const [, force] = React.useReducer((x) => x + 1, 0);
-  const [mode, setModeState] = React.useState<Mode>(painting ? "paint" : editing || drawing ? "edit" : "show");
-  // Tools started elsewhere (3D view, shortcuts, the empty state) show their mode.
-  React.useEffect(() => {
-    if (painting) setModeState("paint");
-    else if (editing || drawing) setModeState("edit");
-  }, [painting, editing, drawing]);
+  const mode: Mode = painting ? "paint" : "show";
+  const drawing = ed.tool?.type === "collision-create";
+  const [createOpen, setCreateOpen] = React.useState(false);
+  React.useEffect(() => { if (drawing) setCreateOpen(true); }, [drawing]);
 
   if (!kcl) {
     return (
@@ -110,12 +121,10 @@ export function CollisionPanel() {
     );
   }
 
-  // Switching mode switches the 3D tool too: Paint paints, Edit selects triangles, Show does neither.
+  // Show includes selection, vertex editing and drawing; Paint remains separate.
   const setMode = (next: Mode) => {
-    setModeState(next);
     if (next === "paint" && !painting) ed.startPainting();
-    else if (next === "edit" && !editing) ed.startGeometryEditing("collision");
-    else if (next === "show" && (painting || editing || drawing)) ed.stopTool();
+    else if (next === "show" && !editing) ed.startGeometryEditing("collision");
   };
 
   const counts = new Array(32).fill(0);
@@ -135,8 +144,8 @@ export function CollisionPanel() {
       </div>
 
       {/* Mode switch */}
-      <div role="tablist" aria-label="Collision mode" className="grid grid-cols-3 gap-1 rounded-md border bg-muted/30 p-0.5">
-        {([["show", Eye, "Show"], ["paint", Paintbrush, "Paint"], ["edit", Move3D, "Edit"]] as const).map(([id, Icon, label]) => (
+      <div role="tablist" aria-label="Collision mode" className="grid grid-cols-2 gap-1 rounded-md border bg-muted/30 p-0.5">
+        {([["show", Eye, "Show"], ["paint", Paintbrush, "Paint"]] as const).map(([id, Icon, label]) => (
           <button key={id} role="tab" aria-selected={mode === id} onClick={() => setMode(id)}
             className={cn("flex cursor-pointer items-center justify-center gap-1.5 rounded-md py-1.5 text-[12.5px] font-medium transition-colors",
               mode === id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>
@@ -146,40 +155,95 @@ export function CollisionPanel() {
       </div>
 
       {mode === "show" && <>
-        <SectionTitle>Display</SectionTitle>
-        <div className="grid grid-cols-[80px_1fr] items-center gap-x-3 gap-y-3 rounded-lg border bg-muted/20 p-3">
-          <Label>Opacity</Label>
-          {/* Over the track model (Both) the collision uses the same opacity as Paint. */}
-          {overModel
-            ? <div className="flex items-center gap-2"><Slider aria-label="Collision opacity over the model" min={0.15} max={0.95} step={0.05} value={[vp.paintOpacity]} onValueChange={([v]) => { vp.paintOpacity = v; vp.applyDisplayMode(); force(); }} /><span className="w-10 text-right text-xs tabular-nums">{Math.round(vp.paintOpacity * 100)}%</span></div>
-            : <Slider min={0.15} max={1} step={0.05} value={[vp.kclOpacity]} onValueChange={([v]) => { vp.kclOpacity = v; rebuild(); }} />}
-          <Label>Triangles</Label>
-          {overModel
-            ? <Switch aria-label="Show collision triangle edges" checked={vp.paintShowTriangles} onCheckedChange={(v) => { vp.paintShowTriangles = v; rebuild(); }} />
-            : <Switch aria-label="Show collision triangle edges" checked={vp.kclWireframe} onCheckedChange={(v) => { vp.kclWireframe = v; rebuild(); }} />}
+        <div className="mt-3 shrink-0 rounded-lg border bg-muted/10">
+          <div className="flex items-center gap-2 border-b px-3 py-2.5">
+            <MousePointer2 className="size-4 text-primary" />
+            <span className="flex-1 text-xs font-semibold">Selection</span>
+            {editing && selectedTri >= 0 && <Hint title="Clear selection" text="Deselect the collision triangles without changing them."><Button aria-label="Clear collision selection" size="icon-sm" variant="ghost" onClick={() => vp.selectGeometry(null)}><X /></Button></Hint>}
+            {editing && <Hint title="Stop selecting" text="Stop editing collision triangles (Esc)."><Button aria-label="Stop selecting collision" size="icon-sm" variant="ghost" onClick={() => ed.stopTool()}><Square /></Button></Hint>}
+          </div>
+          <div className="space-y-3 p-3">
+            {editing ? <>
+              <div role="group" aria-label="Transform collision selection" className="grid grid-cols-3 gap-1 rounded-md bg-muted/40 p-0.5">
+                {([["translate", Move, "Move", "W"], ["rotate", RotateCw, "Rotate", "E"], ["scale", Scale3d, "Scale", "R"]] as const).map(([id, Icon, label, key]) => <Hint key={id} title={`${label} (${key})`} text={`${label} the selected triangles using the handles in the 3D view.`}>
+                  <button aria-pressed={ed.mode === id} onClick={() => vp.setMode(id)} className={cn("flex cursor-pointer items-center justify-center gap-1 rounded py-1.5 text-[11px]", ed.mode === id ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground")}><Icon className="size-3.5" />{label}</button>
+                </Hint>)}
+              </div>
+              {selectedTri >= 0 ? <>
+                <div className="flex items-center gap-2 text-xs font-medium">
+                  <span className="size-3.5 shrink-0 rounded border border-black/30" style={{ background: (KCL_TYPES[kcl.flags[selectedTri] & 31] as any).color }} />
+                  {selectedTris.length === 1 ? `Triangle #${selectedTri + 1}` : `${selectedTris.length} triangles selected`}
+                </div>
+                <label className="block space-y-1.5 text-[11px] text-muted-foreground">Surface type{selectedTris.length > 1 ? " for selection" : ""}
+                  <select className="h-8 w-full rounded-md border bg-background px-2 text-xs text-foreground" value={kcl.flags[selectedTri] & 31} onChange={(e) => ed.editCollisionType(Number(e.target.value))}>
+                    {KCL_TYPES.map((type: any) => <option key={type.id} value={type.id}>{type.name}</option>)}
+                  </select>
+                </label>
+                {selectedTris.length > 1 && new Set(selectedTris.map((tri) => kcl.flags[tri] & 31)).size > 1 && <p className="m-0 text-[11px] text-muted-foreground">Mixed surface types. Choosing one applies it to all selected triangles.</p>}
+                <div className="grid grid-cols-3 gap-1 [&_button]:gap-1 [&_button]:px-1 [&_button]:text-[11px] [&_svg]:size-3.5">
+                  <Hint title="Duplicate selection" text="Create a copy of the selected collision triangles."><Button size="sm" variant="secondary" onClick={() => ed.duplicateCollisionTriangle()}><Copy /> Duplicate</Button></Hint>
+                  <Hint title="Flip normal" text="Reverse which side of the selected triangles is solid."><Button size="sm" variant="secondary" onClick={() => ed.flipCollisionTriangle()}><FlipVertical2 /> Flip normal</Button></Hint>
+                  <Hint title="Delete selection" text="Remove the selected collision triangles. Ctrl+Z undoes this change."><Button size="sm" variant="ghost" className="text-destructive" onClick={() => ed.deleteCollisionTriangle()}><Trash2 /> Delete</Button></Hint>
+                </div>
+                {selectedTris.length === 1 && <Collapsible className="border-t pt-2">
+                  <CollapsibleTrigger className="group flex w-full cursor-pointer items-center justify-between py-1 text-[11px] text-muted-foreground hover:text-foreground">Vertex coordinates<ChevronDown className="size-3.5 transition-transform group-data-[state=open]:rotate-180" /></CollapsibleTrigger>
+                  <CollapsibleContent><div className="mt-2 grid grid-cols-[25px_repeat(3,minmax(0,1fr))] items-center gap-1 text-[11px]">
+                    <span />{["X", "Y", "Z"].map((axis, i) => <span key={axis} className={cn("text-center font-semibold", ["text-red-400", "text-green-400", "text-blue-400"][i])}>{axis}</span>)}
+                    {[0, 1, 2].map((vertex) => <React.Fragment key={vertex}>
+                      <span className="text-muted-foreground">V{vertex + 1}</span>
+                      {[0, 1, 2].map((axis) => <CollisionCoordinate key={`${selectedTri}-${vertex}-${axis}`} label={`Vertex ${vertex + 1} ${["X", "Y", "Z"][axis]}`} value={kcl.verts[selectedTri * 9 + vertex * 3 + axis]} onCommit={(value) => ed.editCollisionVertex(vertex, axis, value)} />)}
+                    </React.Fragment>)}
+                  </div></CollapsibleContent>
+                </Collapsible>}
+              </> : <div className="rounded-md border border-dashed px-3 py-4 text-center">
+                <Triangle className="mx-auto mb-2 size-5 text-muted-foreground" />
+                <p className="m-0 text-xs font-medium">Click a triangle in the 3D view</p>
+                <p className="mb-0 mt-1 text-[11px] leading-relaxed text-muted-foreground">Shift + click to add more.<br />Shift + drag to select an area.</p>
+              </div>}
+            </> : <>
+              <p className="m-0 text-[11px] leading-relaxed text-muted-foreground">Select triangles to move them, change their surface or edit their vertices.</p>
+              <Button size="sm" className="w-full" onClick={() => ed.startGeometryEditing("collision")}><MousePointer2 /> Select triangles</Button>
+            </>}
+          </div>
         </div>
-        <SectionTitle action={
-          <span className="flex gap-1 normal-case tracking-normal">
-            <button className="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground" onClick={() => setAll(true)}>Show all</button>
-            <span className="text-muted-foreground">·</span>
-            <button className="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground" onClick={() => setAll(false)}>Hide all</button>
-          </span>
-        }>Surface types in this track</SectionTitle>
-        <div className="flex flex-col gap-0.5">
-          {used.map((t: any) => {
-            const visible = !vp.kclHidden.has(t.id);
-            return (
-              <Hint key={t.id} title={t.name} text={`${(KCL_HELP as any)[t.id]} Click to show or hide it.`} side="right">
-                <button onClick={() => toggleType(t.id)} className={cn("flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent/60", !visible && "opacity-45")}>
-                  <span className="size-4 shrink-0 rounded border border-black/30 shadow-inner" style={{ background: t.color }} />
-                  <span className="flex-1 truncate text-[12.5px]">{t.name}</span>
+
+        <CollisionSection icon={Plus} title="Create collision" description={drawing ? "Drawing in the 3D view" : "Draw triangles, walls and other shapes"} open={createOpen} onOpenChange={setCreateOpen}>
+          <label className="mb-3 block space-y-1.5 text-[11px] text-muted-foreground">Surface of new shapes
+            <select className="h-8 w-full rounded-md border bg-background px-2 text-xs text-foreground" value={p.type} onChange={(e) => ed.setPaint({ type: Number(e.target.value) })}>
+              {KCL_TYPES.map((type: any) => <option key={type.id} value={type.id}>{type.name}</option>)}
+            </select>
+          </label>
+          <ShapeOptions />
+        </CollisionSection>
+
+        <CollisionSection icon={Eye} title="View settings" defaultOpen>
+          <div className="grid grid-cols-[80px_1fr] items-center gap-x-3 gap-y-3">
+            <Label>Opacity</Label>
+            <div className="flex items-center gap-2"><Slider aria-label="Collision opacity" min={0.15} max={overModel ? 0.95 : 1} step={0.05} value={[overModel ? vp.paintOpacity : vp.kclOpacity]} onValueChange={([v]) => { if (overModel) { vp.paintOpacity = v; vp.applyDisplayMode(); force(); } else { vp.kclOpacity = v; rebuild(); } }} /><span className="w-10 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">{Math.round((overModel ? vp.paintOpacity : vp.kclOpacity) * 100)}%</span></div>
+            <Label htmlFor="collision-edges">Triangle edges</Label>
+            <Switch id="collision-edges" aria-label="Show collision triangle edges" checked={overModel ? vp.paintShowTriangles : vp.kclWireframe} onCheckedChange={(v) => { if (overModel) vp.paintShowTriangles = v; else vp.kclWireframe = v; rebuild(); }} />
+          </div>
+        </CollisionSection>
+
+        <CollisionSection icon={BrickWall} title="Surface visibility" description={`${used.filter((t: any) => !vp.kclHidden.has(t.id)).length} of ${used.length} types visible`} defaultOpen>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-[11px] text-muted-foreground">Show or hide by type</span>
+            <div className="flex gap-1"><Button size="sm" variant="ghost" className="h-6 px-1.5 text-[11px]" onClick={() => setAll(true)}>Show all</Button><Button size="sm" variant="ghost" className="h-6 px-1.5 text-[11px]" onClick={() => setAll(false)}>Hide all</Button></div>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            {used.map((t: any) => {
+              const visible = !vp.kclHidden.has(t.id);
+              return <Hint key={t.id} title={t.name} text={`${(KCL_HELP as any)[t.id]} Click to show or hide it.`} side="right">
+                <button aria-label={`${visible ? "Hide" : "Show"} ${t.name} collision`} aria-pressed={visible} onClick={() => toggleType(t.id)} className={cn("flex cursor-pointer items-center gap-2 rounded-md px-1 py-1.5 text-left hover:bg-accent/60", !visible && "opacity-45")}>
+                  <span className="size-3.5 shrink-0 rounded border border-black/30" style={{ background: t.color }} />
+                  <span className="flex-1 truncate text-xs">{t.name}</span>
                   <span className="text-[11px] tabular-nums text-muted-foreground">{counts[t.id].toLocaleString()}</span>
                   {visible ? <Eye className="size-3.5 text-muted-foreground" /> : <EyeOff className="size-3.5 text-muted-foreground" />}
                 </button>
-              </Hint>
-            );
-          })}
-        </div>
+              </Hint>;
+            })}
+          </div>
+        </CollisionSection>
       </>}
 
       {mode === "paint" && <>
@@ -243,62 +307,19 @@ export function CollisionPanel() {
         <p className="mt-2 font-mono text-[10px] text-muted-foreground">Flag {hex(ed.paintFlag)}</p>
       </>}
 
-      {mode === "edit" && <>
-        <SectionTitle>Draw collision</SectionTitle>
-        <div className="rounded-lg border bg-muted/20 p-2.5">
-          <label className="mb-2 block space-y-1 text-[11px] text-muted-foreground">Surface of new shapes
-            <select className="h-8 w-full rounded-md border bg-background px-2 text-xs text-foreground" value={p.type} onChange={(e) => ed.setPaint({ type: Number(e.target.value) })}>
-              {KCL_TYPES.map((type: any) => <option key={type.id} value={type.id}>{type.name}</option>)}
-            </select>
-          </label>
-          <ShapeOptions />
-          <p className="mb-0 mt-2 text-[11px] leading-relaxed text-muted-foreground">Click on the track to place the points; the shape is previewed under the cursor and split into triangles when done. Then move, rotate or scale it with the gizmo, or edit single vertices.</p>
+      <CollisionSection icon={FileUp} title="Import and export" description="Replace collision or export an OBJ">
+        <div className="flex flex-wrap gap-1.5">
+          <Button size="sm" variant="secondary" onClick={() => ed.cmd("importOBJCollision")}><FileUp /> Replace with OBJ…</Button>
+          <Button size="sm" variant="secondary" onClick={() => ed.cmd("importKCL")}><FileUp /> Replace with KCL…</Button>
+          <Button size="sm" variant="secondary" onClick={() => ed.cmd("exportKCLObj")}><Download /> Export as OBJ…</Button>
         </div>
-        <div className="text-[11px] leading-relaxed text-muted-foreground">
-          {editing ? <p className="m-0 mt-3 border-l-2 pl-2">Click a triangle to select it. Shift+click adds more, Ctrl+click toggles one, and Shift+drag selects an area. Move, rotate or scale the selection with W / E / R. Ctrl+Z undoes a change.</p>
-            : <Button size="sm" className="w-full" onClick={() => ed.startGeometryEditing("collision")}><Move3D /> Select triangles</Button>}
-        </div>
-        {editing && selectedTri >= 0 ? (
-          <div className="mt-3 space-y-3 rounded-lg border p-3">
-            <div className="flex items-center gap-2">
-              <span className="size-4 rounded border border-black/30" style={{ background: (KCL_TYPES[kcl.flags[selectedTri] & 31] as any).color }} />
-              <span className="text-[13px] font-semibold">{selectedTris.length === 1 ? `Triangle #${selectedTri + 1}` : `${selectedTris.length} triangles selected`}</span>
-            </div>
-            <label className="block space-y-1 text-[11px] text-muted-foreground">Surface type{selectedTris.length > 1 ? " for selection" : ""}
-              <select className="h-8 w-full rounded-md border bg-background px-2 text-xs text-foreground" value={kcl.flags[selectedTri] & 31} onChange={(e) => ed.editCollisionType(Number(e.target.value))}>
-                {KCL_TYPES.map((type: any) => <option key={type.id} value={type.id}>{type.name}</option>)}
-              </select>
-            </label>
-            {selectedTris.length > 1 && new Set(selectedTris.map((tri) => kcl.flags[tri] & 31)).size > 1 && <p className="m-0 text-[11px] text-muted-foreground">Mixed surface types. Choosing one applies it to all selected triangles.</p>}
-            {selectedTris.length === 1 && <div className="grid grid-cols-[34px_repeat(3,minmax(0,1fr))] items-center gap-1 text-[11px]">
-              <span />{["X", "Y", "Z"].map((axis, i) => <span key={axis} className={cn("text-center font-semibold", ["text-red-400", "text-green-400", "text-blue-400"][i])}>{axis}</span>)}
-              {[0, 1, 2].map((vertex) => <React.Fragment key={vertex}>
-                <span className="text-muted-foreground">V{vertex + 1}</span>
-                {[0, 1, 2].map((axis) => <CollisionCoordinate key={axis} value={kcl.verts[selectedTri * 9 + vertex * 3 + axis]} onCommit={(value) => ed.editCollisionVertex(vertex, axis, value)} />)}
-              </React.Fragment>)}
-            </div>}
-            <div className="flex flex-wrap gap-1">
-              <Button size="sm" variant="secondary" onClick={() => ed.duplicateCollisionTriangle()}><Copy /> Duplicate</Button>
-              <Button size="sm" variant="secondary" onClick={() => ed.flipCollisionTriangle()}><FlipVertical2 /> Flip normal</Button>
-              <Button size="sm" variant="ghost" className="text-destructive" onClick={() => ed.deleteCollisionTriangle()}><Trash2 /> Delete</Button>
-            </div>
-          </div>
-        ) : editing && <p className="mt-3 text-center text-xs text-muted-foreground">No triangle selected.</p>}
-        {editing && <Button size="sm" variant="ghost" className="mt-2 self-start" onClick={() => setMode("show")}><Square /> Stop editing (Esc)</Button>}
-      </>}
-
-      <SectionTitle>File</SectionTitle>
-      <div className="flex flex-wrap gap-1.5">
-        <Button size="sm" variant="secondary" onClick={() => ed.cmd("importOBJCollision")}><FileUp /> Replace with OBJ…</Button>
-        <Button size="sm" variant="secondary" onClick={() => ed.cmd("importKCL")}><FileUp /> Replace with KCL…</Button>
-        <Button size="sm" variant="secondary" onClick={() => ed.cmd("exportKCLObj")}><Download /> Export as OBJ…</Button>
-      </div>
+      </CollisionSection>
     </div>
   );
 }
 
-function CollisionCoordinate({ value, onCommit }: { value: number; onCommit: (value: number) => void }) {
+function CollisionCoordinate({ label, value, onCommit }: { label: string; value: number; onCommit: (value: number) => void }) {
   const [draft, setDraft] = React.useState<string | null>(null);
   const commit = () => { if (draft === null) return; const n = Number(draft.replace(",", ".")); setDraft(null); if (Number.isFinite(n)) onCommit(n); };
-  return <input className="h-7 min-w-0 rounded-md border bg-background px-1 text-right text-[11px] tabular-nums" value={draft ?? String(Number(value.toFixed(3)))} onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") e.currentTarget.blur(); }} />;
+  return <input aria-label={label} className="h-7 min-w-0 rounded-md border bg-background px-1 text-right text-[11px] tabular-nums" value={draft ?? String(Number(value.toFixed(3)))} onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") e.currentTarget.blur(); }} />;
 }

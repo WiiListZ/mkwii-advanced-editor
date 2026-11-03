@@ -10,8 +10,9 @@ import { attachMaterialAnimations, type MaterialAnimation } from "./material-ani
 import { mergeWeightedModel } from "./weighted-model.ts";
 import type { ImportedShape, ShapeController } from "./weighted-model.ts";
 import { attachSHP0 } from "./shp0-import.ts";
-import { needsBRRESPaletteConversion, normalizeBRRESPalettes, transplantBRRESTextures } from "./brres-palettes.ts";
+import { hasBRRESModelAnimations, needsBRRESPaletteConversion, normalizeBRRESPalettes, preserveBRRESPatterns, preserveExistingBRRESTextures, staticBRRESModelSource, transplantBRRESTextures } from "./brres-palettes.ts";
 import { solidTexturePNG } from "./solid-texture.ts";
+import { preserveImportedImageAlpha } from "./imported-textures.ts";
 import { normalizeOBJFaces, vertexColoredOBJToDAE } from "./obj-geometry.ts";
 // @ts-ignore Shared JavaScript BRRES reader.
 import { parseBRRES, polygonPieces } from "../web/js/formats/brres.js";
@@ -775,7 +776,7 @@ export async function import3DModel(data: Uint8Array, modelPath: string, target:
       const materialAnimation = JSON.parse(await readFile(obj + ".material.json", "utf8")) as MaterialAnimation;
       result = await attachMaterialAnimations(result, materialAnimation, dir);
     }
-    return result;
+    return await preserveBRRESPatterns(data, result, join(dir, "patterns"));
   } finally {
     const base = resolve(tmpdir()) + sep;
     if (!resolve(dir).startsWith(base)) throw new Error("Unsafe temporary directory cleanup path");
@@ -809,7 +810,7 @@ export async function convert3DToBRRES(modelPath: string, animation = "", name =
     const child = Bun.spawn([exe, "-f", "convert-commands.txt", "-o"], { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
     const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     if (code || !existsSync(output)) throw new Error(`ABMatt could not create the BRRES: ${(out + "\n" + err).trim().slice(-800)}`);
-    let result = new Uint8Array(await readFile(output));
+    let result = await preserveImportedImageAlpha(new Uint8Array(await readFile(output)), dir, join(dir, "image-alpha"), exe);
     const parsed = parseBRRES(result), model = parsed.models[0];
     if (!model?.objects.length) throw new Error("The converted BRRES has no model geometry");
     if (skeletal) {
@@ -862,7 +863,9 @@ async function importAnimatedModel(data: Uint8Array, objPath: string, target: nu
   const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   if (code || !existsSync(join(dir, standaloneName))) throw new Error(`ABMatt could not convert the rigged model: ${(out + "\n" + err).trim().slice(-800)}`);
   const shapeControllers: ShapeController[] = [];
-  const patched = await mergeWeightedModel(data, new Uint8Array(await readFile(join(dir, standaloneName))), dir, shapeAnimation, shapeControllers);
+  const standalone = await preserveImportedImageAlpha(new Uint8Array(await readFile(join(dir, standaloneName))), dir, join(dir, "image-alpha"), exe);
+  const merged = await mergeWeightedModel(data, standalone, dir, shapeAnimation, shapeControllers);
+  const patched = await preserveExistingBRRESTextures(data, merged, join(dir, "existing-textures"));
   const after = parseBRRES(patched), next = after.models.find((m: any) => m.name === model.name);
   if (!next || next.objects.length <= model.objects.length) throw new Error(`Weighted merge did not add the animated mesh (${model.objects.length} → ${next?.objects.length})`);
   for (const old of model.objects) {
@@ -1173,8 +1176,11 @@ export function foreignPartDae(xml: string, materials: Record<string, any>, opts
 }
 
 const uniqueName = (base: string, taken: Set<string>) => {
+  // Resource subfiles are staged on Windows before repacking the BRRES.
+  // Distinct dictionary names must also be distinct on that filesystem.
+  const folded = new Set([...taken].map((name) => name.toLowerCase()));
   let name = base, n = 2;
-  while (taken.has(name)) name = `${base}_${n++}`;
+  while (folded.has(name.toLowerCase())) name = `${base}_${n++}`;
   taken.add(name);
   return name;
 };
@@ -1242,10 +1248,21 @@ export async function importBRRESPart(data: Uint8Array, sourceData: Uint8Array, 
   for (const mat of Object.keys(materialMap)) {
     for (const layer of sourceModel.materials.find((m: any) => m.name === mat)?.layers || []) addTexture(layer.texture);
   }
+  const patternNames = new Set<string>(before.pat.keys()), patterns: any[] = [];
+  for (const animation of source.pat.values()) {
+    const materials = new Map<string, any>();
+    for (const [material, slots] of animation.materials) if (materialMap[material]) {
+      for (const slot of slots) for (const key of slot.keys) addTexture(key.texture);
+      materials.set(materialMap[material], slots.map((slot: any) => ({ index: slot.index,
+        keys: slot.keys.map((key: any) => ({ frame: key.frame, texture: textureMap[key.texture] || key.texture })) })));
+    }
+    if (materials.size) patterns.push({ ...animation, materials,
+      name: uniqueName(`${tag}_${animation.name}`.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 64), patternNames) });
+  }
 
   const dir = await mkdtemp(join(tmpdir(), "mkwii-model-part-"));
   try {
-    await writeFile(join(dir, "source.brres"), sourceData);
+    await writeFile(join(dir, "source.brres"), await staticBRRESModelSource(sourceData, join(dir, "static-source")));
     await runAbmatt(exe, dir, `convert source.brres to part.dae include ${opts.part}`, "source.brres", false);
     const daeName = existsSync(join(dir, "part.dae")) ? "part" : `part-${opts.model}`;
     if (!existsSync(join(dir, `${daeName}.dae`))) throw new Error(`ABMatt did not export model ${opts.model}`);
@@ -1254,19 +1271,29 @@ export async function importBRRESPart(data: Uint8Array, sourceData: Uint8Array, 
     // Texture-swap animations (PAT0) need every frame's texture too.
     for (const mat of Object.keys(materialMap)) for (const frame of materialJson[mat]?.pat0?.frames || []) addTexture(frame.texture);
     const prepared = foreignPartDae(xml, materialJson, { polygon: opts.part, name, materialNames: materialMap, textureNames: textureMap, wanted, delta });
+    for (const material of Object.values(prepared.json) as any[]) delete material.pat0;
     const work = join(dir, "work");
     await mkdir(join(work, "maps"), { recursive: true });
-    for (const tex of new Set([...prepared.textures, ...Object.keys(textureMap)])) {
+    for (const tex of new Set(prepared.textures)) {
       const from = join(dir, `${daeName}_maps`, `${tex}.png`);
       if (!existsSync(from)) throw new Error(`ABMatt did not export texture ${tex}`);
       await copyFile(from, join(work, "maps", `${textureMap[tex] || tex}.png`));
     }
     await writeFile(join(work, "part.dae"), prepared.xml);
     await writeFile(join(work, "part.json"), JSON.stringify(prepared.json, null, 2));
-    await writeFile(join(work, "course_model.brres"), data);
-    const log = await runAbmatt(exe, work, "convert part.dae to course_model.brres --patch", "course_model.brres");
-    const patched = new Uint8Array(await readFile(join(work, "course_model.brres")));
-    const result = await transplantBRRESTextures(sourceData, patched, textureMap, join(dir, "textures"));
+    await writeFile(join(work, "course_model.brres"), await staticBRRESModelSource(data, join(dir, "patch-source")));
+    let log = "", patched: Uint8Array;
+    if (model.weights.size || hasBRRESModelAnimations(data)) {
+      log = await runAbmatt(exe, work, "convert part.dae to imported.brres", null);
+      const shared = new Set(Object.entries(textureMap).filter(([from, to]) => from === to && before.textures.has(to)).map(([, to]) => to));
+      patched = await mergeWeightedModel(data, new Uint8Array(await readFile(join(work, "imported.brres"))), work, undefined, [], shared);
+    } else {
+      log = await runAbmatt(exe, work, "convert part.dae to course_model.brres --patch", "course_model.brres");
+      patched = new Uint8Array(await readFile(join(work, "course_model.brres")));
+    }
+    const imported = await transplantBRRESTextures(sourceData, patched, textureMap, join(dir, "textures"));
+    const protectedTextures = await preserveExistingBRRESTextures(data, imported, join(dir, "existing-textures"));
+    const result = await preserveBRRESPatterns(data, protectedTextures, join(dir, "patterns"), patterns);
     const after = parseBRRES(result), next = after.models.find((m: any) => m.name === model.name);
     const added = next?.objects.find((o: any) => o.name === name);
     if (!next || !added || next.objects.length !== model.objects.length + 1) throw new Error(`ABMatt did not add the model part: ${log.slice(-600)}`);
@@ -1307,13 +1334,15 @@ export async function duplicateBRRESModel(data: Uint8Array, modelName: string, p
   if (!selected?.triangles.length) throw new Error("Model object not found");
   const dir = await mkdtemp(join(tmpdir(), "mkwii-model-"));
   try {
-    await writeFile(join(dir, "course_model.brres"), data);
+    await writeFile(join(dir, "course_model.brres"), await staticBRRESModelSource(data, join(dir, "patch-source")));
     await runAbmatt(exe, dir, `convert course_model.brres to scene.dae include ${partName}`, "course_model.brres");
     const xml = await readFile(join(dir, "scene.dae"), "utf8");
     await writeFile(join(dir, "scene.dae"), duplicateInDae(xml, partName, worldPositions(model, part), selected, delta));
     await copyFile(join(dir, "course_model.brres"), join(dir, "course_model-edited.brres"));
     await runAbmatt(exe, dir, `convert scene.dae to course_model-edited.brres include ${partName} --patch`, "course_model-edited.brres");
-    const result = new Uint8Array(await readFile(join(dir, "course_model-edited.brres")));
+    const patched = new Uint8Array(await readFile(join(dir, "course_model-edited.brres")));
+    const protectedTextures = await preserveExistingBRRESTextures(data, patched, join(dir, "existing-textures"));
+    const result = await preserveBRRESPatterns(data, protectedTextures, join(dir, "patterns"));
     const after = parseBRRES(result), next = after.models.find((m: any) => m.name === modelName);
     if (!next || next.objects.length !== model.objects.length || after.textures.size !== before.textures.size) throw new Error("ABMatt changed the model structure unexpectedly");
     for (const old of model.objects) {
@@ -1344,13 +1373,15 @@ export async function deleteBRRESModel(data: Uint8Array, modelName: string, part
   const selected = selectPiece(part, sourceCenter, triangles);
   const dir = await mkdtemp(join(tmpdir(), "mkwii-model-delete-"));
   try {
-    await writeFile(join(dir, "course_model.brres"), data);
+    await writeFile(join(dir, "course_model.brres"), await staticBRRESModelSource(data, join(dir, "patch-source")));
     await runAbmatt(exe, dir, `convert course_model.brres to scene.dae include ${partName}`, "course_model.brres");
     const xml = await readFile(join(dir, "scene.dae"), "utf8");
     await writeFile(join(dir, "scene.dae"), deleteFromDae(xml, partName, worldPositions(model, part), selected));
     await copyFile(join(dir, "course_model.brres"), join(dir, "course_model-edited.brres"));
     await runAbmatt(exe, dir, `convert scene.dae to course_model-edited.brres include ${partName} --patch`, "course_model-edited.brres");
-    const result = new Uint8Array(await readFile(join(dir, "course_model-edited.brres")));
+    const patched = new Uint8Array(await readFile(join(dir, "course_model-edited.brres")));
+    const protectedTextures = await preserveExistingBRRESTextures(data, patched, join(dir, "existing-textures"));
+    const result = await preserveBRRESPatterns(data, protectedTextures, join(dir, "patterns"));
     const after = parseBRRES(result), next = after.models.find((m: any) => m.name === modelName);
     if (!next || next.objects.length !== model.objects.length || after.textures.size !== before.textures.size) throw new Error("ABMatt changed the model structure unexpectedly");
     for (const old of model.objects) {
@@ -1381,9 +1412,9 @@ export async function exportBRRESModel(data: Uint8Array, destination: string) {
   const stem = basename(destination, extension).replace(/[^a-zA-Z0-9_-]/g, "_") || "course_model";
   const dir = await mkdtemp(join(tmpdir(), "mkwii-model-export-"));
   try {
-    await writeFile(join(dir, "source.brres"), data);
+    await writeFile(join(dir, "source.brres"), await staticBRRESModelSource(data, join(dir, "static-source")));
     await runAbmatt(exe, dir, `convert source.brres to ${stem}${extension}`, "source.brres", false);
-    const produced = (await readdir(dir)).filter((name) => name !== "source.brres" && name !== "commands.txt");
+    const produced = (await readdir(dir)).filter((name) => name !== "source.brres" && name !== "commands.txt" && name !== "static-source");
     if (!produced.some((name) => name.toLowerCase().endsWith(extension))) throw new Error("ABMatt did not export the model");
     const target = dirname(resolve(destination));
     await mkdir(target, { recursive: true });
@@ -1398,7 +1429,7 @@ export async function exportBRRESModel(data: Uint8Array, destination: string) {
 
 // "-s 1 1 1 -bm 0.5 grass.png" → "grass.png": the file name after the options of an MTL map statement.
 export function mtlImageName(args: string) {
-  const tokens = args.trim().split(/\s+/);
+  const tokens = stripOBJComment(args).trim().split(/\s+/);
   let i = 0;
   while (i < tokens.length - 1 && /^-[a-z]/i.test(tokens[i])) {
     const option = tokens[i++].toLowerCase();
@@ -1407,6 +1438,19 @@ export function mtlImageName(args: string) {
     for (let n = 0; n < values && i < tokens.length - 1 && (n === 0 || /^[-+]?(\d|\.\d)/.test(tokens[i])); n++) i++;
   }
   return tokens.slice(i).join(" ");
+}
+
+// OBJ/MTL comments can follow a directive. A quoted filename may itself
+// contain '#', and Windows paths retain their literal backslashes.
+export function stripOBJComment(line: string) {
+  let quote = "";
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quote) { if (ch === quote) quote = ""; }
+    else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === "#" && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i).trimEnd();
+  }
+  return line;
 }
 
 // Finds the files an OBJ refers to. Exporters often write absolute paths of the author's computer
@@ -1448,7 +1492,7 @@ export async function importOBJModel(data: Uint8Array, objPath: string, target: 
   const model = before.models.find((m: any) => m.name === "course") || before.models[0];
   if (!model) throw new Error("The track model contains no 3D model");
   const source = await readFile(objPath, "utf8");
-  let lines = source.split(/\r?\n/).map((line) => line.trim());
+  let lines = source.split(/\r?\n/).map((line) => stripOBJComment(line).trim());
   const vertexColors = lines.some((line) => /^v\s/.test(line) && line.split(/\s+#/)[0].split(/\s+/).length >= 7);
   const vertices: number[][] = [];
   for (const line of lines) if (/^v\s/.test(line)) {
@@ -1464,8 +1508,7 @@ export async function importOBJModel(data: Uint8Array, objPath: string, target: 
   const scale = longest > 0 && longest < 100 ? 500 / longest : 1;
   const oldNames = new Set(model.objects.map((o: any) => o.name));
   const stem = basename(objPath, extname(objPath)).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 24) || "Imported";
-  let unique = stem, suffix = 1;
-  while (oldNames.has(unique)) unique = `${stem}_${suffix++}`;
+  const unique = uniqueName(stem, oldNames);
   const dir = await mkdtemp(join(tmpdir(), "mkwii-obj-import-"));
   try {
     const findResource = resourceFinder(dirname(resolve(objPath)));
@@ -1499,7 +1542,7 @@ export async function importOBJModel(data: Uint8Array, objPath: string, target: 
         await writeFile(join(dir, `${texture}.png`), solidTexturePNG([...color, alpha]));
         material.push(`map_Kd ${texture}.png`);
       };
-      for (const line of (await readFile(materialPath, "utf8")).split(/\r?\n/)) {
+      for (const line of (await readFile(materialPath, "utf8")).split(/\r?\n/).map(stripOBJComment)) {
         const newmtl = line.match(/^\s*newmtl\s+(.+?)\s*$/i);
         if (newmtl) {
           await finishMaterial();
@@ -1575,16 +1618,28 @@ export async function importOBJModel(data: Uint8Array, objPath: string, target: 
       }
       await writeFile(join(dir, "import.dae"), vertexColoredOBJToDAE(output, mats, unique));
     }
-    await writeFile(join(dir, "course_model.brres"), data);
+    await writeFile(join(dir, "course_model.brres"), await staticBRRESModelSource(data, join(dir, "patch-source")));
     // Build/export the imported materials on their own first. The resulting
     // import.json pins their shaders and texture bindings: ABMatt's patch mode
     // otherwise copies a similarly named course (or earlier imported) material.
     const importFile = vertexColors ? "import.dae" : "import.obj";
     await runAbmatt(exe, dir, `convert ${importFile} to imported.brres`, null);
+    const standalone = await preserveImportedImageAlpha(new Uint8Array(await readFile(join(dir, "imported.brres"))), dir, join(dir, "image-alpha"), exe);
+    await writeFile(join(dir, "imported.brres"), standalone);
     await runAbmatt(exe, dir, "convert imported.brres to prepared.dae", "imported.brres", false);
     await copyFile(join(dir, "prepared.json"), join(dir, "import.json"));
-    await runAbmatt(exe, dir, `convert ${importFile} to course_model.brres --patch`, "course_model.brres");
-    const result = new Uint8Array(await readFile(join(dir, "course_model.brres")));
+    let patched: Uint8Array;
+    if (model.weights.size || hasBRRESModelAnimations(data)) {
+      // ABMatt's patcher cannot safely round-trip skin weights and SHP0.
+      // Convert only the new geometry, then merge its indexed MDL0 buffers.
+      patched = await mergeWeightedModel(data, standalone, dir);
+    } else {
+      await runAbmatt(exe, dir, `convert ${importFile} to course_model.brres --patch`, "course_model.brres");
+      patched = new Uint8Array(await readFile(join(dir, "course_model.brres")));
+    }
+    const withImported = await preserveExistingBRRESTextures(standalone, patched, join(dir, "imported-textures"));
+    const protectedTextures = await preserveExistingBRRESTextures(data, withImported, join(dir, "existing-textures"));
+    const result = await preserveBRRESPatterns(data, protectedTextures, join(dir, "patterns"));
     const after = parseBRRES(result), next = after.models.find((m: any) => m.name === model.name);
     if (!next || next.objects.length <= model.objects.length) throw new Error("ABMatt did not add the OBJ geometry");
     for (const old of model.objects) {

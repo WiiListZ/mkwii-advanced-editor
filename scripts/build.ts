@@ -1,11 +1,15 @@
 // Builds the standalone Windows executable: release/MKWiiAdvancedEditor.exe
 
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { closeSync, existsSync, openSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, open } from "node:fs/promises";
+import { prepareCompressedRuntime } from "./prepare-runtime.ts";
 
 const root = join(import.meta.dir, "..");
-const exePath = join(root, "release/MKWiiAdvancedEditor.exe");
+const outIndex = process.argv.indexOf("--outfile");
+if (outIndex >= 0 && !process.argv[outIndex + 1]) throw new Error("--outfile requires a path");
+const exePath = outIndex < 0 ? join(root, "release/MKWiiAdvancedEditor.exe") : resolve(process.argv[outIndex + 1]);
+const compressRuntime = !process.argv.includes("--uncompressed-runtime");
 if (existsSync(exePath)) {
   try {
     closeSync(openSync(exePath, "r+"));
@@ -54,26 +58,37 @@ async function baselineRuntime() {
 }
 
 await run(["bun", "run", "scripts/build-frontend.ts", "--release"]);
-await mkdir(join(root, "release"), { recursive: true });
+await mkdir(dirname(exePath), { recursive: true });
+const baseline = await baselineRuntime();
+const runtime = compressRuntime ? await prepareCompressedRuntime(root, baseline, run) : baseline;
 await run([
   "bun", "build", "--compile", "--minify",
   "--target=bun-windows-x64-baseline",
-  `--compile-executable-path=${await baselineRuntime()}`,
+  `--compile-executable-path=${runtime}`,
   "--windows-hide-console",
   "src/main.ts", "src/server.ts",
-  "--outfile", "release/MKWiiAdvancedEditor.exe",
+  "--outfile", exePath,
 ]);
 // App icon (the default kart). Bun's --windows-icon fails on some versions, so the icon resource
 // is written with the Win32 API; the script keeps the app data Bun appends to the executable.
-await run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/set-exe-icon.ps1",
-  "-Exe", "release/MKWiiAdvancedEditor.exe", "-Icon", "web/icon.ico"]);
+if (!compressRuntime) await run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/set-exe-icon.ps1",
+  "-Exe", exePath, "-Icon", "web/icon.ico"]);
 // Mark the executable as a GUI application (PE subsystem 2) so no console window appears.
 // Bun's --windows-hide-console alone still leaves a terminal window open with Windows Terminal.
-const exe = new Uint8Array(await Bun.file(exePath).arrayBuffer());
-const view = new DataView(exe.buffer);
-const peOffset = view.getUint32(0x3c, true);
-if (view.getUint32(peOffset, true) !== 0x00004550) throw new Error("Not a PE file");
-view.setUint16(peOffset + 24 + 68, 2, true);
-await Bun.write(exePath, exe);
+// Patch the two header bytes in place. Reading the entire executable through
+// Bun.file can leave a mapped file view that locks a subsequent rewrite on Windows.
+const handle = await open(exePath, "r+");
+let exeSize: number;
+try {
+  const header = Buffer.alloc(64);
+  await handle.read(header, 0, header.length, 0);
+  const peOffset = header.readUInt32LE(0x3c), signature = Buffer.alloc(4);
+  await handle.read(signature, 0, signature.length, peOffset);
+  if (header.readUInt16LE(0) !== 0x5a4d || signature.readUInt32LE(0) !== 0x00004550) throw new Error("Not a PE file");
+  await handle.write(Buffer.from([2, 0]), 0, 2, peOffset + 24 + 68);
+  exeSize = (await handle.stat()).size;
+} finally {
+  await handle.close();
+}
 
-console.log("Executable created: release/MKWiiAdvancedEditor.exe");
+console.log(`Executable created: ${exePath} (${(exeSize / 1_000_000).toFixed(1)} MB)`);

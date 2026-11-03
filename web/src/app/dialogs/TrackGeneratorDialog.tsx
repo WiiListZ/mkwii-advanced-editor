@@ -1,20 +1,28 @@
 import { NumberField } from "../number-field";
 import * as React from "react";
-import { CircleAlert, CircleCheck, Info, FlipHorizontal2, Maximize, MousePointer2, PenLine, Redo2, Sparkles, TriangleAlert, Undo2, ZoomIn, ZoomOut } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Box, CircleAlert, CircleCheck, Info, FlipHorizontal2, Map as MapIcon, Maximize, MousePointer2, PenLine, Redo2, Sparkles, TriangleAlert, Undo2, ZoomIn, ZoomOut, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { PRESETS, DEFAULT_PARAMS, trackSamples, layoutIssues, pointsFromStroke, reverseLayout, scaleLayout } from "../../../js/editor/trackgen.js";
+import { PRESETS, DEFAULT_PARAMS, generateTrack, trackSamples, layoutIssues, pointsFromStroke, reverseLayout, scaleLayout } from "../../../js/editor/trackgen.js";
+import { useTrackTextures, textureTriangle } from "../track-texture-preview";
+import { TrackLayoutPreview } from "../track-layout-preview";
+import { TrackStylePicker, TrackTextures } from "./TrackTextures";
+import { TrackGeneratorPreview3D } from "./TrackGeneratorPreview3D";
 import { Hint, InfoTip } from "../common";
 import { cn } from "@/lib/utils";
 
 const W = 640, H = 430, PH = 84; // drawing and height profile (canvas pixels)
 const KART = 300; // a kart is about 300 units wide
+const MIN_HEIGHT = -3000, MAX_HEIGHT = 8000;
+const clampHeight = (y: number) => Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, y));
 type P = { x: number; y: number; z: number; w: number };
-type Mode = "edit" | "draw";
+type Mode = "edit" | "draw" | "boost" | "height";
+type LayoutSnapshot = { points: P[]; boostPositions?: number[]; boostPads: number; boostLength: number };
 
 const PRESET_HELP: Record<string, string> = {
   Oval: "Two straights and two wide turns. A good start.",
@@ -27,22 +35,29 @@ const PRESET_HELP: Record<string, string> = {
 export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close: (v: any) => void }) {
   const canvas = React.useRef<HTMLCanvasElement>(null);
   const profile = React.useRef<HTMLCanvasElement>(null);
+  const layoutPreview = React.useRef<TrackLayoutPreview | null>(null);
   const pts = React.useRef<P[]>(PRESETS.Oval().map((p: any) => ({ ...p, w: 1 })));
   const view = React.useRef({ cx: 0, cz: 0, scale: 0.008 });
   const drag = React.useRef<any>(null);
   const stroke = React.useRef<{ x: number; z: number }[] | null>(null);
-  const history = React.useRef<{ undo: P[][]; redo: P[][] }>({ undo: [], redo: [] });
+  const history = React.useRef<{ undo: LayoutSnapshot[]; redo: LayoutSnapshot[] }>({ undo: [], redo: [] });
   const [params, setParams] = React.useState<any>({ ...DEFAULT_PARAMS });
   const [selected, setSelected] = React.useState(0);
   const [hover, setHover] = React.useState<{ point: number } | { segment: number; x: number; z: number } | null>(null);
   const [mode, setMode] = React.useState<Mode>("edit");
+  const [preview3D, setPreview3D] = React.useState(false);
+  const fit3D = React.useRef<(() => void) | null>(null);
+  const chooseTool = (next: Mode) => { setMode(next); setPreview3D(false); };
   const [keepSzs, setKeepSzs] = React.useState(false);
   const [tab, setTab] = React.useState("layout");
+  const [textureBusy, setTextureBusy] = React.useState(false);
+  const texturePreview = useTrackTextures(params);
   const [revision, redraw] = React.useReducer((x) => x + 1, 0);
 
   // Layout changes can be undone (Ctrl+Z / Ctrl+Y); the copy is taken before the change.
+  const snapshot = (): LayoutSnapshot => ({ points: pts.current.map((p) => ({ ...p })), boostPositions: params.boostPositions?.slice(), boostPads: params.boostPads, boostLength: params.boostLength });
   const remember = () => {
-    history.current.undo.push(pts.current.map((p) => ({ ...p })));
+    history.current.undo.push(snapshot());
     if (history.current.undo.length > 100) history.current.undo.shift();
     history.current.redo = [];
   };
@@ -50,9 +65,10 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     const h = history.current, to = from === "undo" ? "redo" : "undo";
     const prev = h[from].pop();
     if (!prev) return;
-    h[to].push(pts.current.map((p) => ({ ...p })));
-    pts.current = prev;
-    setSelected((s) => Math.min(s, prev.length - 1));
+    h[to].push(snapshot());
+    pts.current = prev.points;
+    setParams((p: any) => ({ ...p, boostPositions: prev.boostPositions, boostPads: prev.boostPads, boostLength: prev.boostLength }));
+    setSelected((s) => Math.min(s, prev.points.length - 1));
     redraw();
   };
 
@@ -67,7 +83,9 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
   const zoom = (factor: number) => { view.current.scale *= factor; redraw(); };
 
   // The centreline as it is built (bridges and spread-out slopes included), for the drawing and the height profile.
-  const spline = React.useMemo(() => pts.current.length >= 3 ? trackSamples(pts.current, { ...params, step: 300 }) : null, [revision, params]); // eslint-disable-line react-hooks/exhaustive-deps
+  const spline = React.useMemo(() => pts.current.length >= 3 ? trackSamples(pts.current, params) : null, [revision, params]); // eslint-disable-line react-hooks/exhaustive-deps
+  const previewTrack = React.useMemo(() => pts.current.length >= 3 ? generateTrack(pts.current, params) : null, [revision, params]); // eslint-disable-line react-hooks/exhaustive-deps
+  const previewModel = previewTrack?.model;
   const issues = React.useMemo(() => layoutIssues(pts.current, params), [revision, params]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const draw = React.useCallback(() => {
@@ -82,25 +100,18 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     const [ox, oy] = toScreen(0, 0);
     for (let x = ((ox % grid) + grid) % grid; x < W; x += grid) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
     for (let y = ((oy % grid) + grid) % grid; y < H; y += grid) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
-    if (spline && mode === "edit") {
+    if (spline && mode !== "draw") {
       const { samples } = spline;
-      const ys = samples.map((s: number[]) => s[1]);
-      const minY = Math.min(...ys), maxY = Math.max(...ys);
       const n = samples.length;
-      // Off-road first, then the road coloured by height (darker = lower), then the walls' outline.
-      for (const [extra, color] of [[params.offroadWidth, "#2f5a26"], [0, null]] as const) {
-        for (let i = 0; i < n; i++) {
-          const a = samples[i], b = samples[(i + 1) % n];
-          const half = (params.roadWidth * a[3]) / 2 + extra;
-          const t = maxY > minY ? (a[1] - minY) / (maxY - minY) : 0;
-          ctx.strokeStyle = color || `hsl(${220 - t * 180}, 12%, ${38 + t * 22}%)`;
-          ctx.lineWidth = Math.max(2, half * 2 * v.scale);
-          ctx.lineCap = "round";
-          ctx.beginPath();
-          ctx.moveTo(...(toScreen(a[0], a[2]) as [number, number]));
-          ctx.lineTo(...(toScreen(b[0], b[2]) as [number, number]));
-          ctx.stroke();
-        }
+      if (layoutPreview.current && previewModel) layoutPreview.current.draw(ctx, previewModel, texturePreview.textures, v);
+      else {
+      const patterns = new Map(Object.entries(texturePreview.textures).map(([role, texture]) => [role, ctx.createPattern(texture.bitmap, "repeat")!]));
+      const triangles = (previewModel?.tris || []).filter((t: any) => ["road", "offroad", "startline", "boost", "curb"].includes(t.mat)).sort((a: any, b: any) => (a.v[1] + a.v[4] + a.v[7]) - (b.v[1] + b.v[4] + b.v[7]));
+      for (const tri of triangles) {
+        const polygon = [0, 1, 2].map((k) => toScreen(tri.v[k * 3], tri.v[k * 3 + 2])), texture = texturePreview.textures[tri.mat];
+        if (texture) textureTriangle(ctx, polygon, tri.uv, texture, patterns.get(tri.mat)!);
+        else { ctx.fillStyle = "#555"; ctx.beginPath(); polygon.forEach((p, k) => k ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath(); ctx.fill(); }
+      }
       }
       ctx.strokeStyle = "#ffffff55";
       ctx.setLineDash([6, 6]);
@@ -118,15 +129,16 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
         ctx.beginPath(); ctx.moveTo(7, 0); ctx.lineTo(-5, -5); ctx.lineTo(-5, 5); ctx.fill();
         ctx.restore();
       }
-      const s0 = samples[0], s1 = samples[1];
+      const s0 = samples[0];
       const [sx, sy] = toScreen(s0[0], s0[2]);
-      ctx.save(); ctx.translate(sx, sy); ctx.rotate(Math.atan2(s1[2] - s0[2], s1[0] - s0[0]));
-      const half = ((params.roadWidth * s0[3]) / 2) * v.scale;
       ctx.fillStyle = "#fff";
-      ctx.fillRect(-2, -half, 4, half * 2);
-      ctx.restore();
       ctx.font = "600 11px Inter, system-ui";
       ctx.fillText("START", sx + 8, sy - 8);
+      if (mode === "boost") for (const [index, panel] of (previewTrack?.boosts || []).entries()) {
+        const [x, y] = toScreen(panel.pos[0], panel.pos[2]);
+        ctx.strokeStyle = "#ffcf40"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = "#ffcf40"; ctx.fillText(`⚡ ${index + 1}`, x + 12, y - 10);
+      }
       // Problems found in the layout, where they are.
       for (const issue of issues) for (const [x, z] of issue.at) {
         const [px, py] = toScreen(x, z);
@@ -135,9 +147,9 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
         ctx.beginPath(); ctx.arc(px, py, Math.max(12, params.roadWidth * v.scale * 0.8), 0, Math.PI * 2); ctx.stroke();
       }
     }
-    if (mode === "edit") {
+    if (mode === "edit" || mode === "height") {
       // Where a click adds a point: on the segment under the cursor.
-      if (hover && "segment" in hover) {
+      if (mode === "edit" && hover && "segment" in hover) {
         const [x, y] = toScreen(hover.x, hover.z);
         ctx.strokeStyle = "#facc15"; ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.stroke();
@@ -149,9 +161,14 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
         ctx.fillStyle = i === selected ? "#facc15" : i === 0 ? "#ff4d6d" : "#60a5fa";
         ctx.beginPath(); ctx.arc(x, y, i === selected || hot ? 8 : 6, 0, Math.PI * 2); ctx.fill();
         if (hot) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke(); }
-        ctx.fillStyle = "#e5e7eb";
         ctx.font = "11px Inter, system-ui";
-        ctx.fillText(String(i), x + 9, y + 4);
+        if (mode === "height") {
+          const label = `${i} · ${Math.round(p.y)}`;
+          ctx.fillStyle = "#14161be8"; ctx.fillRect(x + 9, y - 25, ctx.measureText(label).width + 10, 18);
+          ctx.fillStyle = i === selected ? "#facc15" : "#e5e7eb"; ctx.fillText(label, x + 14, y - 12);
+        } else {
+          ctx.fillStyle = "#e5e7eb"; ctx.fillText(String(i), x + 9, y + 4);
+        }
       });
     }
     // A line being drawn by hand.
@@ -169,7 +186,7 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
       ctx.fillText("Where you start is the finish line; the end joins the start by itself.", W / 2, H / 2 + 12);
       ctx.textAlign = "start";
     }
-  }, [params, selected, hover, mode, spline, issues]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [params, selected, hover, mode, spline, issues, previewTrack, texturePreview.textures]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Height along the track: the road from the start line round to it again, with the control points.
   const drawProfile = React.useCallback(() => {
@@ -198,8 +215,18 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     });
   }, [spline, selected]);
 
-  React.useEffect(() => { fit(); redraw(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => {
+    try { layoutPreview.current = new TrackLayoutPreview(W, H); } catch { /* Canvas fallback when WebGL is unavailable. */ }
+    fit(); redraw();
+    return () => { layoutPreview.current?.dispose(); layoutPreview.current = null; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   React.useEffect(() => { draw(); drawProfile(); });
+  React.useEffect(() => {
+    if (!Object.values(texturePreview.textures).some((t) => t.native) || mode === "draw") return;
+    let frame = 0, last = 0;
+    const tick = (now: number) => { if (now - last >= 1000 / 30) { draw(); last = now; } frame = requestAnimationFrame(tick); };
+    frame = requestAnimationFrame(tick); return () => cancelAnimationFrame(frame);
+  }, [draw, texturePreview.textures, mode]);
 
   // Keys inside the dialog: Delete removes the selected point, arrows nudge it, Ctrl+Z / Ctrl+Y undo.
   React.useEffect(() => {
@@ -210,7 +237,13 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
       if (ctrl && e.key.toLowerCase() === "z") { e.preventDefault(); e.stopPropagation(); step(e.shiftKey ? "redo" : "undo"); return; }
       if (ctrl && e.key.toLowerCase() === "y") { e.preventDefault(); e.stopPropagation(); step("redo"); return; }
       const p = pts.current[selected];
-      if (!p || mode !== "edit") return;
+      if (p && (mode === "height" || preview3D) && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        e.preventDefault(); e.stopPropagation();
+        const y = clampHeight(p.y + (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 1000 : 100));
+        if (y !== p.y) { remember(); p.y = y; redraw(); }
+        return;
+      }
+      if (!p || mode !== "edit" || preview3D) return;
       if ((e.key === "Delete" || e.key === "Backspace") && pts.current.length > 3) {
         e.preventDefault(); e.stopPropagation(); remember();
         pts.current.splice(selected, 1); setSelected((s) => Math.min(s, pts.current.length - 1)); redraw();
@@ -221,7 +254,7 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [selected, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selected, mode, params, preview3D]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const nearestPoint = (sx: number, sy: number) => {
     let best = -1, bd = 14 * 14;
@@ -241,11 +274,29 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     return { segment: best, distance: Math.sqrt(bd), at };
   };
   const local = (e: React.PointerEvent | React.WheelEvent) => { const r = canvas.current!.getBoundingClientRect(); return [(e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height)]; };
+  const boostAt = (sx: number, sy: number) => {
+    if (!spline) return null;
+    const [x, z] = toWorld(sx, sy); let best = 0, distance = Infinity;
+    spline.samples.forEach((s: number[], i: number) => { const d = Math.hypot(s[0] - x, s[2] - z); if (d < distance) { best = i; distance = d; } });
+    return distance * view.current.scale <= Math.max(20, (params.roadWidth / 2 + params.offroadWidth) * view.current.scale) ? Math.max(1, best) / spline.samples.length : null;
+  };
 
   const onPointerDown = (e: React.PointerEvent) => {
     const [sx, sy] = local(e);
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     if (e.button === 1 || (e.button === 0 && e.altKey)) { drag.current = { pan: true, sx, sy, cx: view.current.cx, cz: view.current.cz }; return; }
+    if (mode === "boost") {
+      const panels = previewTrack?.boosts || [], existing = panels.findIndex((panel: any) => { const [x, y] = toScreen(panel.pos[0], panel.pos[2]); return Math.hypot(x - sx, y - sy) < 14; });
+      const positions = panels.map((panel: any) => panel.t);
+      if (e.button === 2) { if (existing >= 0) { remember(); positions.splice(existing, 1); setParams((p: any) => ({ ...p, boostPositions: positions })); } return; }
+      if (e.button !== 0) return;
+      const t = boostAt(sx, sy); if (t === null) return;
+      remember();
+      const index = existing >= 0 ? existing : positions.length;
+      if (index >= 32) return;
+      positions[index] = t; setParams((p: any) => ({ ...p, boostPositions: positions }));
+      drag.current = { boost: index, positions }; return;
+    }
     if (mode === "draw") {
       if (e.button !== 0) return;
       const [wx, wz] = toWorld(sx, sy);
@@ -254,6 +305,13 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     }
     const i = nearestPoint(sx, sy);
     const p = pts.current;
+    if (mode === "height") {
+      if (e.button === 0 && i >= 0) {
+        setSelected(i);
+        drag.current = { height: i, sy, y: p[i].y, unitsPerPixel: e.shiftKey ? 10 : 50, changed: false };
+      }
+      return;
+    }
     if (e.button === 2) {
       if (i >= 0 && p.length > 3) { remember(); p.splice(i, 1); setSelected((s) => Math.min(s, p.length - 1)); setHover(null); redraw(); }
       return;
@@ -274,6 +332,15 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
   const onPointerMove = (e: React.PointerEvent) => {
     const [sx, sy] = local(e);
     const dg = drag.current;
+    if (dg?.height !== undefined) {
+      const p = pts.current[dg.height], y = clampHeight(Math.round((dg.y + (dg.sy - sy) * dg.unitsPerPixel) / 10) * 10);
+      if (p.y !== y) { if (!dg.changed) { remember(); dg.changed = true; } p.y = y; redraw(); }
+      return;
+    }
+    if (dg?.boost !== undefined) {
+      const t = boostAt(sx, sy); if (t !== null) { const positions = [...dg.positions]; positions[dg.boost] = t; setParams((p: any) => ({ ...p, boostPositions: positions })); }
+      return;
+    }
     if (stroke.current) {
       const [wx, wz] = toWorld(sx, sy);
       const last = stroke.current[stroke.current.length - 1];
@@ -281,9 +348,10 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
       return;
     }
     if (!dg) {
-      if (mode !== "edit") return;
+      if (mode !== "edit" && mode !== "height") return;
       const i = nearestPoint(sx, sy);
       if (i >= 0) { if (!(hover && "point" in hover && hover.point === i)) setHover({ point: i }); return; }
+      if (mode === "height") { setHover(null); return; }
       const [wx, wz] = toWorld(sx, sy);
       const near = nearestSegment(wx, wz);
       setHover(near.distance * view.current.scale < 40 ? { segment: near.segment, x: near.at[0], z: near.at[1] } : null);
@@ -313,6 +381,10 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
   };
 
   const sp = pts.current[selected];
+  const changeHeight = (value: number) => {
+    const y = clampHeight(value);
+    if (sp && sp.y !== y) { remember(); sp.y = y; redraw(); }
+  };
   const setParam = (key: string, value: any) => setParams((p: any) => ({ ...p, [key]: value }));
   const num = (key: string, label: string, min: number, max: number, stepSize: number, help: string, unit?: (v: number) => string) => (
     <div key={key} className="grid grid-cols-[1fr_110px] items-center gap-x-3 gap-y-0.5">
@@ -325,7 +397,9 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
   const errors = issues.filter((i: any) => i.level === "error");
   const length = spline?.length || 0;
 
-  const modeHelp = mode === "draw"
+  const modeHelp = mode === "height" ? "Drag a point up to raise the road or down to lower it. Hold Shift before dragging for finer control. ↑ / ↓ adjust the selected point; Ctrl+Z / Ctrl+Y undo and redo."
+    : mode === "boost" ? "Boost panels: click the road to add one · drag a yellow marker to move it · right-click its marker to remove it · Ctrl+Z undoes the placement."
+    : mode === "draw"
     ? "Draw: hold the left button and trace the whole track in one stroke. Releasing turns the line into control points you can then adjust."
     : "Drag a point to move it · click the road (yellow +) to add a point there · right-click or Delete removes the selected point · arrows nudge it · wheel zooms · middle-drag or Alt+drag pans";
 
@@ -333,40 +407,61 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     <>
       <DialogHeader>
         <DialogTitle>Create a new track</DialogTitle>
-        <DialogDescription>Three steps: draw the shape seen from above, choose how wide the road is, then the race settings. The editor builds the road, walls, collision, checkpoints, CPU and item routes, respawns, item boxes and cameras.</DialogDescription>
+        <DialogDescription>Choose a track style and draw the layout, then customise the road, textures and race settings. The editor builds the models, collision, checkpoints, routes, respawns, item boxes and cameras.</DialogDescription>
       </DialogHeader>
-      <div className="grid min-h-0 grid-cols-[640px_1fr] gap-5 overflow-hidden">
-        <div className="flex min-w-0 flex-col gap-2">
-          <div className="flex items-center gap-1" role="toolbar" aria-label="Drawing tools">
-            <Hint title="Edit points" text="Move, add and remove the control points of the layout."><Button size="sm" variant={mode === "edit" ? "secondary" : "ghost"} aria-pressed={mode === "edit"} onClick={() => setMode("edit")}><MousePointer2 /> Edit points</Button></Hint>
-            <Hint title="Draw by hand" text="Trace the whole track with the mouse in one stroke; it replaces the current layout (Undo brings it back)."><Button size="sm" variant={mode === "draw" ? "secondary" : "ghost"} aria-pressed={mode === "draw"} onClick={() => setMode("draw")}><PenLine /> Draw by hand</Button></Hint>
-            <span className="mx-1 h-5 w-px bg-border" />
+      <div className="grid min-h-0 grid-cols-[minmax(0,1.35fr)_minmax(290px,1fr)] gap-5 overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-col gap-2 overflow-y-auto pr-1">
+          <div className="flex shrink-0 flex-wrap items-center gap-1" role="toolbar" aria-label="Drawing tools">
+            <Hint title="Edit points" text="Move, add and remove the control points of the layout."><Button size="sm" variant={mode === "edit" && !preview3D ? "secondary" : "ghost"} aria-pressed={mode === "edit" && !preview3D} onClick={() => chooseTool("edit")}><MousePointer2 /> Edit points</Button></Hint>
+            <Hint title="Road height" text="Raise or lower the road by dragging its points vertically. The layout stays in place."><Button size="sm" variant={mode === "height" && !preview3D ? "secondary" : "ghost"} aria-pressed={mode === "height" && !preview3D} aria-label="Edit road height" onClick={() => { chooseTool("height"); setHover(null); }}><ArrowUpDown /> Height</Button></Hint>
+            <Hint title="Draw by hand" text="Trace the whole track with the mouse in one stroke; it replaces the current layout (Undo brings it back)."><Button size="sm" variant={mode === "draw" && !preview3D ? "secondary" : "ghost"} aria-pressed={mode === "draw" && !preview3D} onClick={() => chooseTool("draw")}><PenLine /> Draw by hand</Button></Hint>
+            <Hint title="Place boost panels" text="Click the road to add an animated boost panel. Drag its marker to move it; right-click to remove it."><Button size="sm" variant={mode === "boost" && !preview3D ? "secondary" : "ghost"} aria-pressed={mode === "boost" && !preview3D} aria-label="Place boost panels" onClick={() => chooseTool("boost")}><Zap /> Boost panels</Button></Hint>
+            <div role="group" aria-label="Generator view" className="ml-auto flex shrink-0 items-center rounded-md border bg-muted/30 p-0.5">
+              <Button size="sm" variant={!preview3D ? "secondary" : "ghost"} aria-label="Show 2D layout" aria-pressed={!preview3D} onClick={() => setPreview3D(false)}><MapIcon /> 2D</Button>
+              <Button size="sm" variant={preview3D ? "secondary" : "ghost"} aria-label="Show 3D preview" aria-pressed={preview3D} onClick={() => { setPreview3D(true); if (mode === "draw") setMode("edit"); }}><Box /> 3D</Button>
+            </div>
+            <div className="flex w-full flex-wrap items-center gap-1">
             <Hint title="Undo" shortcut="Ctrl+Z" text="Undo the last change to the layout."><span className="inline-flex"><Button size="icon-sm" variant="ghost" aria-label="Undo" disabled={!history.current.undo.length} onClick={() => step("undo")}><Undo2 /></Button></span></Hint>
             <Hint title="Redo" shortcut="Ctrl+Y" text="Redo the change you undid."><span className="inline-flex"><Button size="icon-sm" variant="ghost" aria-label="Redo" disabled={!history.current.redo.length} onClick={() => step("redo")}><Redo2 /></Button></span></Hint>
             <span className="mx-1 h-5 w-px bg-border" />
             <Hint title="Reverse direction" text="Drive the same layout the other way round."><Button size="icon-sm" variant="ghost" aria-label="Reverse direction" onClick={() => { remember(); pts.current = reverseLayout(pts.current); redraw(); }}><FlipHorizontal2 /></Button></Hint>
             <Hint title="Make smaller" text="Shrink the whole layout by 10% (heights stay)."><Button size="icon-sm" variant="ghost" aria-label="Make the layout smaller" onClick={() => { remember(); pts.current = scaleLayout(pts.current, 0.9); redraw(); }}><ZoomOut /></Button></Hint>
             <Hint title="Make larger" text="Grow the whole layout by 10% (heights stay)."><Button size="icon-sm" variant="ghost" aria-label="Make the layout larger" onClick={() => { remember(); pts.current = scaleLayout(pts.current, 1.1); redraw(); }}><ZoomIn /></Button></Hint>
-            <Hint title="Fit view" text="Show the whole layout."><Button size="icon-sm" variant="ghost" aria-label="Fit view" onClick={() => { fit(); redraw(); }}><Maximize /></Button></Hint>
+            <Hint title="Fit view" text="Show the whole layout."><Button size="icon-sm" variant="ghost" aria-label="Fit view" onClick={() => { if (preview3D) fit3D.current?.(); else { fit(); redraw(); } }}><Maximize /></Button></Hint>
             <span className="ml-auto text-[11px] text-muted-foreground">grid square = 5000 units ≈ {Math.round(5000 / KART)} karts</span>
+            </div>
           </div>
-          <canvas ref={canvas} width={W} height={H} className={cn("rounded-lg border", mode === "draw" ? "cursor-crosshair" : hover && "point" in hover ? "cursor-grab" : hover ? "cursor-copy" : "cursor-default")} onContextMenu={(e) => e.preventDefault()}
-            onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={() => setHover(null)} onWheel={onWheel} data-testid="generator-canvas" />
-          <p className="m-0 min-h-8 text-[11px] leading-relaxed text-muted-foreground">{modeHelp}</p>
-          <div>
-            <div className="mb-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">Height along the track, from the start line <InfoTip text="Each dot is a control point. Select a point and change its Height on the right to make hills, dips or a bridge." /></div>
+          {sp && mode !== "draw" && <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-2" data-height-controls>
+            <Select value={String(selected)} onValueChange={(v) => setSelected(Number(v))}>
+              <SelectTrigger aria-label="Road control point" className="h-7 w-32 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>{pts.current.map((_, i) => <SelectItem key={i} value={String(i)}>Point {i}{i === 0 ? " (start)" : ""}</SelectItem>)}</SelectContent>
+            </Select>
+            <Label htmlFor="generator-point-height" className="ml-auto text-xs">Height</Label>
+            <Button size="icon-sm" variant="ghost" aria-label="Lower selected road point" onClick={() => changeHeight(sp.y - 100)}><ArrowDown /></Button>
+            <NumberField key={selected} id="generator-point-height" aria-label="Selected road point height" className="h-7 w-24 text-xs" min={MIN_HEIGHT} max={MAX_HEIGHT} step={100} integer commit value={sp.y} onValue={changeHeight} />
+            <Button size="icon-sm" variant="ghost" aria-label="Raise selected road point" onClick={() => changeHeight(sp.y + 100)}><ArrowUp /></Button>
+            <span className="text-[11px] text-muted-foreground">units</span>
+          </div>}
+          {preview3D ? <TrackGeneratorPreview3D model={previewModel} textures={texturePreview.textures} points={pts.current} samples={spline?.samples || []} selected={selected} onSelect={setSelected} fitRef={fit3D} />
+            : <canvas ref={canvas} width={W} height={H} className={cn("h-auto w-full shrink-0 touch-none rounded-lg border", mode === "draw" ? "cursor-crosshair" : mode === "height" && hover && "point" in hover ? "cursor-ns-resize" : hover && "point" in hover ? "cursor-grab" : hover ? "cursor-copy" : "cursor-default")} onContextMenu={(e) => e.preventDefault()}
+              onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onPointerLeave={() => setHover(null)} onWheel={onWheel} data-testid="generator-canvas" />}
+          <p className="m-0 min-h-8 shrink-0 text-[11px] leading-relaxed text-muted-foreground">{preview3D ? "Live 3D preview: select a blue point and change its Height above. Return to 2D to draw, drag road points or place boost panels." : modeHelp}</p>
+          <div className="shrink-0">
+            <div className="mb-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">Height along the track, from the start line <InfoTip text="Each dot is a control point. Use Height above the drawing to drag road points up or down, or enter an exact height in the controls above the road." /></div>
             <canvas ref={profile} width={W} height={PH} className="w-full rounded-md border" aria-label="Height profile" />
           </div>
         </div>
         <div className="flex min-h-0 flex-col overflow-hidden">
           <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
-            <TabsList className="grid w-full shrink-0 grid-cols-3">
+            <TabsList className="grid w-full shrink-0 grid-cols-4">
               <TabsTrigger value="layout">1 · Shape</TabsTrigger>
               <TabsTrigger value="road">2 · Road</TabsTrigger>
-              <TabsTrigger value="race">3 · Race</TabsTrigger>
+              <TabsTrigger value="textures">3 · Textures</TabsTrigger>
+              <TabsTrigger value="race">4 · Race</TabsTrigger>
             </TabsList>
             <div className="min-h-0 flex-1 overflow-y-auto pr-1 pt-3">
               <TabsContent value="layout" className="mt-0 flex flex-col gap-3">
+                <TrackStylePicker params={params} change={setParam} textures={texturePreview.textures} />
                 <p className="m-0 text-xs leading-relaxed text-muted-foreground">Start from a ready shape or draw your own, then drag the points. The red point is the start and finish line; the arrows show the driving direction.</p>
                 <div className="grid grid-cols-2 gap-1.5">
                   {Object.keys(PRESETS).map((name) => (
@@ -376,7 +471,7 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
                       <span className="block text-[11px] leading-snug text-muted-foreground">{PRESET_HELP[name]}</span>
                     </button>
                   ))}
-                  <button type="button" className="cursor-pointer rounded-md border px-2.5 py-2 text-left hover:bg-accent" onClick={() => setMode("draw")}>
+                  <button type="button" className="cursor-pointer rounded-md border px-2.5 py-2 text-left hover:bg-accent" onClick={() => chooseTool("draw")}>
                     <span className="block text-xs font-medium">Draw by hand</span>
                     <span className="block text-[11px] leading-snug text-muted-foreground">Trace the track with the mouse.</span>
                   </button>
@@ -405,8 +500,11 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
                   <p className="col-span-2 m-0 text-[11px] leading-snug text-muted-foreground">Walls along both edges keep karts on the track. Without them, falling off the edge brings Lakitu.</p>
                 </div>
                 {params.walls && num("wallHeight", "Wall height", 100, 5000, 50, "How high the walls are. Bridges must be higher than this above the road below.")}
-                {num("boostPads", "Boost panels", 0, 6, 1, "Placed by themselves on the straightest parts of the road.")}
+                {Array.isArray(params.boostPositions) ? <div className="text-xs">{previewTrack?.boosts.length || 0} manually placed boost panels</div> : num("boostPads", "Boost panels", 0, 6, 1, "Automatically placed on the straightest parts. Use the drawing tool to choose their positions.")}
+                <div className="flex flex-wrap gap-1.5"><Button size="sm" variant="outline" onClick={() => chooseTool("boost")}><Zap /> Place on drawing</Button><Button size="sm" variant="ghost" onClick={() => { remember(); setParam("boostPositions", undefined); }}>Auto place</Button><Button size="sm" variant="ghost" onClick={() => { remember(); setParam("boostPositions", []); }}>Remove all</Button></div>
+                {num("boostLength", "Boost panel length", 400, 4000, 100, "Length along the road. Panels follow its curve, height and driving direction.")}
               </TabsContent>
+              <TabsContent value="textures" className="mt-0 flex flex-col gap-3"><TrackTextures params={params} change={setParam} busy={setTextureBusy} textures={texturePreview.textures} /></TabsContent>
               <TabsContent value="race" className="mt-0 flex flex-col gap-3">
                 {num("laps", "Laps", 1, 9, 1, "Laps of a race (the game normally uses 3).")}
                 {num("itemRows", "Item box rows", 0, 8, 1, "Rows of four item boxes across the road, spread around the track.")}
@@ -433,12 +531,12 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
         </div>
       </div>
       <DialogFooter className="items-center sm:justify-between">
-        <span className="text-xs text-muted-foreground">Length ≈ {(length / 1000).toFixed(1)}k units · {pts.current.length} points</span>
+        <span className="text-xs text-muted-foreground">{texturePreview.loading ? "Loading texture previews… · " : texturePreview.error ? "Texture preview unavailable · " : ""}Length ≈ {(length / 1000).toFixed(1)}k units · {pts.current.length} points</span>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => close(null)}>Cancel</Button>
-          {tab !== "race" && <Button variant="secondary" onClick={() => setTab(tab === "layout" ? "road" : "race")}>Next step</Button>}
+          {tab !== "race" && <Button variant="secondary" onClick={() => setTab(tab === "layout" ? "road" : tab === "road" ? "textures" : "race")}>Next step</Button>}
           <Hint title="Generate track" text={errors.length ? "Fix the problems in red first." : "Build the track with these settings. Everything can still be edited afterwards."}>
-            <span className="inline-flex"><Button disabled={errors.length > 0 || pts.current.length < 3} onClick={() => close({ points: pts.current.map((p) => ({ ...p })), params: { ...params }, keepSzs })}><Sparkles /> Generate track</Button></span>
+            <span className="inline-flex"><Button disabled={textureBusy || errors.length > 0 || pts.current.length < 3} onClick={() => close({ points: pts.current.map((p) => ({ ...p })), params: { ...params }, keepSzs })}><Sparkles /> Generate track</Button></span>
           </Hint>
         </div>
       </DialogFooter>

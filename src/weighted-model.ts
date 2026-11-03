@@ -58,7 +58,7 @@ function shiftBufferIds(value: any, offset: number) {
 // Merge its MDL0 data through RiiStudio and replace only the MDL0 subfile in the original
 // archive. Other animation resources and existing TEX0 files retain their original bytes.
 export async function mergeWeightedModel(original: Uint8Array, imported: Uint8Array, dir: string,
-  shapeAnimation?: ImportedShape, shapeControllers: ShapeController[] = []) {
+  shapeAnimation?: ImportedShape, shapeControllers: ShapeController[] = [], sharedTextures: ReadonlySet<string> = new Set()) {
   const rszst = rszstPath(), wszst = wszstPath();
   if (!rszst || !wszst) throw new Error("Weighted model import requires RiiStudio rszst.exe and Wiimm's wszst tool");
   const originalBRRES = join(dir, "weighted-original.brres"), importedBRRES = join(dir, "weighted-imported.brres");
@@ -71,7 +71,16 @@ export async function mergeWeightedModel(original: Uint8Array, imported: Uint8Ar
   const base = JSON.parse(await readFile(oldJsonPath, "utf8")), addition = JSON.parse(await readFile(newJsonPath, "utf8"));
   if (!base.models.length || addition.models.length !== 1) throw new Error("Weighted model import needs a target model and one imported model");
   const model = base.models.find((entry: any) => entry.name === "course") || base.models[0], added = addition.models[0];
-  if (addition.textures.some((texture: any) => base.textures.some((old: any) => old.name === texture.name))) throw new Error("Imported texture name conflicts with a course texture");
+  // The caller may explicitly reuse textures already verified against the donor.
+  // Keep the original resource and let the new material refer to its name.
+  addition.textures = addition.textures.filter((texture: any) => !sharedTextures.has(texture.name));
+  if (addition.textures.some((texture: any) => base.textures.some((old: any) => old.name.toLowerCase() === texture.name.toLowerCase()))) throw new Error("Imported texture name conflicts with a course texture");
+  const boneNames = new Set(model.bones.map((bone: any) => bone.name.toLowerCase()));
+  for (const bone of added.bones) {
+    const stem = bone.name;
+    for (let n = 2; boneNames.has(bone.name.toLowerCase()); n++) bone.name = `${stem}_${n}`;
+    boneNames.add(bone.name.toLowerCase());
+  }
   const oldBuffers = readBuffers(await readFile(oldJsonPath.replace(/\.json$/, ".bin")));
   const newBuffers = readBuffers(await readFile(newJsonPath.replace(/\.json$/, ".bin")));
   if (shapeAnimation) {
@@ -106,6 +115,9 @@ export async function mergeWeightedModel(original: Uint8Array, imported: Uint8Ar
     }
   }
   shiftBufferIds(added, oldBuffers.length);
+  // Texture pixel buffers live in the same binary table as geometry. Leaving
+  // their IDs unshifted makes them read the original track's vertex buffers.
+  shiftBufferIds(addition.textures, oldBuffers.length);
   for (const key of ["positions", "normals", "colors", "texcoords"]) {
     const offset = model[key].length;
     for (const entry of added[key]) entry.id += offset;
@@ -143,8 +155,12 @@ export async function mergeWeightedModel(original: Uint8Array, imported: Uint8Ar
   await copyFile(sourceModel, targetModel);
   if (addition.textures.length) {
     const textureFolder = "Textures(NW4R)";
+    const importedDir = join(dir, "weighted-extracted-imported");
+    await run(wszst, dir, "EXTRACT", importedBRRES, "--dest", importedDir);
     await mkdir(join(originalDir, textureFolder), { recursive: true });
-    for (const texture of addition.textures) await copyFile(join(mergedDir, textureFolder, texture.name), join(originalDir, textureFolder, texture.name));
+    // The original donor TEX0 also retains its format and exact mip texels;
+    // there is no reason to re-encode its image while merging MDL0 geometry.
+    for (const texture of addition.textures) await copyFile(join(importedDir, textureFolder, texture.name), join(originalDir, textureFolder, texture.name));
   }
   const output = join(dir, "weighted-final.brres");
   await run(wszst, dir, "CREATE", "--brres", originalDir, "--dest", output);

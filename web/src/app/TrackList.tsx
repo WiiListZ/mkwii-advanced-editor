@@ -97,10 +97,11 @@ export function TrackList({ section, onOpen }: { section: "all" | "other"; onOpe
           const preview = previews ? previewOfPlace(place) : null;
           return <button key={f} onClick={() => onOpen(`${t.folder}\\${f}`)} title={`Open ${f} in the editor`}
             className={`group relative flex min-w-0 cursor-pointer items-center gap-2 overflow-hidden rounded-md border px-2 text-left transition-colors ${previews ? "h-20 py-2" : "py-1.5"} ${f === current ? "border-primary/50 bg-primary/10" : "border-transparent bg-muted/30 hover:border-primary/30 hover:bg-accent"}`}>
-            {preview && <>
-              <ThpPart path={preview.path} rect={preview.rect} className="absolute inset-0 size-full" />
-              <span className="pointer-events-none absolute inset-0 bg-gradient-to-r from-card via-card/75 to-card/20" />
-            </>}
+            {preview && <div className="pointer-events-none absolute inset-0 bg-card">
+              <div className="absolute inset-0" style={{ maskImage: "linear-gradient(to right, transparent, rgb(0 0 0 / 25%) 50%, rgb(0 0 0 / 80%))" }}>
+                <ThpPart path={preview.path} rect={preview.rect} className="absolute inset-0 size-full" />
+              </div>
+            </div>}
             {place ? <span className="relative flex size-8 shrink-0 items-center justify-center rounded bg-background"><CupIcon cup={place.cup} icons={icons} className="size-6" /></span>
               : <span className="relative flex size-8 shrink-0 items-center justify-center rounded bg-background font-mono text-[10px] text-muted-foreground">{/^\d+$/.test(number) ? number : f.split(".").pop()!.toUpperCase()}</span>}
             <span className="relative min-w-0 flex-1"><span className="block truncate text-xs font-medium">{/^\d+$/.test(label) ? `Track ${label}` : label}</span><span className="block truncate font-mono text-[10px] text-muted-foreground">{place ? `${CUPS[place.cup].name} ${place.position + 1} · ` : ""}{f}</span></span>

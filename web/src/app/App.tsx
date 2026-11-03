@@ -138,7 +138,7 @@ function Sidebar() {
   const warnings = ed.issues.filter((i) => i.level === "warning").length;
   const tabs = [
     { id: "outline", icon: ListTree, label: "Track", text: "Every element of the track, grouped by kind. Click to select, double-click to focus." },
-    { id: "collision", icon: BrickWall, label: "Collision", text: "Surface types of the track (road, off-road, walls…): show, hide and paint them." },
+    { id: "collision", icon: BrickWall, label: "Collision", text: "Show, select, edit and draw collision triangles, or paint their surface types (road, off-road, walls…)." },
     { id: "cameras", icon: Clapperboard, label: "Cameras", text: "The intro fly-over as keyframes on a timeline under the 3D view: frame the view and press K, the camera flies between keyframes. Also replay cameras." },
     { id: "validate", icon: ShieldCheck, label: "Check", text: "Finds mistakes that crash the game or break races, with one-click fixes." },
   ];
@@ -193,9 +193,19 @@ function StatusBar() {
 
 function BusyOverlay() {
   const ed = useEditor("ui");
+  const active = !!ed.busy;
+  React.useLayoutEffect(() => {
+    if (!active) return;
+    // Modal portals can disable pointer events on body. Block input in capture as well, so
+    // neither an open modal nor its focused button can receive clicks/keyboard activation.
+    const block = (event: Event) => { event.preventDefault(); event.stopImmediatePropagation(); };
+    const events = ["pointerdown", "pointerup", "click", "auxclick", "dblclick", "contextmenu", "keydown", "keyup", "wheel", "drop"];
+    for (const type of events) document.addEventListener(type, block, { capture: true, passive: false });
+    return () => { for (const type of events) document.removeEventListener(type, block, true); };
+  }, [active]);
   if (!ed.busy) return null;
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-[1px]">
+    <div role="status" aria-live="polite" aria-busy="true" className="pointer-events-auto fixed inset-0 z-[2147483647] flex cursor-wait items-center justify-center bg-black/50 backdrop-blur-[1px]">
       <Card className="flex items-center gap-3 px-5 py-4 text-[13px]"><LoaderCircle className="size-5 animate-spin text-primary" /> {ed.busy}</Card>
     </div>
   );

@@ -98,6 +98,7 @@ export function SettingsPanel() {
       <SettingRow name="autoCheckpointWidth">{toggle("autoCheckpointWidth")}</SettingRow>
       <SettingRow name="checkpointWidth">{number("checkpointWidth", 200, 20000)}</SettingRow>
       <SettingRow name="pathWidth">{number("pathWidth", 1, 500)}</SettingRow>
+      <div className="rounded-md border p-2.5"><div className="text-xs font-medium">Collision when copying</div><p className="my-1 text-[11px] text-muted-foreground">Remembered separately for each object type or model part in each track.</p><Button size="sm" variant="outline" onClick={() => ed.resetCollisionCopyChoices()}><RotateCcw /> Ask again about copied collision</Button></div>
     </div>
 
     <h3 className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Game files</h3>

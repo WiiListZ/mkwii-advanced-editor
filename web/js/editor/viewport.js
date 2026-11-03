@@ -479,7 +479,7 @@ export class Viewport extends EventTarget {
   effectiveDisplay() {
     if (this.tool?.type === 'paint') return this.paintOverModel && this.hasCourseModel ? 'both' : 'collision';
     if (this.tool?.type === 'collision-create') return this.hasCourseModel ? 'both' : 'collision';
-    if (this.tool?.type === 'geometry') return this.tool.target === 'collision' ? 'collision' : 'visual';
+    if (this.tool?.type === 'geometry') return this.tool.target === 'collision' ? (this.displayMode === 'both' && this.hasCourseModel ? 'both' : 'collision') : 'visual';
     if (this.displayMode !== 'collision' && !this.hasCourseModel) return 'collision';
     return this.displayMode;
   }

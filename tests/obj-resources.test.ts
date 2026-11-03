@@ -2,13 +2,20 @@ import { expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mtlImageName, resourceFinder } from '../src/model-operations.ts';
+import { mtlImageName, resourceFinder, stripOBJComment } from '../src/model-operations.ts';
 
 test('MTL map options are removed from the image name', () => {
   expect(mtlImageName('grass.png')).toBe('grass.png');
   expect(mtlImageName('-s 1 1 1 -bm 0.5 grass.png')).toBe('grass.png');
   expect(mtlImageName('-o 0.5 my grass.png')).toBe('my grass.png');
   expect(mtlImageName('-blendu on -clamp off C:\\Textures\\grass.png')).toBe('C:\\Textures\\grass.png');
+  expect(mtlImageName('-s 1 1 1 "grass #1.png" # diffuse')).toBe('"grass #1.png"');
+});
+
+test('OBJ and MTL inline comments preserve quoted names and Windows paths', () => {
+  expect(stripOBJComment('usemtl Paint # selected material')).toBe('usemtl Paint');
+  expect(stripOBJComment('map_Kd "C:\\Textures\\blue # image.png" # diffuse')).toBe('map_Kd "C:\\Textures\\blue # image.png"');
+  expect(stripOBJComment('map_Kd texture#1.png')).toBe('map_Kd texture#1.png');
 });
 
 test('OBJ resources are found inside the model folder, also from foreign paths', async () => {

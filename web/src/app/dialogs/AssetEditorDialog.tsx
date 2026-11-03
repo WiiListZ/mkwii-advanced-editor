@@ -553,7 +553,17 @@ export function AssetPreview({ brres, model, partIndex, animationName, showSkele
     const sun = new THREE.DirectionalLight(0xffffff, 1.7); sun.position.set(1, 2, 1.5); world.add(sun);
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1e7);
     const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true;
-    const resize = () => { const w = el.clientWidth || 1, h = el.clientHeight || 1; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); };
+    let width = 0, height = 0;
+    const resize = () => {
+      const w = el.clientWidth || 1, h = el.clientHeight || 1;
+      if (w === width && h === height) return;
+      width = w; height = h;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h; camera.updateProjectionMatrix();
+      // setSize clears the drawing buffer. ResizeObserver runs after the animation frame,
+      // so repaint now to keep a blank canvas from reaching the screen during a panel drag.
+      renderer.render(world, camera);
+    };
     const observer = new ResizeObserver(resize); observer.observe(el); resize();
     let frame = 0;
     const tick = () => { frame = requestAnimationFrame(tick); controls.update(); if (scene.current?.binding) applyCHRFrame(scene.current.binding, performance.now() / 1000 * 60 % scene.current.binding.frames); renderer.render(world, camera); };
