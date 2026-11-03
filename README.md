@@ -699,6 +699,8 @@ To open files by double-clicking them, use **Settings › Game files › Associa
 
 ## Tests
 
+Build the UI once before running the tests (`bun run scripts/build-frontend.ts`): the editor-window tests start the real server, which imports the generated UI asset list. The Windows build workflow does this automatically.
+
 ```bash
 bun test                                     # formats (THP rebuilt byte for byte; Pulsar Config.pul and LE-CODE binaries, also real ones with MKWII_PULSAR_DIR / MKWII_LECODE_BIN), audio export (MP3, AIFF, M4A), generator and its layout check, cups and their backups, validator, editing operations
 bun run tests/server.smoke.ts                # local server and API

@@ -38,6 +38,8 @@ jobs:
             .cache/upx-5.3.0
             .cache/packed-runtimes
           key: windows-runtime-${{ runner.os }}-${{ hashFiles('package.json', 'web/icon.ico', 'scripts/prepare-runtime.ts', 'scripts/pe-section-space.ts') }}
+      - name: Build UI for server tests
+        run: bun run scripts/build-frontend.ts
       - name: Run tests
         run: bun test
       - name: Check release tag
