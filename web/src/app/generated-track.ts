@@ -1,5 +1,5 @@
 import { api } from "../../js/api.js";
-import { generateTrack } from "../../js/editor/trackgen.js";
+import { generateTrack, generatedTrackIssues } from "../../js/editor/trackgen.js";
 import { buildKCL } from "../../js/formats/kcl.js";
 import { buildKMP } from "../../js/formats/kmp.js";
 import { buildU8, findFile, newSzsTree, parseU8, setFile } from "../../js/formats/u8.js";
@@ -8,6 +8,8 @@ import { buildU8, findFile, newSzsTree, parseU8, setFile } from "../../js/format
 // archive as the 3D editor, including real models, sky, minimap, collision and race data.
 export async function generateTrackArchive(points: any, params: any, base: any = null, progress?: (text: string) => void) {
   const out = generateTrack(points, params);
+  const issues = generatedTrackIssues(out);
+  if (issues.length) throw new Error(issues.map((i: any) => i.message).join("\n"));
   const kclBytes = buildKCL(out.verts, out.flags);
   const tree = base ? parseU8(buildU8(base)) : newSzsTree();
   const missing = ["course_model.brres", "vrcorn_model.brres", "map_model.brres"].filter((name) => !findFile(tree, name));

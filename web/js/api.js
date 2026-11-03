@@ -8,6 +8,7 @@ export const hasBackend = !!token;
 export const startupFile = params.get('open');
 export const startupCreate = params.get('new');
 export const startupDocument = params.get('document');
+export const startupView = params.get('view');
 
 async function call(route, { method = 'GET', query = {}, body, raw = false, headers = false, contentType } = {}) {
   const qs = new URLSearchParams(query).toString();
@@ -106,7 +107,7 @@ export const api = {
   },
   cupTrackInfo(path) { return call('cup-track', { query: { path } }); },
   cupTracksApplied(files) { return call('cup-tracks-applied', { method: 'POST', body: { files } }); },
-  async openEditorWindow({ path, create, name, data, created }) {
+  async openEditorWindow({ path, create, name, data, created, view }) {
     // Reserve a real browser popup before awaiting the server. Native WebViews ask the server
     // for another desktop process, which keeps its own document and rendering context.
     const native = typeof window.__nativeEditorWindow === 'function';
@@ -114,9 +115,10 @@ export const api = {
     if (!native && !popup) throw new Error('Allow popup windows to open another track editor');
     try {
       if (popup) { popup.opener = null; popup.document.title = 'Opening track…'; }
+      const viewQuery = view === 'visual' ? { view } : {};
       const result = await call('editor-window', data
-        ? { method: 'POST', query: { name, ...(created ? { created: JSON.stringify(created) } : {}) }, body: data, contentType: 'application/octet-stream' }
-        : { method: 'POST', body: { path, create } });
+        ? { method: 'POST', query: { name, ...viewQuery, ...(created ? { created: JSON.stringify(created) } : {}) }, body: data, contentType: 'application/octet-stream' }
+        : { method: 'POST', query: viewQuery, body: { path, create } });
       if (result.url && popup) popup.location.replace(result.url);
       else popup?.close();
       // Spawning a process is not enough: keep the caller's loading indicator until the new

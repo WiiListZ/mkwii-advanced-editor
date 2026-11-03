@@ -73,7 +73,11 @@ Built with **Bun** (backend and executable), **React + shadcn/ui** (Radix primit
   </tr>
   <tr>
     <td width="50%"><img src="docs/images/check.png" alt="Check tab reporting no problems on Mario Circuit"><br><sub><b>Check</b>: finds mistakes that crash the game or break races, with one-click fixes.</sub></td>
-    <td width="50%"><img src="docs/images/track-generator.png" alt="Create a new track window: an oval layout with its height profile, the Shape, Road and Race steps and the layout check"><br><sub><b>New track</b>: pick a shape or draw it by hand, then road and race settings in three steps; the layout is checked as you draw (<a href="#creating-a-new-track">guide</a>).</sub></td>
+    <td width="50%"><img src="docs/images/track-generator.png" alt="Create a new track with editable heights, item-box placement, 2D and 3D views and four settings steps"><br><sub><b>New track</b>: draw the layout, adjust heights and textures, place item boxes and inspect the live 3D preview (<a href="#creating-a-new-track">guide</a>).</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/images/track-generator-items.png" alt="Item boxes placed manually on the road in the track generator"><br><sub><b>Place item boxes</b>: click the road, drag a box along or across it, and undo or redo the placement.</sub></td>
+    <td width="50%"><img src="docs/images/track-generated-model.png" alt="A newly generated track opened in its separate editor with Model selected and textures visible"><br><sub><b>Generated track</b>: opens in <b>Model</b> with its textures, even if Collision was used in another window.</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/images/cups-swap.png" alt="Cups and tracks window: Coconut Mall moved into Luigi Circuit's place and a custom track replacing Moo Moo Meadows in the Mushroom Cup"><br><sub><b>Cups and tracks</b>: move tracks between cups with the arrows, swap any two, or put your own track in a cup (<a href="#cups-and-tracks">guide</a>).</sub></td>
@@ -262,7 +266,7 @@ Use an ObjFlow internal name (`itembox`), decimal ID (`101`) or hexadecimal ID (
 Every setting is stored as an unsigned 16-bit number (`0–65535`). Without `min`/`max` the box takes that whole **file-format range**, which is not a claim that every value is valid for that object, and the guide says that the game-specific range is unknown. The built-in documentation uses lists for the settings whose values are known (item box item types and lottery timing, Thwomp route behaviour, Cataquack, car and truck colours, crab and propeller directions…), always with **Other value…** where other values are not ruled out, and signed values where the game reads them with a sign (item box height offset, Chain Chomp target, fire-bar rotation speed: positive turns counterclockwise, negative clockwise). The built-in values are based on the [Custom Mario Kart object table](https://mkwiiki.org/wiki/Object) and [item-box settings](https://mkwiiki.org/wiki/Item_Settings_-_Item_Boxes); custom game patches may interpret them differently.
 
 **Collision** (full walkthrough in [Collision editor](#collision-editor))
-- Three modes in the Collision tab: **Show**, **Paint** and **Edit**.
+- Two modes in the Collision tab: **Show** includes selection and geometry editing, and **Paint** changes surface types.
 - Paint surface types with four brushes over the track model; variant and shadow can be set.
 - Draw new collision as triangles, rectangles, walls, boxes, cylinders, spheres or polygons; they are split into triangles automatically.
 - Select a track model part, or one or more placed objects, and choose **Generate collision…** in the Inspector or context menu to give them collision they lack. Copy the model surfaces as they are, simplify them to a triangle budget (useful for detailed models), or use one bounding box per object, turned with the object. The dialog counts how much of the model already lies on course collision and can fill only the parts that have none, so nothing is doubled. The surface can be one KCL type or *Auto* (road on the floors, wall on steep sides). The new triangles are appended to `course.kcl` with undo/redo and left selected so their type can be changed; an object produces static collision at its current position, not collision that follows its route or animation.
@@ -271,10 +275,10 @@ Every setting is stored as an unsigned 16-bit number (`0–65535`). Without `min
 - Import an OBJ model as collision, export the collision as OBJ. Built-in KCL encoder (positions, normals, prisms, octree).
 
 **Track creation** (full walkthrough in [Creating a new track](#creating-a-new-track))
-- *File › Create new track* (Ctrl+N, or **New track** on Home) works in three steps: **Shape** (pick a ready shape or draw the track by hand with the mouse, then drag, add and remove points and set their height and width), **Road** (width, off-road, walls, boost panels) and **Race** (laps, item boxes, checkpoints, respawns). Every value is explained under its box.
-- The layout is checked while you draw, and the generator takes care of what would break the track: where the road crosses itself it builds a bridge, the inside of turns tighter than the road is narrowed so it does not fold over, and slopes too steep to climb are spread out; these places are marked in blue on the drawing. Very short tracks are marked in orange. Changes to the layout can be undone (Ctrl+Z / Ctrl+Y).
+- *File › Create new track* (Ctrl+N, or **New track** on Home) has four steps: **Shape**, **Road**, **Textures** and **Race**. Draw a layout, set its dimensions, heights, local widths and curve radii, choose textures, place boost panels and item boxes, then inspect it in 2D or 3D.
+- **Map zoom** changes the 2D view; **Track dimensions** changes the real layout. Flat points stay flat, and **Automatic bridges** is optional and off by default. Tight road and grass edges narrow smoothly; Check reports crossings, unsafe grids and unsupported layouts. **Ctrl+Z / Ctrl+Y** undo and redo changes.
 - The generator builds the collision (road, off-road, walls, boost panels, fall boundary) and a complete KMP: start, checkpoints with key checkpoints, enemy and item routes, respawns, item boxes and cameras.
-- Exports the visual model as OBJ + MTL with UVs, ready to be turned into `course_model.brres`. Once the track has its models, **Tools › Cups and tracks** puts it in a cup of the game.
+- Generates the textured track model, sky and minimap directly in the SZS. OBJ + MTL export remains available for external editing. **Tools › Cups and tracks** puts the completed track in a cup of the game.
 
 **Preview videos** (full walkthrough in [Preview videos](#preview-videos))
 - *Tools › Preview videos (THP)…* (also on Home) plays the game's THP movies: the track previews of each cup, the cup and arena selection, the menu buttons, the title and the ending. The parts of a movie that show one track, cup or arena are outlined and named.
@@ -523,41 +527,54 @@ The menus play THP movies from the game's `thp` folder: JPEG pictures, 60 per se
 
 *File › Create new track* (Ctrl+N, or **New track** on Home) builds a drivable track from a layout drawn from above. The window has four steps, as tabs on the right; **Next step** moves through them, and **Generate track** works from any step.
 
-![Create a new track: the oval layout with its control points, the height profile under it, the Shape step and the Check box](docs/images/track-generator.png)
+![Create a new track with 2D map zoom, track dimensions, road-width buttons and local width and curve-radius sliders](docs/images/track-generator.png)
 
 **1 · Shape.** Start from a ready shape (each one says what it is), or choose **Draw by hand** and trace the whole track with the mouse in one stroke. Where you start is the finish line, and the end joins the start by itself. When you release the button, the line becomes control points.
+
+Freehand fitting keeps small bends and includes the final mouse position. A complex stroke retains its editable points without blanking the window; very long layouts use wider mesh sample spacing to keep the preview and collision manageable. If a stroke cannot be fitted, the preceding layout is kept.
 
 ![A figure of eight being drawn by hand in the track generator](docs/images/track-generator-draw.png)
 
 Then shape the layout with **Edit points**:
 - drag a point to move it; the cursor shows a hand over a point and a yellow **+** on the road where a click adds a new point;
 - right-click a point, or select it and press **Delete**, to remove it; the arrow keys nudge the selected point (Shift: further);
-- the selected point's **Height** raises the road there (hills, dips, bridges) and **Width ×** makes the road wider or narrower there; the **height profile** under the drawing shows the road's height from the start line round to it again, with a dot for each point;
+- the selected point's **Height** raises the road there (hills, dips, bridges). **Width ×** and **Curve radius** are in **Selected point**, with sliders and numeric fields. Radius **0** keeps the automatic curve; a positive radius rounds the bend, limited by the space to neighbouring points. The applied radius is shown. The **height profile** under the drawing shows the road's relative height from the start line;
+- **Set start here** moves the start/finish line to the selected point. Choose a straighter section with room behind it for all twelve karts. Moving or adding points does not silently reshape the start;
 - the toolbar can **undo** and **redo** (Ctrl+Z / Ctrl+Y) any change to the layout, **reverse** the driving direction, make the whole layout **smaller** or **larger** by 10%, and **fit** it in the view. The wheel zooms; middle-drag or Alt+drag pans. One grid square is 5000 units, about 17 karts.
 
 **Height above the drawing.** Select a point and enter its exact height, or choose **Height** and drag a point up/down. Hold Shift before dragging for finer control. These controls stay visible across the settings tabs, and the height profile updates immediately.
+
+**Size and view.** **Track dimensions**, above the preview, resizes the real layout in X/Z; **Keep proportions** links both axes. Road width and point heights keep their own settings. **Drawing area**, visible in Draw by hand, changes the world-space area shown on the canvas. **Map zoom** provides a slider and **− / +** in 2D, and the wheel also zooms; these view controls do not resize the actual track.
 
 **Live 3D preview.** Choose **3D** above the drawing to inspect the generated road, walls, decks and supports. Drag to orbit, right-drag to pan and use the wheel to zoom. Click a blue point to select it and change its height above the view; the camera keeps its angle while the mesh updates. **2D** returns to the drawing. The preview stays inside the generator; the completed track opens in its own editor after generation.
 
 ![The track generator's live 3D preview with editable heights and game textures](docs/images/track-generator-3d.png)
 
-**2 · Road.** Road width (shown in karts, a kart is about 300 units wide), off-road grass on both sides, walls and their height, and boost-panel dimensions. Let the generator place boost panels automatically, or choose **Boost panels** to click the road and place them yourself. Drag their markers to move them; right-click removes one. The original animated game material is used when available.
+**2 · Road.** Road width defaults to **3200 units** and is also available above the preview, with **− / +** buttons in 100-unit steps (a kart is about 300 units wide). Set the off-road grass, walls and boost-panel dimensions here. **Automatic bridges** is off by default: enable it to raise a branch at an actual crossing, or use Height to build the overpass yourself. Moving points of a flat layout keeps it flat. **Allow tricks on ramps** is on by default. Let the generator place boost panels automatically, or choose **Boost panels** to place, drag and remove them yourself. The original animated game material is used when available.
 
 **3 · Textures.** Choose a style for asphalt, rally, desert, snow or castle surfaces. Override individual surfaces with another preset or a PNG, JPEG or WebP image of your own, with adjustable repeat. Textures are embedded in the SZS, and the 2D and 3D views use the same UVs as the generated model.
 
 **4 · Race.** Laps, rows of item boxes, key checkpoints (they stop drivers from cutting across), checkpoint spacing and how often a respawn point is placed. With a track archive open, **Keep the other files of the open SZS** reuses its models, sky and effects so the new track can be played straight away.
 
-**Check.** The box under the steps checks the layout as you change it, and marks the places on the drawing. What would break the track is handled by the generator itself, so you can draw freely:
-- *blue*, **the road crosses itself**: one side becomes a **bridge**, high enough to drive under (the wall height plus 800, plus a margin), with gentle ramps on both sides (the steepest part is well below what karts can climb). The side that is already higher goes over; when both are at the same height, the later part of the lap does. To choose, raise a point of that side with **Height**. The height profile under the drawing shows the bridge.
-- *blue*, **turns tighter than the road is wide**: the inside of the turn (road and grass) is made narrower there, so its edge stays short of the centre of the turn and never folds over; the outside keeps its width. The checkpoints and item boxes follow the narrower road.
-- *blue*, **slopes too steep to climb**: the height change is spread over a longer stretch.
-- *orange*: a very short track (a lap of a few seconds).
+**Place item boxes yourself.** Choose **Item boxes** above the drawing. Click the road to place a box, drag an existing blue box along or across the road, and right-click it to remove it. A first manual edit keeps the boxes already visible. In **Race**, **Remove all** starts with an empty road and **Auto place** returns to rows. **Ctrl+Z / Ctrl+Y** undo and redo placement, dragging and removal. Boxes follow height and width edits, appear in the 3D preview and are saved as item-box objects in `course.kmp`.
 
-Only a layout with fewer than 3 points cannot be generated.
+![Manual item-box placement on the road, with Auto place and Remove all in the Race settings](docs/images/track-generator-items.png)
 
-![A hand-drawn figure of eight without a bridge: the crossing is circled in blue and becomes a bridge, which the height profile shows](docs/images/track-generator-check.png)
+**Check.** The box under the steps checks the layout as you change it. The large blue adjustment circles are **hidden by default**: enable **Show adjustment markers** to locate automatic corrections. Small filled control points remain visible for editing.
+- **Crossings at similar heights** are warnings: separate them with Height or enable Automatic bridges. Close parallel bends are not treated as crossings.
+- **Tight curves** receive gradual width transitions so road, grass and nearby walls do not fold into sudden hooks. Increase Curve radius or move points farther apart for a wider bend. The preview, model, collision, checkpoints and item boxes use the same geometry.
+- **Steep slopes and crests** are spread into gentler grades. Relative heights are placed above a safe world baseline, and the fall boundary stays far below the road.
+- **Unsafe starting grids, too-short tracks and unsupported checkpoint counts** are errors. Choose a straighter start, enlarge the layout or simplify the tight bends before generating.
+
+![Show adjustment markers enabled on a hand-drawn figure of eight: blue circles locate automatic bridge and tight-turn corrections](docs/images/track-generator-check.png)
 
 After **Generate track**, the editor opens the new track with its collision, start, checkpoints, routes, respawns, item boxes and cameras. The visible track model (`course_model.brres`), a basic sky (`vrcorn_model.brres`) and the minimap (`map_model.brres`, including its position bounds) are generated automatically with embedded textures using the included converter; Blender is not required. Save the SZS, then use **Cups and tracks…** to assign it to a cup. Creation from a cup position saves and assigns the complete track directly. **File › Export › Generated track model (OBJ)** is still available for external editing.
+
+Generated starts remain close to the floor for the game's initial placement check, and route-controlled intro cameras include their required routes. These fixes apply to new generations; regenerate an existing generated SZS to update its geometry and race data.
+
+Newly generated tracks start in **Model**, with the textured road and sky visible, even when the saved view is **Collision** or **Both**. This opening view does not change the original window or overwrite the saved preference. The start-line checker texture uses a shared planar mapping, so starting on a tight or tapered bend does not stretch its stripes into a chevron across the two triangles.
+
+![The complete generated track in its separate 3D editor, opened in Model with embedded road textures and sky](docs/images/track-generated-model.png)
 
 ## Collision editor
 

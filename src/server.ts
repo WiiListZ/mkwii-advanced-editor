@@ -131,6 +131,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       const target = new URL("/", url.origin);
       target.searchParams.set("t", req.headers.get("x-token")!);
       target.searchParams.set("editor", "1");
+      if (url.searchParams.get("view") === "visual") target.searchParams.set("view", "visual");
       let documentId: string | null = null;
       if (req.headers.get("content-type") === "application/octet-stream") {
         documentId = crypto.randomUUID();

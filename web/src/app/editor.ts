@@ -3,7 +3,7 @@
 
 import * as THREE from "three";
 import { toast } from "sonner";
-import { api, FILTERS, hasBackend, startupFile, startupCreate, startupDocument } from "../../js/api.js";
+import { api, FILTERS, hasBackend, startupFile, startupCreate, startupDocument, startupView } from "../../js/api.js";
 import { TrackDocument, KIND_LABEL, SECTION_LABEL } from "../../js/editor/document.js";
 import { Viewport, LAYERS } from "../../js/editor/viewport.js";
 import { Ops, copiesCenter } from "../../js/editor/ops.js";
@@ -336,6 +336,9 @@ export class Editor {
       if (this.settings.hideMoveArrows) this.settings.dragToMove = true;
       // "Auto" was removed: the model view, with the collision over it in the Collision tab (see setTab).
       if (!["visual", "collision", "both"].includes(this.settings.displayMode)) this.settings.displayMode = "visual";
+      // A generated track starts with its textured model, independently of the saved collision view.
+      // This override belongs to this window and must not be saved over the person's preference.
+      if (startupView === "visual") this.settings.displayMode = "visual";
       // "Hide cursor while looking" became on by default: switched on once for everyone,
       // also those who had it off, then their own choice is kept.
       if (!s.hideCursorDefaultOn) {
@@ -2393,7 +2396,7 @@ export class Editor {
         if (separate) {
           // The generator is a modal here. Only the completed track belongs in a separate 3D
           // editor; the current document and its unsaved work must stay untouched.
-          await api.openEditorWindow({ name: "New Track.szs", data: buildU8(tree),
+          await api.openEditorWindow({ name: "New Track.szs", data: buildU8(tree), view: "visual",
             ...(showCreated ? { created: { length: out.length, tris: kclBytes ? parseKCL(kclBytes).count : 0, keptSzs: !!szs } } : {}) });
           return true;
         }
@@ -2409,6 +2412,10 @@ export class Editor {
         d.fileName = "New Track.szs";
         d.loaded();
         await this.assets?.setTrack(d.szs);
+        this.collisionTabView = false;
+        this.setTab("track");
+        this.settings.displayMode = "visual";
+        this.applyViewSettings(); this.bump("settings");
         this.enterEditor();
         d.dirty = true;
         this.bump("doc");

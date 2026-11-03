@@ -13,13 +13,13 @@ import { applySRTFrame } from "../web/js/editor/brresmodel.js";
 
 test("manual boost locations replace automatic placement and keep their collision aligned", () => {
   const points = PRESETS.Oval(), empty = generateTrack(points, { boostPositions: [], boostPads: 6 });
-  expect(empty.boosts).toHaveLength(0); expect([...empty.flags].filter((f) => f === 6)).toHaveLength(0);
+  expect(empty.boosts).toHaveLength(0); expect([...empty.flags].filter((f) => (f & 31) === 6)).toHaveLength(0);
   const out = generateTrack(points, { boostPositions: [.13, .67], boostPads: 0, boostLength: 1200 });
   expect(out.boosts).toHaveLength(2);
   expect(out.boosts[0].t).toBeCloseTo(.13, 2); expect(out.boosts[1].t).toBeCloseTo(.67, 2);
   const panels = out.model.tris.filter((t: any) => t.mat === "boost");
   expect(panels).toHaveLength(12);
-  const collision = [...out.flags].flatMap((flag, i) => flag === 6 ? [Array.from(out.verts.slice(i * 9, i * 9 + 9))] : []);
+  const collision = [...out.flags].flatMap((flag, i) => (flag & 31) === 6 ? [Array.from(out.verts.slice(i * 9, i * 9 + 9))] : []);
   expect(collision).toHaveLength(panels.length);
   for (let i = 0; i < panels.length; i++) expect(collision[i]).toEqual(Array.from(Float32Array.from(panels[i].v)));
   expect(out.model.tris.some((t: any) => t.mat === "startline")).toBe(true);

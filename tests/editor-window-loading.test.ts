@@ -58,3 +58,14 @@ test("an editor process that exits during startup releases the opener with an er
     expect(progress.error).toContain("closed before the track was ready");
   }, [process.execPath, "-e", "await Bun.sleep(80)"]);
 });
+
+test("the requested model view is passed to the new window without changing other launches", async () => {
+  await withServer(async (request) => {
+    const model = await (await request("editor-window?view=visual", { create: "empty" })).json();
+    expect(new URL(model.url).searchParams.get("view")).toBe("visual");
+    const normal = await (await request("editor-window", { create: "empty" })).json();
+    expect(new URL(normal.url).searchParams.has("view")).toBe(false);
+    const invalid = await (await request("editor-window?view=unknown", { create: "empty" })).json();
+    expect(new URL(invalid.url).searchParams.has("view")).toBe(false);
+  });
+});

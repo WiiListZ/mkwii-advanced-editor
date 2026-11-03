@@ -8,6 +8,7 @@ import {
   planArrangement, plannedMusic, replaceSlot, resetSlot, setSlotMusic, slotById, swapSlots,
 } from "../web/js/data/cups.js";
 import { createSnapshot, deleteSnapshot, listSnapshots, restoreSnapshot } from "../src/snapshots.ts";
+import { emptyKMP, make } from "../web/js/formats/kmp.js";
 
 const LUIGI = 0x08, MOO = 0x01, MARIO = 0x00, MALL = 0x05, BLOCK = 0x21;
 
@@ -154,6 +155,19 @@ describe("arrangement", () => {
     expect(checkTrackArchive({ files: ["course.kmp", "course.kcl"], checkpoints: 20, starts: 1 }, false).errors.length).toBe(2);
     expect(checkTrackArchive({ files: full, checkpoints: 0, starts: 1 }, false).errors.length).toBe(1);
     expect(checkTrackArchive({ files: full, checkpoints: 0, starts: 1 }, true).errors.length).toBe(0);
+  });
+
+  test("a route-controlled intro without a valid route cannot be installed in a cup", () => {
+    const files = ["course.kmp", "course.kcl", "course_model.brres", "vrcorn_model.brres", "map_model.brres"], kmp: any = emptyKMP();
+    kmp.CAME.push({ ...make.CAME(), type: 5, time: 400 });
+    const check = () => checkTrackArchive({ files, checkpoints: 20, starts: 1, kmp }, false);
+    expect(check().errors[0]).toContain("Camera #0");
+    kmp.CAME[0].route = 0; kmp.POTI.push(make.route([make.routePoint([0, 1000, 0]), make.routePoint([2000, 1000, 0])]));
+    expect(check().errors).toEqual([]);
+    kmp.POTI[0].smooth = 1;
+    expect(check().errors[0]).toContain("smooth route");
+    kmp.POTI[0].points.push(make.routePoint([4000, 1000, 0]));
+    expect(check().errors).toEqual([]);
   });
 });
 

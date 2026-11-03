@@ -6,9 +6,9 @@ import { type PreviewTextures } from "../track-texture-preview";
 
 // The generated mesh itself, including walls, bridge decks and supports. Rebuilding the
 // geometry for an edit leaves the orbit camera alone, so heights can be compared in place.
-export function TrackGeneratorPreview3D({ model, textures, points, samples, selected, onSelect, fitRef }: {
+export function TrackGeneratorPreview3D({ model, textures, points, samples, itemBoxes, selected, onSelect, fitRef }: {
   model: any; textures: PreviewTextures; points: { x: number; y: number; z: number }[]; samples: number[][];
-  selected: number; onSelect: (index: number) => void; fitRef: React.MutableRefObject<(() => void) | null>;
+  itemBoxes: { pos: number[] }[]; selected: number; onSelect: (index: number) => void; fitRef: React.MutableRefObject<(() => void) | null>;
 }) {
   const host = React.useRef<HTMLDivElement>(null), state = React.useRef<any>(null);
   const select = React.useRef(onSelect); select.current = onSelect;
@@ -28,6 +28,11 @@ export function TrackGeneratorPreview3D({ model, textures, points, samples, sele
     const camera = new THREE.PerspectiveCamera(45, 1, 1, 1e7);
     const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.dampingFactor = .15;
     const markers = new THREE.Group(); scene.add(markers);
+    const boxes = new THREE.Group(); scene.add(boxes);
+    const tile = document.createElement("canvas"); tile.width = tile.height = 64;
+    const g = tile.getContext("2d")!; g.fillStyle = "#2563eb"; g.fillRect(0, 0, 64, 64); g.strokeStyle = "#bfdbfe"; g.lineWidth = 4; g.strokeRect(2, 2, 60, 60); g.fillStyle = "white"; g.font = "bold 50px system-ui"; g.textAlign = "center"; g.fillText("?", 32, 51);
+    const boxTexture = new THREE.CanvasTexture(tile); boxTexture.colorSpace = THREE.SRGBColorSpace;
+    const boxGeometry = new THREE.BoxGeometry(300, 300, 300), boxMaterial = new THREE.MeshBasicMaterial({ map: boxTexture });
     const geometry = new THREE.SphereGeometry(1, 12, 8);
     const normal = new THREE.MeshBasicMaterial({ color: 0x60a5fa, depthTest: false });
     const active = new THREE.MeshBasicMaterial({ color: 0xfacc15, depthTest: false });
@@ -74,12 +79,13 @@ export function TrackGeneratorPreview3D({ model, textures, points, samples, sele
       for (const dot of markers.children as THREE.Mesh[]) dot.scale.setScalar(camera.position.distanceTo(dot.position) * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / Math.max(1, height) * (dot.material === active ? 7 : 5));
       renderer.render(scene, camera);
     };
-    state.current = { preview, markers, geometry, normal, active, fit, fitted: false };
+    state.current = { preview, markers, boxes, boxGeometry, boxMaterial, geometry, normal, active, fit, fitted: false };
     frame = requestAnimationFrame(tick);
     return () => {
       cancelAnimationFrame(frame); observer.disconnect(); controls.dispose();
       renderer.domElement.removeEventListener("pointerdown", pointerDown); renderer.domElement.removeEventListener("pointerup", pointerUp);
       geometry.dispose(); normal.dispose(); active.dispose(); preview.dispose(); renderer.domElement.remove();
+      boxGeometry.dispose(); boxMaterial.dispose(); boxTexture.dispose();
       fitRef.current = null; state.current = null;
     };
   }, []);
@@ -96,6 +102,11 @@ export function TrackGeneratorPreview3D({ model, textures, points, samples, sele
       dot.renderOrder = 10; dot.userData.point = index; s.markers.add(dot);
     });
   }, [model, textures, points, samples, selected]);
+  React.useEffect(() => {
+    const s = state.current; if (!s) return;
+    s.boxes.clear();
+    for (const box of itemBoxes) { const mesh = new THREE.Mesh(s.boxGeometry, s.boxMaterial); mesh.position.set(box.pos[0], box.pos[1] + 150, box.pos[2]); s.boxes.add(mesh); }
+  }, [itemBoxes]);
   return <div className="relative aspect-[640/430] w-full shrink-0 overflow-hidden rounded-lg border bg-[#14161b]" data-testid="generator-3d">
     <div ref={host} className="absolute inset-0" />
     {error ? <div role="status" className="absolute inset-0 grid place-items-center p-8 text-center text-xs text-muted-foreground">3D preview is unavailable. Switch to 2D to continue drawing.</div>

@@ -1,14 +1,17 @@
 import { NumberField } from "../number-field";
 import * as React from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, Box, CircleAlert, CircleCheck, Info, FlipHorizontal2, Map as MapIcon, Maximize, MousePointer2, PenLine, Redo2, Sparkles, TriangleAlert, Undo2, ZoomIn, ZoomOut, Zap } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Box, CircleAlert, CircleCheck, Flag, Info, FlipHorizontal2, Map as MapIcon, Maximize, Minus, MousePointer2, Package, PenLine, Plus, Redo2, Sparkles, TriangleAlert, Undo2, ZoomIn, ZoomOut, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { PRESETS, DEFAULT_PARAMS, generateTrack, trackSamples, layoutIssues, pointsFromStroke, reverseLayout, scaleLayout } from "../../../js/editor/trackgen.js";
+import { PRESETS, DEFAULT_PARAMS, generateTrack, generatedTrackIssues, trackSamples, layoutIssues, pointsFromStroke, reverseLayout, roadFrames, scaleLayout } from "../../../js/editor/trackgen.js";
+import { layoutBounds, resizeLayout, nearestLayoutSegment, startLayoutAt } from "../../../js/editor/layout-points.js";
+import { curveCorner, cornerArc } from "../../../js/editor/curve-radius.js";
 import { useTrackTextures, textureTriangle } from "../track-texture-preview";
 import { TrackLayoutPreview } from "../track-layout-preview";
 import { TrackStylePicker, TrackTextures } from "./TrackTextures";
@@ -19,10 +22,11 @@ import { cn } from "@/lib/utils";
 const W = 640, H = 430, PH = 84; // drawing and height profile (canvas pixels)
 const KART = 300; // a kart is about 300 units wide
 const MIN_HEIGHT = -3000, MAX_HEIGHT = 8000;
+const MIN_VIEW_WIDTH = 2000, MAX_VIEW_WIDTH = 500000;
 const clampHeight = (y: number) => Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, y));
-type P = { x: number; y: number; z: number; w: number };
-type Mode = "edit" | "draw" | "boost" | "height";
-type LayoutSnapshot = { points: P[]; boostPositions?: number[]; boostPads: number; boostLength: number };
+type P = { x: number; y: number; z: number; w: number; radius?: number };
+type Mode = "edit" | "draw" | "boost" | "height" | "items";
+type LayoutSnapshot = { points: P[]; roadWidth: number; autoBridges: boolean; boostPositions?: number[]; boostPads: number; boostLength: number; itemBoxPositions?: { t: number; offset: number }[]; itemRows: number };
 
 const PRESET_HELP: Record<string, string> = {
   Oval: "Two straights and two wide turns. A good start.",
@@ -46,6 +50,9 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
   const [hover, setHover] = React.useState<{ point: number } | { segment: number; x: number; z: number } | null>(null);
   const [mode, setMode] = React.useState<Mode>("edit");
   const [preview3D, setPreview3D] = React.useState(false);
+  const [keepProportions, setKeepProportions] = React.useState(true);
+  const [drawError, setDrawError] = React.useState("");
+  const [showAdjustments, setShowAdjustments] = React.useState(false);
   const fit3D = React.useRef<(() => void) | null>(null);
   const chooseTool = (next: Mode) => { setMode(next); setPreview3D(false); };
   const [keepSzs, setKeepSzs] = React.useState(false);
@@ -53,9 +60,10 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
   const [textureBusy, setTextureBusy] = React.useState(false);
   const texturePreview = useTrackTextures(params);
   const [revision, redraw] = React.useReducer((x) => x + 1, 0);
+  const [, repaint] = React.useReducer((x) => x + 1, 0);
 
   // Layout changes can be undone (Ctrl+Z / Ctrl+Y); the copy is taken before the change.
-  const snapshot = (): LayoutSnapshot => ({ points: pts.current.map((p) => ({ ...p })), boostPositions: params.boostPositions?.slice(), boostPads: params.boostPads, boostLength: params.boostLength });
+  const snapshot = (): LayoutSnapshot => ({ points: pts.current.map((p) => ({ ...p })), roadWidth: params.roadWidth, autoBridges: params.autoBridges, boostPositions: params.boostPositions?.slice(), boostPads: params.boostPads, boostLength: params.boostLength, itemBoxPositions: params.itemBoxPositions?.map((p: any) => ({ ...p })), itemRows: params.itemRows });
   const remember = () => {
     history.current.undo.push(snapshot());
     if (history.current.undo.length > 100) history.current.undo.shift();
@@ -67,7 +75,7 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     if (!prev) return;
     h[to].push(snapshot());
     pts.current = prev.points;
-    setParams((p: any) => ({ ...p, boostPositions: prev.boostPositions, boostPads: prev.boostPads, boostLength: prev.boostLength }));
+    setParams((p: any) => ({ ...p, roadWidth: prev.roadWidth, autoBridges: prev.autoBridges, boostPositions: prev.boostPositions, boostPads: prev.boostPads, boostLength: prev.boostLength, itemBoxPositions: prev.itemBoxPositions, itemRows: prev.itemRows }));
     setSelected((s) => Math.min(s, prev.points.length - 1));
     redraw();
   };
@@ -80,13 +88,26 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
     view.current = { cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2, scale: Math.min((W - 140) / Math.max(1, maxX - minX), (H - 140) / Math.max(1, maxZ - minZ)) };
   };
-  const zoom = (factor: number) => { view.current.scale *= factor; redraw(); };
+  const setDrawingArea = (axis: "x" | "z", value: number) => {
+    const width = axis === "x" ? value : value * W / H;
+    view.current.scale = W / Math.max(MIN_VIEW_WIDTH, Math.min(MAX_VIEW_WIDTH, width));
+    repaint();
+  };
+  const zoom = (factor: number) => { setDrawingArea("x", W / (view.current.scale * factor)); };
 
   // The centreline as it is built (bridges and spread-out slopes included), for the drawing and the height profile.
-  const spline = React.useMemo(() => pts.current.length >= 3 ? trackSamples(pts.current, params) : null, [revision, params]); // eslint-disable-line react-hooks/exhaustive-deps
-  const previewTrack = React.useMemo(() => pts.current.length >= 3 ? generateTrack(pts.current, params) : null, [revision, params]); // eslint-disable-line react-hooks/exhaustive-deps
+  const preview = React.useMemo(() => {
+    try {
+      const spline = pts.current.length >= 3 ? trackSamples(pts.current, params) : null;
+      const track = pts.current.length >= 3 ? generateTrack(pts.current, params) : null;
+      return { spline, track, frames: spline ? roadFrames(spline.samples, params) : [], issues: [...layoutIssues(pts.current, params), ...generatedTrackIssues(track)] };
+    } catch (error) {
+      // A failed preview must leave the layout, Undo and the dialog usable.
+      return { spline: null, track: null, frames: [], issues: [{ level: "error", message: `Could not update the track preview: ${error instanceof Error ? error.message : String(error)}. Undo the last change or adjust the layout.`, at: [] }] };
+    }
+  }, [revision, params]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { spline, track: previewTrack, frames, issues } = preview;
   const previewModel = previewTrack?.model;
-  const issues = React.useMemo(() => layoutIssues(pts.current, params), [revision, params]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const draw = React.useCallback(() => {
     const ctx = canvas.current?.getContext("2d");
@@ -140,7 +161,13 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
         ctx.fillStyle = "#ffcf40"; ctx.fillText(`⚡ ${index + 1}`, x + 12, y - 10);
       }
       // Problems found in the layout, where they are.
-      for (const issue of issues) for (const [x, z] of issue.at) {
+      for (const [index, box] of (previewTrack?.itemBoxes || []).entries()) {
+        const [x, y] = toScreen(box.pos[0], box.pos[2]), size = mode === "items" ? 14 : 8;
+        ctx.fillStyle = "#2563eb"; ctx.strokeStyle = "#bfdbfe"; ctx.lineWidth = 1;
+        ctx.fillRect(x - size / 2, y - size / 2, size, size); ctx.strokeRect(x - size / 2, y - size / 2, size, size);
+        if (mode === "items") { ctx.fillStyle = "white"; ctx.font = "bold 12px system-ui"; ctx.textAlign = "center"; ctx.fillText("?", x, y + 4); ctx.textAlign = "start"; ctx.font = "10px system-ui"; ctx.fillText(String(index + 1), x + 10, y + 3); }
+      }
+      for (const issue of issues) if (issue.level !== "info" || showAdjustments) for (const [x, z] of issue.at) {
         const [px, py] = toScreen(x, z);
         ctx.strokeStyle = issue.level === "error" ? "#ef4444" : issue.level === "warning" ? "#f59e0b" : "#60a5fa";
         ctx.lineWidth = 2.5;
@@ -148,6 +175,14 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
       }
     }
     if (mode === "edit" || mode === "height") {
+      const corner = curveCorner(points, selected);
+      if (corner) {
+        const middle = cornerArc(corner, .5), [cx, cy] = toScreen(corner.center[0], corner.center[1]), [mx, my] = toScreen(middle[0], middle[1]);
+        ctx.strokeStyle = "#facc1599"; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(mx, my); ctx.stroke(); ctx.setLineDash([]);
+        ctx.beginPath(); ctx.moveTo(cx - 3, cy); ctx.lineTo(cx + 3, cy); ctx.moveTo(cx, cy - 3); ctx.lineTo(cx, cy + 3); ctx.stroke();
+        ctx.font = "11px Inter, system-ui"; ctx.fillStyle = "#facc15"; ctx.fillText(`R ${Math.round(corner.radius)}`, (cx + mx) / 2 + 5, (cy + my) / 2 - 5);
+      }
       // Where a click adds a point: on the segment under the cursor.
       if (mode === "edit" && hover && "segment" in hover) {
         const [x, y] = toScreen(hover.x, hover.z);
@@ -178,7 +213,10 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
       ctx.beginPath();
       s.forEach((p, i) => { const [x, y] = toScreen(p.x, p.z); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
       ctx.stroke();
+      const [lx, ly] = toScreen(s[s.length - 1].x, s[s.length - 1].z);
       const [fx, fy] = toScreen(s[0].x, s[0].z);
+      ctx.save(); ctx.setLineDash([5, 5]); ctx.strokeStyle = "#9ca3af"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(fx, fy); ctx.stroke(); ctx.restore();
       ctx.fillStyle = "#ff4d6d"; ctx.beginPath(); ctx.arc(fx, fy, 6, 0, Math.PI * 2); ctx.fill();
     } else if (mode === "draw") {
       ctx.fillStyle = "#9ca3af"; ctx.font = "13px Inter, system-ui"; ctx.textAlign = "center";
@@ -186,7 +224,7 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
       ctx.fillText("Where you start is the finish line; the end joins the start by itself.", W / 2, H / 2 + 12);
       ctx.textAlign = "start";
     }
-  }, [params, selected, hover, mode, spline, issues, previewTrack, texturePreview.textures]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [params, selected, hover, mode, spline, issues, previewTrack, texturePreview.textures, showAdjustments]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Height along the track: the road from the start line round to it again, with the control points.
   const drawProfile = React.useCallback(() => {
@@ -195,10 +233,11 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     ctx.fillStyle = "#14161b"; ctx.fillRect(0, 0, W, PH);
     if (!spline) return;
     const { samples } = spline;
-    const ys = samples.map((s: number[]) => s[1]);
+    const baseline = spline.heightOffset || 0;
+    const ys = samples.map((s: number[]) => s[1] - baseline);
     const lo = Math.min(-500, ...ys), hi = Math.max(1500, ...ys);
-    const yOf = (y: number) => PH - 12 - ((y - lo) / (hi - lo)) * (PH - 26);
-    ctx.strokeStyle = "#20242d"; ctx.beginPath(); ctx.moveTo(0, yOf(0)); ctx.lineTo(W, yOf(0)); ctx.stroke();
+    const yOf = (y: number) => PH - 12 - ((y - baseline - lo) / (hi - lo)) * (PH - 26);
+    ctx.strokeStyle = "#20242d"; ctx.beginPath(); ctx.moveTo(0, yOf(baseline)); ctx.lineTo(W, yOf(baseline)); ctx.stroke();
     ctx.fillStyle = "#3b4252";
     ctx.beginPath(); ctx.moveTo(0, PH);
     samples.forEach((s: number[], i: number) => ctx.lineTo((i / samples.length) * W, yOf(s[1])));
@@ -262,16 +301,7 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     return best;
   };
   const nearestSegment = (wx: number, wz: number) => {
-    const p = pts.current;
-    let best = 0, bd = Infinity, at = [wx, wz];
-    for (let i = 0; i < p.length; i++) {
-      const a = p[i], b = p[(i + 1) % p.length];
-      const abx = b.x - a.x, abz = b.z - a.z;
-      const t = Math.max(0, Math.min(1, ((wx - a.x) * abx + (wz - a.z) * abz) / (abx * abx + abz * abz || 1)));
-      const d = (a.x + abx * t - wx) ** 2 + (a.z + abz * t - wz) ** 2;
-      if (d < bd) { bd = d; best = i; at = [a.x + abx * t, a.z + abz * t]; }
-    }
-    return { segment: best, distance: Math.sqrt(bd), at };
+    return nearestLayoutSegment(pts.current, wx, wz)!;
   };
   const local = (e: React.PointerEvent | React.WheelEvent) => { const r = canvas.current!.getBoundingClientRect(); return [(e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height)]; };
   const boostAt = (sx: number, sy: number) => {
@@ -281,10 +311,36 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     return distance * view.current.scale <= Math.max(20, (params.roadWidth / 2 + params.offroadWidth) * view.current.scale) ? Math.max(1, best) / spline.samples.length : null;
   };
 
+  const itemAt = (sx: number, sy: number) => {
+    if (!frames.length) return null;
+    const [x, z] = toWorld(sx, sy); let best: { t: number; offset: number } | null = null, distance = Infinity;
+    for (let i = 0; i < frames.length; i++) {
+      const f = frames[i], g = frames[(i + 1) % frames.length], dx = g.c[0] - f.c[0], dz = g.c[2] - f.c[2];
+      const a = Math.max(0, Math.min(1, ((x - f.c[0]) * dx + (z - f.c[2]) * dz) / (dx * dx + dz * dz || 1)));
+      const cx = f.c[0] + dx * a, cz = f.c[2] + dz * a, d = Math.hypot(x - cx, z - cz);
+      if (d >= distance || d * view.current.scale > Math.max(20, (f.half + params.offroadWidth) * view.current.scale)) continue;
+      distance = d;
+      const lx = f.left[0] * (1 - a) + g.left[0] * a, lz = f.left[1] * (1 - a) + g.left[1] * a;
+      const across = ((x - cx) * lx + (z - cz) * lz) / (Math.hypot(lx, lz) || 1);
+      const width = across < 0 ? f.hr * (1 - a) + g.hr * a : f.hl * (1 - a) + g.hl * a;
+      best = { t: (i + a) / frames.length, offset: Math.max(-.9, Math.min(.9, across / Math.max(1, width))) };
+    }
+    return best;
+  };
   const onPointerDown = (e: React.PointerEvent) => {
     const [sx, sy] = local(e);
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     if (e.button === 1 || (e.button === 0 && e.altKey)) { drag.current = { pan: true, sx, sy, cx: view.current.cx, cz: view.current.cz }; return; }
+    if (mode === "items") {
+      const boxes = previewTrack?.itemBoxes || [], existing = boxes.findIndex((box: any) => { const [x, y] = toScreen(box.pos[0], box.pos[2]); return Math.hypot(x - sx, y - sy) < 12; });
+      const positions = boxes.map((box: any) => ({ t: box.t, offset: box.offset }));
+      if (e.button === 2) { if (existing >= 0) { remember(); positions.splice(existing, 1); setParams((p: any) => ({ ...p, itemBoxPositions: positions })); } return; }
+      if (e.button !== 0) return;
+      const position = itemAt(sx, sy); if (!position) return;
+      remember(); const index = existing >= 0 ? existing : positions.length;
+      positions[index] = position; setParams((p: any) => ({ ...p, itemBoxPositions: positions }));
+      drag.current = { item: index, positions }; return;
+    }
     if (mode === "boost") {
       const panels = previewTrack?.boosts || [], existing = panels.findIndex((panel: any) => { const [x, y] = toScreen(panel.pos[0], panel.pos[2]); return Math.hypot(x - sx, y - sy) < 14; });
       const positions = panels.map((panel: any) => panel.t);
@@ -300,6 +356,7 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     if (mode === "draw") {
       if (e.button !== 0) return;
       const [wx, wz] = toWorld(sx, sy);
+      setDrawError("");
       stroke.current = [{ x: wx, z: wz }];
       return;
     }
@@ -318,20 +375,34 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     }
     if (e.button !== 0) return;
     remember();
-    if (i >= 0) { setSelected(i); drag.current = { i }; }
+    const pointDrag = (i: number) => ({ i, sx, sy, x: p[i].x, z: p[i].z, moved: false });
+    if (i >= 0) { setSelected(i); drag.current = pointDrag(i); }
     else {
       const [wx, wz] = toWorld(sx, sy);
-      const { segment } = nearestSegment(wx, wz);
-      const a = p[segment], b = p[(segment + 1) % p.length];
-      p.splice(segment + 1, 0, { x: Math.round(wx / 50) * 50, z: Math.round(wz / 50) * 50, y: Math.round((a.y + b.y) / 2), w: (a.w + b.w) / 2 });
+      const hit = nearestSegment(wx, wz), { segment } = hit;
+      p.splice(segment + 1, 0, { x: Math.round(hit.at[0] / 50) * 50, z: Math.round(hit.at[1] / 50) * 50, y: clampHeight(Math.round(hit.height)), w: Math.max(.5, Math.min(2.5, hit.width)) });
       setSelected(segment + 1);
-      drag.current = { i: segment + 1 };
+      drag.current = pointDrag(segment + 1);
     }
     redraw();
+  };
+  const collectStroke = (e: React.PointerEvent) => {
+    if (!stroke.current) return;
+    const r = canvas.current!.getBoundingClientRect();
+    const events = [...(e.nativeEvent.getCoalescedEvents?.() || []), e.nativeEvent];
+    for (const event of events) {
+      const [wx, wz] = toWorld((event.clientX - r.left) * W / r.width, (event.clientY - r.top) * H / r.height);
+      const last = stroke.current[stroke.current.length - 1];
+      if (Math.hypot(wx - last.x, wz - last.z) * view.current.scale >= .5) stroke.current.push({ x: wx, z: wz });
+    }
   };
   const onPointerMove = (e: React.PointerEvent) => {
     const [sx, sy] = local(e);
     const dg = drag.current;
+    if (dg?.item !== undefined) {
+      const position = itemAt(sx, sy); if (position) { const positions = [...dg.positions]; positions[dg.item] = position; setParams((p: any) => ({ ...p, itemBoxPositions: positions })); }
+      return;
+    }
     if (dg?.height !== undefined) {
       const p = pts.current[dg.height], y = clampHeight(Math.round((dg.y + (dg.sy - sy) * dg.unitsPerPixel) / 10) * 10);
       if (p.y !== y) { if (!dg.changed) { remember(); dg.changed = true; } p.y = y; redraw(); }
@@ -342,9 +413,7 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
       return;
     }
     if (stroke.current) {
-      const [wx, wz] = toWorld(sx, sy);
-      const last = stroke.current[stroke.current.length - 1];
-      if (Math.hypot(wx - last.x, wz - last.z) * view.current.scale > 3) { stroke.current.push({ x: wx, z: wz }); draw(); }
+      collectStroke(e); draw();
       return;
     }
     if (!dg) {
@@ -358,32 +427,71 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
       return;
     }
     if (dg.pan) { view.current.cx = dg.cx - (sx - dg.sx) / view.current.scale; view.current.cz = dg.cz - (sy - dg.sy) / view.current.scale; }
-    else { const [wx, wz] = toWorld(sx, sy); pts.current[dg.i].x = Math.round(wx / 50) * 50; pts.current[dg.i].z = Math.round(wz / 50) * 50; redraw(); }
+    else {
+      if (!dg.moved && Math.hypot(sx - dg.sx, sy - dg.sy) < 3) return;
+      dg.moved = true;
+      pts.current[dg.i].x = Math.round((dg.x + (sx - dg.sx) / view.current.scale) / 50) * 50;
+      pts.current[dg.i].z = Math.round((dg.z + (sy - dg.sy) / view.current.scale) / 50) * 50;
+      redraw();
+    }
     draw();
   };
-  const onPointerUp = () => {
+  const onPointerUp = (e: React.PointerEvent) => {
+    // WebView can coalesce the final pointermove while rebuilding the mesh.
+    // Commit the release position so a dragged box/panel is saved where dropped.
+    if (e.type !== "pointercancel" && (drag.current?.item !== undefined || drag.current?.boost !== undefined || drag.current?.moved)) onPointerMove(e);
     drag.current = null;
     if (stroke.current) {
-      const made = pointsFromStroke(stroke.current);
+      if (e.type === "pointercancel") { stroke.current = null; setMode("edit"); repaint(); return; }
+      collectStroke(e);
+      let made;
+      try { made = pointsFromStroke(stroke.current, { tolerance: 2 / view.current.scale }); }
+      catch { made = null; }
       stroke.current = null;
-      if (made) { remember(); pts.current = made; setSelected(0); setMode("edit"); fit(); }
-      redraw();
+      if (made) { remember(); pts.current = made; setSelected(0); setMode("edit"); setDrawError(""); redraw(); }
+      else { setDrawError("Draw a longer loop with fewer tiny zigzags. The previous layout is kept; lift the mouse near the red start point to close the loop."); repaint(); }
     }
   };
   const onWheel = (e: React.WheelEvent) => {
+    if (stroke.current) return;
     const [sx, sy] = local(e);
     const [wx, wz] = toWorld(sx, sy);
-    view.current.scale *= e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const width = W / (view.current.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
+    view.current.scale = W / Math.max(MIN_VIEW_WIDTH, Math.min(MAX_VIEW_WIDTH, width));
     const [nx, nz] = toWorld(sx, sy);
     view.current.cx += wx - nx;
     view.current.cz += wz - nz;
     draw();
+    repaint();
   };
 
   const sp = pts.current[selected];
+  const selectedCorner = curveCorner(pts.current, selected);
+  const radiusRange = curveCorner(pts.current.map((p, i) => i === selected ? { ...p, radius: 200000 } : p), selected);
+  const radiusSliderMax = Math.max(100, Math.min(200000, Math.ceil((radiusRange?.maximum ?? 20000) / 100) * 100));
+  const bounds = layoutBounds(pts.current);
+  const changeMapSize = (axis: "x" | "z", value: number) => {
+    if (!(bounds.width > 0 && bounds.depth > 0)) return;
+    let width = axis === "x" ? value : bounds.width, depth = axis === "z" ? value : bounds.depth;
+    if (keepProportions) {
+      const factor = Math.max(Math.max(1000 / bounds.width, 1000 / bounds.depth), Math.min(Math.min(200000 / bounds.width, 200000 / bounds.depth), value / (axis === "x" ? bounds.width : bounds.depth)));
+      width = bounds.width * factor; depth = bounds.depth * factor;
+    }
+    remember(); pts.current = resizeLayout(pts.current, width, depth); fit(); redraw();
+  };
   const changeHeight = (value: number) => {
     const y = clampHeight(value);
     if (sp && sp.y !== y) { remember(); sp.y = y; redraw(); }
+  };
+  const changeWidth = (value: number) => {
+    if (sp && sp.w !== value) { remember(); sp.w = value; redraw(); }
+  };
+  const changeRadius = (value: number) => {
+    if (sp && (sp.radius || 0) !== value) { remember(); sp.radius = value; redraw(); }
+  };
+  const changeRoadWidth = (value: number) => {
+    const width = Math.max(800, Math.min(8000, value));
+    if (width !== params.roadWidth) { remember(); setParams((p: any) => ({ ...p, roadWidth: width })); }
   };
   const setParam = (key: string, value: any) => setParams((p: any) => ({ ...p, [key]: value }));
   const num = (key: string, label: string, min: number, max: number, stepSize: number, help: string, unit?: (v: number) => string) => (
@@ -397,10 +505,11 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
   const errors = issues.filter((i: any) => i.level === "error");
   const length = spline?.length || 0;
 
-  const modeHelp = mode === "height" ? "Drag a point up to raise the road or down to lower it. Hold Shift before dragging for finer control. ↑ / ↓ adjust the selected point; Ctrl+Z / Ctrl+Y undo and redo."
+  const modeHelp = mode === "items" ? "Item boxes: click the road to place a box · drag a blue box to move it along or across the road · right-click to remove it · Ctrl+Z / Ctrl+Y undo and redo."
+    : mode === "height" ? "Drag a point up to raise the road or down to lower it. Hold Shift before dragging for finer control. ↑ / ↓ adjust the selected point; Ctrl+Z / Ctrl+Y undo and redo."
     : mode === "boost" ? "Boost panels: click the road to add one · drag a yellow marker to move it · right-click its marker to remove it · Ctrl+Z undoes the placement."
     : mode === "draw"
-    ? "Draw: hold the left button and trace the whole track in one stroke. Releasing turns the line into control points you can then adjust."
+    ? "Draw the whole loop in one stroke. The curve follows your line; the dashed segment shows how it closes back to the red start point."
     : "Drag a point to move it · click the road (yellow +) to add a point there · right-click or Delete removes the selected point · arrows nudge it · wheel zooms · middle-drag or Alt+drag pans";
 
   return (
@@ -416,11 +525,12 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
             <Hint title="Road height" text="Raise or lower the road by dragging its points vertically. The layout stays in place."><Button size="sm" variant={mode === "height" && !preview3D ? "secondary" : "ghost"} aria-pressed={mode === "height" && !preview3D} aria-label="Edit road height" onClick={() => { chooseTool("height"); setHover(null); }}><ArrowUpDown /> Height</Button></Hint>
             <Hint title="Draw by hand" text="Trace the whole track with the mouse in one stroke; it replaces the current layout (Undo brings it back)."><Button size="sm" variant={mode === "draw" && !preview3D ? "secondary" : "ghost"} aria-pressed={mode === "draw" && !preview3D} onClick={() => chooseTool("draw")}><PenLine /> Draw by hand</Button></Hint>
             <Hint title="Place boost panels" text="Click the road to add an animated boost panel. Drag its marker to move it; right-click to remove it."><Button size="sm" variant={mode === "boost" && !preview3D ? "secondary" : "ghost"} aria-pressed={mode === "boost" && !preview3D} aria-label="Place boost panels" onClick={() => chooseTool("boost")}><Zap /> Boost panels</Button></Hint>
-            <div role="group" aria-label="Generator view" className="ml-auto flex shrink-0 items-center rounded-md border bg-muted/30 p-0.5">
+            <Hint title="Place item boxes" text="Click the road to add an item box. Drag a box along or across the road; right-click removes it."><Button size="sm" variant={mode === "items" && !preview3D ? "secondary" : "ghost"} aria-pressed={mode === "items" && !preview3D} aria-label="Place item boxes" onClick={() => chooseTool("items")}><Package /> Item boxes</Button></Hint>
+            <div className="flex w-full flex-wrap items-center gap-1">
+            <div role="group" aria-label="Generator view" className="mr-1 flex shrink-0 items-center rounded-md border bg-muted/30 p-0.5">
               <Button size="sm" variant={!preview3D ? "secondary" : "ghost"} aria-label="Show 2D layout" aria-pressed={!preview3D} onClick={() => setPreview3D(false)}><MapIcon /> 2D</Button>
               <Button size="sm" variant={preview3D ? "secondary" : "ghost"} aria-label="Show 3D preview" aria-pressed={preview3D} onClick={() => { setPreview3D(true); if (mode === "draw") setMode("edit"); }}><Box /> 3D</Button>
             </div>
-            <div className="flex w-full flex-wrap items-center gap-1">
             <Hint title="Undo" shortcut="Ctrl+Z" text="Undo the last change to the layout."><span className="inline-flex"><Button size="icon-sm" variant="ghost" aria-label="Undo" disabled={!history.current.undo.length} onClick={() => step("undo")}><Undo2 /></Button></span></Hint>
             <Hint title="Redo" shortcut="Ctrl+Y" text="Redo the change you undid."><span className="inline-flex"><Button size="icon-sm" variant="ghost" aria-label="Redo" disabled={!history.current.redo.length} onClick={() => step("redo")}><Redo2 /></Button></span></Hint>
             <span className="mx-1 h-5 w-px bg-border" />
@@ -431,23 +541,57 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
             <span className="ml-auto text-[11px] text-muted-foreground">grid square = 5000 units ≈ {Math.round(5000 / KART)} karts</span>
             </div>
           </div>
+          {!preview3D && <div className="flex shrink-0 items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-2" data-map-zoom>
+            <Label className="shrink-0 text-xs">Map zoom</Label>
+            <Button size="icon-sm" variant="ghost" aria-label="Zoom 2D map out" disabled={W / view.current.scale >= MAX_VIEW_WIDTH - 1} onClick={() => zoom(1 / 1.15)}><Minus /></Button>
+            <Slider min={0} max={100} step={1} value={[Math.max(0, Math.min(100, 100 * Math.log(MAX_VIEW_WIDTH * view.current.scale / W) / Math.log(MAX_VIEW_WIDTH / MIN_VIEW_WIDTH)))]} aria-label="2D map zoom" onValueChange={([value]) => setDrawingArea("x", MAX_VIEW_WIDTH * (MIN_VIEW_WIDTH / MAX_VIEW_WIDTH) ** (value / 100))} />
+            <Button size="icon-sm" variant="ghost" aria-label="Zoom 2D map in" disabled={W / view.current.scale <= MIN_VIEW_WIDTH + 1} onClick={() => zoom(1.15)}><Plus /></Button>
+            <span className="w-12 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">{Math.round(view.current.scale * 50000 / W * 100)}%</span>
+          </div>}
+          <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-2" data-map-size>
+            <span className="text-xs font-medium">Track dimensions</span>
+            <InfoTip text="Game units between the outer control points. Resizes the real layout; road width and heights keep their own settings." />
+            <div className="flex items-center gap-1.5"><Label htmlFor="generator-map-width" className="text-xs">X</Label><NumberField id="generator-map-width" aria-label="Track map width" className="h-7 w-24 text-xs" min={1000} max={200000} step={1000} integer commit value={Math.round(bounds.width)} onValue={(v) => changeMapSize("x", v)} /></div>
+            <div className="flex items-center gap-1.5"><Label htmlFor="generator-map-depth" className="text-xs">Z</Label><NumberField id="generator-map-depth" aria-label="Track map depth" className="h-7 w-24 text-xs" min={1000} max={200000} step={1000} integer commit value={Math.round(bounds.depth)} onValue={(v) => changeMapSize("z", v)} /></div>
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs"><Checkbox aria-label="Keep map proportions" checked={keepProportions} onCheckedChange={(v) => setKeepProportions(v === true)} />Keep proportions</label>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-2">
+            <Label htmlFor="generator-road-width" className="text-xs">Road width</Label>
+            <div className="flex items-center gap-1">
+              <Button size="icon-sm" variant="outline" className="size-7" aria-label="Decrease road width" disabled={params.roadWidth <= 800} onClick={() => changeRoadWidth(params.roadWidth - 100)}><Minus /></Button>
+              <NumberField id="generator-road-width" aria-label="Overall road width" className="h-7 w-24 text-xs" min={800} max={8000} step={100} integer commit value={params.roadWidth} onValue={changeRoadWidth} />
+              <Button size="icon-sm" variant="outline" className="size-7" aria-label="Increase road width" disabled={params.roadWidth >= 8000} onClick={() => changeRoadWidth(params.roadWidth + 100)}><Plus /></Button>
+            </div>
+            <span className="text-[11px] text-muted-foreground">{karts(params.roadWidth)}</span>
+            <InfoTip text="Changes the whole road in both previews and in the exported model and collision. The starting grid stays at least 3200 units wide to fit all twelve karts." />
+          </div>
+          {mode === "draw" && <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-2" data-drawing-area>
+            <span className="text-xs font-medium">Drawing area</span>
+            <InfoTip text="World units visible on the canvas. This sets the view zoom; it does not resize the track. X and Z follow the canvas proportions." />
+            <div className="flex items-center gap-1.5"><Label htmlFor="generator-view-width" className="text-xs">X</Label><NumberField id="generator-view-width" aria-label="Drawing area width" className="h-7 w-24 text-xs" min={MIN_VIEW_WIDTH} max={MAX_VIEW_WIDTH} step={1000} integer commit value={Math.round(W / view.current.scale)} onValue={(v) => setDrawingArea("x", v)} /></div>
+            <div className="flex items-center gap-1.5"><Label htmlFor="generator-view-depth" className="text-xs">Z</Label><NumberField id="generator-view-depth" aria-label="Drawing area depth" className="h-7 w-24 text-xs" min={Math.ceil(MIN_VIEW_WIDTH * H / W)} max={Math.floor(MAX_VIEW_WIDTH * H / W)} step={1000} integer commit value={Math.round(H / view.current.scale)} onValue={(v) => setDrawingArea("z", v)} /></div>
+          </div>}
           {sp && mode !== "draw" && <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-2" data-height-controls>
             <Select value={String(selected)} onValueChange={(v) => setSelected(Number(v))}>
               <SelectTrigger aria-label="Road control point" className="h-7 w-32 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>{pts.current.map((_, i) => <SelectItem key={i} value={String(i)}>Point {i}{i === 0 ? " (start)" : ""}</SelectItem>)}</SelectContent>
             </Select>
-            <Label htmlFor="generator-point-height" className="ml-auto text-xs">Height</Label>
+            <Hint title="Set start here" text="Use the selected road point as the start and finish line. Choose a straighter section with room behind it for all twelve karts."><Button size="sm" variant="ghost" disabled={selected === 0} aria-label="Set start here" onClick={() => { remember(); const next = startLayoutAt(pts.current, params, selected); pts.current = next.points; setParams(next.params); setSelected(0); redraw(); }}><Flag /> Set start here</Button></Hint>
+            <div className="ml-auto flex items-center gap-1.5">
+            <Label htmlFor="generator-point-height" className="text-xs">Height</Label>
             <Button size="icon-sm" variant="ghost" aria-label="Lower selected road point" onClick={() => changeHeight(sp.y - 100)}><ArrowDown /></Button>
             <NumberField key={selected} id="generator-point-height" aria-label="Selected road point height" className="h-7 w-24 text-xs" min={MIN_HEIGHT} max={MAX_HEIGHT} step={100} integer commit value={sp.y} onValue={changeHeight} />
             <Button size="icon-sm" variant="ghost" aria-label="Raise selected road point" onClick={() => changeHeight(sp.y + 100)}><ArrowUp /></Button>
             <span className="text-[11px] text-muted-foreground">units</span>
+            </div>
           </div>}
-          {preview3D ? <TrackGeneratorPreview3D model={previewModel} textures={texturePreview.textures} points={pts.current} samples={spline?.samples || []} selected={selected} onSelect={setSelected} fitRef={fit3D} />
+          {preview3D ? <TrackGeneratorPreview3D model={previewModel} textures={texturePreview.textures} points={pts.current.map((p) => ({ ...p, y: p.y + (spline?.heightOffset || 0) }))} samples={spline?.samples || []} itemBoxes={previewTrack?.itemBoxes || []} selected={selected} onSelect={setSelected} fitRef={fit3D} />
             : <canvas ref={canvas} width={W} height={H} className={cn("h-auto w-full shrink-0 touch-none rounded-lg border", mode === "draw" ? "cursor-crosshair" : mode === "height" && hover && "point" in hover ? "cursor-ns-resize" : hover && "point" in hover ? "cursor-grab" : hover ? "cursor-copy" : "cursor-default")} onContextMenu={(e) => e.preventDefault()}
               onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onPointerLeave={() => setHover(null)} onWheel={onWheel} data-testid="generator-canvas" />}
           <p className="m-0 min-h-8 shrink-0 text-[11px] leading-relaxed text-muted-foreground">{preview3D ? "Live 3D preview: select a blue point and change its Height above. Return to 2D to draw, drag road points or place boost panels." : modeHelp}</p>
+          {mode === "draw" && drawError && <p role="alert" className="m-0 text-xs text-destructive">{drawError}</p>}
           <div className="shrink-0">
-            <div className="mb-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">Height along the track, from the start line <InfoTip text="Each dot is a control point. Use Height above the drawing to drag road points up or down, or enter an exact height in the controls above the road." /></div>
+            <div className="mb-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">Height along the track, from the start line <InfoTip text="Height is relative to the track's safe baseline. Moving points on the map keeps a flat track flat. Automatic bridges can be enabled in Road to add ramps at actual crossings." /></div>
             <canvas ref={profile} width={W} height={PH} className="w-full rounded-md border" aria-label="Height profile" />
           </div>
         </div>
@@ -462,7 +606,7 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
             <div className="min-h-0 flex-1 overflow-y-auto pr-1 pt-3">
               <TabsContent value="layout" className="mt-0 flex flex-col gap-3">
                 <TrackStylePicker params={params} change={setParam} textures={texturePreview.textures} />
-                <p className="m-0 text-xs leading-relaxed text-muted-foreground">Start from a ready shape or draw your own, then drag the points. The red point is the start and finish line; the arrows show the driving direction.</p>
+                <p className="m-0 text-xs leading-relaxed text-muted-foreground">Start from a ready shape or draw your own, then drag the points. The red point is the finish line; the arrows show the driving direction. The layout stays as drawn. Select a point and use Set start here to move the starting grid to a straighter section.</p>
                 <div className="grid grid-cols-2 gap-1.5">
                   {Object.keys(PRESETS).map((name) => (
                     <button key={name} type="button" className="cursor-pointer rounded-md border px-2.5 py-2 text-left hover:bg-accent"
@@ -477,21 +621,33 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
                   </button>
                 </div>
                 {sp && (
-                  <div className="rounded-md border p-3">
+                  <div className="rounded-md border p-3" data-selected-point>
                     <div className="mb-2 text-xs font-medium">Selected point {selected}{selected === 0 ? " (start)" : ""} <span className="font-normal text-muted-foreground">of {pts.current.length}</span></div>
-                    <div className="grid grid-cols-[64px_1fr_52px] items-center gap-x-3 gap-y-2" onPointerDownCapture={remember}>
+                    <div className="grid grid-cols-[88px_minmax(0,1fr)_80px] items-center gap-x-3 gap-y-2">
                       <Label>Height</Label>
-                      <Slider min={-3000} max={8000} step={100} value={[sp.y]} onValueChange={([v]) => { sp.y = v; redraw(); }} aria-label="Height" />
+                      <Slider min={-3000} max={8000} step={100} value={[sp.y]} onPointerDownCapture={remember} onValueChange={([v]) => { sp.y = v; redraw(); }} aria-label="Height" />
                       <span className="text-right text-xs tabular-nums">{sp.y}</span>
-                      <Label>Width ×</Label>
-                      <Slider min={0.5} max={2.5} step={0.05} value={[sp.w]} onValueChange={([v]) => { sp.w = v; redraw(); }} aria-label="Width" />
-                      <span className="text-right text-xs tabular-nums">{sp.w.toFixed(2)}</span>
+                      <Label htmlFor="generator-point-width">Width ×</Label>
+                      <Slider min={0.5} max={2.5} step={0.05} value={[sp.w]} onPointerDownCapture={remember} onValueChange={([v]) => { sp.w = v; redraw(); }} aria-label="Width" />
+                      <NumberField key={`width-${selected}`} id="generator-point-width" aria-label="Selected road point width" className="h-7 w-20 text-xs" min={.5} max={2.5} step={.05} commit value={sp.w} onValue={changeWidth} />
+                      <Label htmlFor="generator-curve-radius">Curve radius</Label>
+                      <Slider min={0} max={radiusSliderMax} step={100} value={[Math.min(sp.radius || 0, radiusSliderMax)]} onPointerDownCapture={remember} onKeyDownCapture={(e) => { if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End"].includes(e.key)) remember(); }} onValueChange={([v]) => { sp.radius = v; redraw(); }} aria-label="Curve radius" />
+                      <NumberField key={`radius-${selected}`} id="generator-curve-radius" aria-label="Selected curve radius" className="h-7 w-20 text-xs" min={0} max={200000} step={100} integer commit value={sp.radius || 0} onValue={changeRadius} />
+                    </div>
+                    <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <InfoTip text="Radius of the bend at this point, in game units. Larger values make a wider circular turn. The road rounds inside the control point. 0 keeps the automatic curve. Limited by the space to the neighbouring points; height stays unchanged." />
+                      <span data-curve-radius-status>{!sp.radius ? "0 = automatic curve" : selectedCorner ? `Applied: ${Math.round(selectedCorner.radius)} units${selectedCorner.radius < sp.radius - .5 ? " (limited by neighbouring points)" : ""}` : "Move this point to form a bend."}</span>
                     </div>
                     <p className="m-0 mt-2 text-[11px] leading-snug text-muted-foreground">Height raises the road at this point (hills, bridges); the road between points follows smoothly. Width × makes the road wider or narrower here.</p>
                   </div>
                 )}
               </TabsContent>
               <TabsContent value="road" className="mt-0 flex flex-col gap-3">
+                <div className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-0.5">
+                  <Label>Automatic bridges</Label>
+                  <Switch aria-label="Automatic bridges" checked={params.autoBridges} onCheckedChange={(v) => { remember(); setParam("autoBridges", v); }} />
+                  <p className="col-span-2 m-0 text-[11px] leading-snug text-muted-foreground">Add a bridge where the road actually crosses itself. Off by default: use Height to choose your own elevations.</p>
+                </div>
                 {num("roadWidth", "Road width", 800, 8000, 100, "Width of the drivable road.", karts)}
                 {num("offroadWidth", "Off-road width", 0, 6000, 100, "Grass on both sides of the road: karts slow down on it. 0 = none.")}
                 <div className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-0.5">
@@ -500,6 +656,11 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
                   <p className="col-span-2 m-0 text-[11px] leading-snug text-muted-foreground">Walls along both edges keep karts on the track. Without them, falling off the edge brings Lakitu.</p>
                 </div>
                 {params.walls && num("wallHeight", "Wall height", 100, 5000, 50, "How high the walls are. Bridges must be higher than this above the road below.")}
+                <div className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-0.5">
+                  <Label>Allow tricks on ramps</Label>
+                  <Switch checked={params.trickable} onCheckedChange={(v) => setParam("trickable", v)} aria-label="Allow tricks on ramps" />
+                  <p className="col-span-2 m-0 text-[11px] leading-snug text-muted-foreground">Enables the game's trickable collision flag on the road and boost panels. Perform a trick when a crest or ramp takes the kart into the air.</p>
+                </div>
                 {Array.isArray(params.boostPositions) ? <div className="text-xs">{previewTrack?.boosts.length || 0} manually placed boost panels</div> : num("boostPads", "Boost panels", 0, 6, 1, "Automatically placed on the straightest parts. Use the drawing tool to choose their positions.")}
                 <div className="flex flex-wrap gap-1.5"><Button size="sm" variant="outline" onClick={() => chooseTool("boost")}><Zap /> Place on drawing</Button><Button size="sm" variant="ghost" onClick={() => { remember(); setParam("boostPositions", undefined); }}>Auto place</Button><Button size="sm" variant="ghost" onClick={() => { remember(); setParam("boostPositions", []); }}>Remove all</Button></div>
                 {num("boostLength", "Boost panel length", 400, 4000, 100, "Length along the road. Panels follow its curve, height and driving direction.")}
@@ -507,7 +668,8 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
               <TabsContent value="textures" className="mt-0 flex flex-col gap-3"><TrackTextures params={params} change={setParam} busy={setTextureBusy} textures={texturePreview.textures} /></TabsContent>
               <TabsContent value="race" className="mt-0 flex flex-col gap-3">
                 {num("laps", "Laps", 1, 9, 1, "Laps of a race (the game normally uses 3).")}
-                {num("itemRows", "Item box rows", 0, 8, 1, "Rows of four item boxes across the road, spread around the track.")}
+                {Array.isArray(params.itemBoxPositions) ? <p className="m-0 text-xs" aria-live="polite">{previewTrack?.itemBoxes.length || 0} manually placed item boxes</p> : num("itemRows", "Item box rows", 0, 8, 1, "Rows of four item boxes across the road, spread around the track.")}
+                <div className="flex flex-wrap gap-1.5"><Button size="sm" variant="outline" onClick={() => chooseTool("items")}><Package /> Place on drawing</Button><Button size="sm" variant="ghost" aria-label="Auto place item boxes" onClick={() => { remember(); setParam("itemBoxPositions", undefined); }}>Auto place</Button><Button size="sm" variant="ghost" aria-label="Remove all item boxes" onClick={() => { remember(); setParam("itemBoxPositions", []); }}>Remove all</Button></div>
                 {num("keyCheckpoints", "Key checkpoints", 0, 10, 1, "Checkpoints that must be crossed in order: they stop drivers from cutting across to finish a lap.")}
                 {num("checkpointSpacing", "Checkpoint spacing", 500, 6000, 100, "Distance between checkpoints. Closer checkpoints count positions more precisely.")}
                 {num("respawnEvery", "Respawn every N checkpoints", 1, 10, 1, "Where Lakitu puts a driver who fell off: a respawn point every N checkpoints.")}
@@ -521,7 +683,7 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
             </div>
           </Tabs>
           <div className="mt-3 shrink-0 rounded-md border p-2.5" aria-live="polite">
-            <div className="mb-1 text-xs font-medium">Check</div>
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-xs font-medium"><span>Check</span><label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-normal text-muted-foreground"><Checkbox aria-label="Show adjustment markers" checked={showAdjustments} onCheckedChange={(v) => setShowAdjustments(v === true)} />Show adjustment markers</label></div>
             {issues.length ? (
               <ul className="m-0 flex list-none flex-col gap-1 p-0 text-[11px] leading-snug">
                 {issues.map((i: any) => <li key={i.message} className={cn("flex items-start gap-1.5", i.level === "error" ? "text-destructive" : i.level === "warning" ? "text-warning" : "text-muted-foreground")}>{i.level === "error" ? <CircleAlert className="mt-px size-3 shrink-0" /> : i.level === "warning" ? <TriangleAlert className="mt-px size-3 shrink-0" /> : <Info className="mt-px size-3 shrink-0 text-sky-400" />} {i.message}</li>)}

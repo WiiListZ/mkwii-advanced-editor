@@ -92,16 +92,17 @@ export async function inspectTrack(path: string, battle: boolean) {
   const file = await api.readPath(path);
   const tree = parseU8(await api.decodeArchiveBytes(file.data, file.path, editor.commonPath || editor.partsFolder()));
   const files = listFiles(tree).map((f: any) => f.path);
-  let checkpoints = 0, starts = 0;
+  let checkpoints = 0, starts = 0, parsedKmp: any = null;
   const kmp = findFile(tree, "course.kmp");
   if (kmp) {
     try {
       const parsed = parseKMP(kmp.data);
+      parsedKmp = parsed;
       checkpoints = parsed.CKPT.reduce((n: number, g: any) => n + g.points.length, 0);
       starts = parsed.KTPT.length;
     } catch { /* reported as missing data below */ }
   }
-  return { ...checkTrackArchive({ files, checkpoints, starts }, battle), files: files.length, checkpoints };
+  return { ...checkTrackArchive({ files, checkpoints, starts, kmp: parsedKmp }, battle), files: files.length, checkpoints };
 }
 
 // The position is already chosen. Keep its working archive automatically until Apply installs it;

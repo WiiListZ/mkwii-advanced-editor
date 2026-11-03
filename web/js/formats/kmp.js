@@ -227,6 +227,21 @@ export function buildKMP(doc) {
   return w.toUint8Array();
 }
 
+// Route-controlled cameras must link a real POTI route, even when an editor preview
+// can display their fixed position. The game creates a route controller at load time.
+export function cameraRouteIssues(kmp) {
+  const issues = [];
+  (kmp.CAME || []).forEach((cam, index) => {
+    if (![2, 5, 6].includes(cam.type)) return;
+    const route = kmp.POTI?.[cam.route];
+    if (cam.route === 0xff || !route || route.points.length < 2)
+      issues.push({ index, message: `Camera #${index} (type ${cam.type}) needs a route with at least 2 points: Mario Kart Wii can crash while loading this track.` });
+    else if (route.smooth && route.points.length < 3)
+      issues.push({ index, message: `Camera #${index} has a smooth route with fewer than 3 points: Mario Kart Wii can freeze while loading this track.` });
+  });
+  return issues;
+}
+
 export function emptyKMP() {
   const doc = { version: 0x9D8, order: [...SECTION_ORDER], extras: {}, raw: {} };
   for (const m of ['ENPT', 'ITPT', 'CKPT']) doc[m] = [];

@@ -6,6 +6,7 @@
 // its files into the archive name of that slot, and its name into that slot's messages.
 
 import { TRACK_NAMES } from './defs.js';
+import { cameraRouteIssues } from '../formats/kmp.js';
 
 // Course ID, archive name (Race/Course/<file>.szs and <file>_d.szs) and music stream
 // (sound/strm/<music>_n.brstm and <music>_f.brstm) of every slot.
@@ -242,7 +243,7 @@ export function musicFiles(stream, listing) {
 
 // What an archive needs to be loaded in a slot, from the file names it holds and its KMP.
 // Returns { errors: [], warnings: [] }.
-export function checkTrackArchive({ files, checkpoints, starts }, battle) {
+export function checkTrackArchive({ files, checkpoints, starts, kmp }, battle) {
   const errors = [], warnings = [];
   const has = (name) => files.some((f) => f.toLowerCase().split('/').pop() === name);
   for (const name of ['course.kmp', 'course.kcl', 'course_model.brres', 'vrcorn_model.brres'])
@@ -253,5 +254,6 @@ export function checkTrackArchive({ files, checkpoints, starts }, battle) {
     if (!starts) warnings.push('No start position (KTPT): drivers start at the centre of the map.');
   }
   if (!has('map_model.brres')) warnings.push('No map_model.brres: the minimap in the corner stays empty.');
+  if (kmp) errors.push(...cameraRouteIssues(kmp).map((issue) => issue.message));
   return { errors, warnings };
 }

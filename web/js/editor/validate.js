@@ -2,6 +2,7 @@
 
 import { parseBRRES } from '../formats/brres.js';
 import { findFile } from '../formats/u8.js';
+import { cameraRouteIssues } from '../formats/kmp.js';
 import { fixIntroShots, introShotIssues } from './intro-keys.js';
 
 const segCross = (a, b, c, d) => {
@@ -139,6 +140,7 @@ export function validate(doc, ops, objectNames) {
     if (c.next !== 0xFF && c.next >= k.CAME.length) add('error', `Camera links missing next camera ${c.next}.`, c.uid);
     if (c.route !== 0xFF && c.route >= routeCount) add('error', `Camera uses missing route ${c.route}.`, c.uid);
   });
+  for (const issue of cameraRouteIssues(k)) add('error', issue.message, k.CAME[issue.index].uid);
   if (!k.CAME.length) add('warning', 'No cameras: the intro and the replay/goal camera will not work properly.');
   for (const { index, problems } of introShotIssues(k)) {
     add('warning', `Intro camera ${index} plays differently in the game than in the preview: ${problems.join('; ')}.`, k.CAME[index].uid,
