@@ -173,6 +173,19 @@ export function decodeBRSTM(stream) {
   return out;
 }
 
+// Changes one track's volume and pan (0-127, pan 64 the middle) in the file's header, without
+// re-encoding anything. Only a file that keeps them (track type 1) has them to change.
+export function setBRSTMTrackMix(data, index, volume, pan) {
+  const out = data.slice(), r = new Reader(out);
+  const head = r.u32(0x10), base = head + 8, p2 = base + r.u32(head + 0x14);
+  if (r.u8(p2 + 1) !== 1) throw new Error('This stream keeps no volume or pan for its tracks');
+  if (!Number.isInteger(index) || index < 0 || index >= r.u8(p2)) throw new Error('No such track');
+  const tp = base + r.u32(p2 + 4 + index * 8 + 4);
+  const clamp = (n) => Math.max(0, Math.min(127, Math.round(n)));
+  out[tp] = clamp(volume); out[tp + 1] = clamp(pan);
+  return out;
+}
+
 // Changes the loop without re-encoding DSP-ADPCM or disturbing track/channel data.
 export function setBRSTMLoop(data, loop, loopStart) {
   const stream = parseBRSTM(data);

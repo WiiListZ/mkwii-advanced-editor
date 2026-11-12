@@ -1,6 +1,7 @@
 // Flat X/Z editor for KMP elements. This is a separate canvas, not a camera
 // preset of the 3D viewport; all edits still go through the shared document.
 import * as React from "react";
+import { flushSync } from "react-dom";
 import { Maximize2, MousePointer2, Plus, Trash2 } from "lucide-react";
 import * as THREE from "three";
 import { Button } from "@/components/ui/button";
@@ -147,6 +148,7 @@ export function Map2DPanel() {
     const observer = new ResizeObserver(() => {
       const r = host.current?.getBoundingClientRect();
       if (!r || r.width < 2 || r.height < 2) return;
+      if (r.width === size.current.w && r.height === size.current.h) return;
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       size.current = { w: r.width, h: r.height, dpr };
       for (const canvas of [base.current, overlay.current]) if (canvas) {
@@ -154,7 +156,8 @@ export function Map2DPanel() {
         canvas.height = Math.round(r.height * dpr);
       }
       baseCache.current = null;
-      if (!fitted.current) fit(); else redraw();
+      // Resizing a canvas clears it: draw again now, before a blank frame reaches the screen.
+      flushSync(() => { if (!fitted.current) fit(); else redraw(); });
     });
     if (host.current) observer.observe(host.current);
     const onLoad = () => { fitted.current = false; fittedModel.current = null; baseCache.current = null; fit(); };

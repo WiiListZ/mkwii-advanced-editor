@@ -5,6 +5,7 @@ import { join, resolve, sep } from "node:path";
 
 async function withServer(run: (request: (route: string, body?: unknown) => Promise<Response>) => Promise<void>, windowCommand?: string[]) {
   const dir = await mkdtemp(join(tmpdir(), "mkwii-window-loading-"));
+  await Bun.write(join(dir, "settings.json"), JSON.stringify({ discordActivity: false }));
   const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
   try {
     const port = await new Promise<number>((done, reject) => {

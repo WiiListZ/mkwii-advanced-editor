@@ -2,6 +2,7 @@
 // Starts the local server in a worker and opens the native window (WebView2).
 // Usage:  MKWiiAdvancedEditor.exe [track.szs] [--browser | --server-only]
 
+import type { Pointer } from "bun:ffi";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyGpuBackend, relaunchWithNextBackend } from "./gpu-fallback.ts";
@@ -82,7 +83,8 @@ if (serverOnly) {
     let control: import("./window.ts").WindowControl | null = null;
     try {
       const { makeFrameless, userClosedWindow } = await import("./window.ts");
-      control = makeFrameless(lib.symbols.webview_get_window(rawHandle), rawHandle, lib.symbols.webview_create.ptr);
+      // The symbols' pointers are there at run time; their declared types do not say so.
+      control = makeFrameless(lib.symbols.webview_get_window(rawHandle) as Pointer, rawHandle as Pointer, (lib.symbols.webview_create as any).ptr);
       userClosed = userClosedWindow;
     } catch (err) {
       console.error("Frameless window not available:", err);

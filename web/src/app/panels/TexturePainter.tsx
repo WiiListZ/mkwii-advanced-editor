@@ -3,7 +3,7 @@ import { Eraser, ImagePlus, Layers, Move, Paintbrush, Pipette, Redo2, Save, Tras
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { api, FILTERS } from "../../../js/api.js";
-import { decodeTexture, parseBRRES, TEXTURE_FORMATS } from "../../../js/formats/brres.js";
+import { parseBRRES, TEXTURE_FORMATS, textureRGBA } from "../../../js/formats/brres.js";
 import { editor } from "../editor";
 import { useEditHistory, useHistoryKeys } from "../edit-history";
 
@@ -56,8 +56,8 @@ export function TexturePainter({ name, bytes: savedBytes, tall = false, original
   const decodeBytes = (data: Uint8Array) => {
     try {
       if (decode) return decode(data, name);
-      const tex = parseBRRES(data).textures.get(name);
-      return tex ? { width: tex.width, height: tex.height, format: tex.format, pixels: Uint8ClampedArray.from(decodeTexture(tex)) } : null;
+      const brres = parseBRRES(data), tex = brres.textures.get(name);
+      return tex ? { width: tex.width, height: tex.height, format: tex.format, pixels: Uint8ClampedArray.from(textureRGBA(brres, tex)) } : null;
     } catch { return null; }
   };
   const saveStaged = () => {

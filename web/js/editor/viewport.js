@@ -81,6 +81,7 @@ export class Viewport extends EventTarget {
     this.objectModelProvider = null; // (objectId) => { template, chr } | null
     this.startModelProvider = null;  // () => { template, chr } | null (Mario's kart for start positions)
     this.respawnModelProvider = null; // () => { template, chr } | null (Lakitu for respawn points)
+    /** @type {(id: number) => string | null | undefined} */
     this.objectNameProvider = () => null;
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
@@ -851,6 +852,7 @@ export class Viewport extends EventTarget {
         const selFlag = isSel(e.uid);
         const sc = e.scale.map((v) => (Math.abs(v) < 0.001 ? 0.001 : v));
         const name = this.objectNameProvider(e.objectId);
+        if (this.hideObject?.(e, name)) continue;
         const real = this.modelMode === 'real' ? this.objectModelProvider?.(e.objectId) : null;
         const display = OBJECT_DISPLAY[name] || (e.objectId === 0x65 ? OBJECT_DISPLAY.itembox : null);
         let obj;

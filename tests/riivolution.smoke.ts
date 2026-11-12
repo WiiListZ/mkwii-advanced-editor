@@ -17,7 +17,7 @@ const track = join(files, "Race", "Course", "beginner_course.szs");
 copyFileSync(join(game, "Race", "Course", "beginner_course.szs"), track);
 copyFileSync(track, track + ".bak"); // edited by the editor: it kept the original
 copyFileSync(join(game, "Race", "Course", "castle_course.szs"), join(files, "Race", "Course", "castle_course.szs")); // not edited
-await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true, workspace: files }));
+await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false, workspace: files }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((r) => { worker.onmessage = (e) => e.data?.type === "ready" && r(e.data.port); worker.postMessage({ type: "start", token: "riivo", settingsDir: settings }); });
 const browser = await puppeteer.launch({ executablePath: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", headless: true });

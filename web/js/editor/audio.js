@@ -43,6 +43,36 @@ export function isolateTrack(clip, index) {
   };
 }
 
+// How loud a channel is on the left and on the right, as the game's sound engine (NW4R) places it: a
+// track's pan (0-127, 64 the middle) as -1 to 1, added to the channel's own place (its left channel at
+// -1, its right at 1, a single channel in the middle), kept within -1 to 1, through the square-root
+// pan curve. In the middle a stereo track stays as it is; panned, part of one side moves to the other.
+export function panGains(pan, side, channels) {
+  const p = Math.max(-1, Math.min(1, (pan - 64) / 63));
+  const base = channels < 2 ? 0 : side === 0 ? -1 : 1;
+  const x = Math.max(-1, Math.min(1, base + p));
+  return [Math.sqrt((1 - x) / 2), Math.sqrt((1 + x) / 2)];
+}
+
+// Two channels to listen to, as floats: each track (or only the one asked for) at its volume and pan,
+// summed. Several tracks are scaled down together so that the sum stays in range.
+export function mixTracks(clip, trackIndex = null) {
+  const n = clip.channels[0].length;
+  const left = new Float32Array(n), right = new Float32Array(n);
+  const all = clip.tracks?.length ? clip.tracks : [{ volume: 127, pan: 64, channels: clip.channels.map((_, i) => i) }];
+  const tracks = trackIndex !== null ? [all[trackIndex]] : all;
+  const gain = 1 / Math.max(1, tracks.length) ** 0.5;
+  for (const t of tracks) {
+    const g = (t.volume / 127) * gain / 32768;
+    t.channels.slice(0, 2).forEach((channel, side) => {
+      const [gl, gr] = panGains(t.pan ?? 64, side, Math.min(2, t.channels.length));
+      const data = clip.channels[channel], l = gl * g, r = gr * g;
+      for (let i = 0; i < n; i++) { left[i] += data[i] * l; right[i] += data[i] * r; }
+    });
+  }
+  return [left, right];
+}
+
 // ---- WAV ------------------------------------------------------------------------------------------
 export function encodeWAV(channels, sampleRate) {
   const count = channels.length, frames = channels[0].length, bytes = frames * count * 2;

@@ -15,7 +15,7 @@ if (!source || !existsSync(source)) {
 const testDir = mkdtempSync(join(tmpdir(), 'mkwii-desert-'));
 const track = join(testDir, 'desert_course.szs');
 copyFileSync(source, track);
-await Bun.write(join(testDir, 'settings.json'), JSON.stringify({ tourDone: true }));
+await Bun.write(join(testDir, 'settings.json'), JSON.stringify({ tourDone: true, discordActivity: false }));
 const worker = new Worker(new URL('../src/server.ts', import.meta.url).href);
 const port: number = await new Promise((resolve) => {
   worker.onmessage = (event) => event.data?.type === 'ready' && resolve(event.data.port);

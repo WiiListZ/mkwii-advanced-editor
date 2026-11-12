@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const testDir = mkdtempSync(join(tmpdir(), 'mkwii-mouse-look-'));
-await Bun.write(join(testDir, 'settings.json'), JSON.stringify({ tourDone: true }));
+await Bun.write(join(testDir, 'settings.json'), JSON.stringify({ tourDone: true, discordActivity: false }));
 const worker = new Worker(new URL('../src/server.ts', import.meta.url).href);
 const port: number = await new Promise((resolve) => {
   worker.onmessage = (event) => event.data?.type === 'ready' && resolve(event.data.port);

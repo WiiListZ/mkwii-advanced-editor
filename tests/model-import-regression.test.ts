@@ -252,14 +252,14 @@ test.skipIf(process.platform !== "win32")("model imports retain palette colours,
     expect(warnings).toEqual([]); expect(afterOBJ.models[0].objects.length).toBe(4);
     for (const [name, rgba] of [["red", [255, 0, 0, 255]], ["green", [0, 255, 0, 255]], ["blue", [0, 0, 255, 255]]] as const) {
       const material = afterOBJ.models[0].materials.find((m: any) => m.name === `colors_${name}`)!;
-      expect([...decodeTexture(afterOBJ.textures.get(material.layers[0].texture)).slice(0, 4)]).toEqual(rgba);
+      expect([...decodeTexture(afterOBJ.textures.get(material.layers[0].texture)!).slice(0, 4)]).toEqual([...rgba]);
     }
     expect(texturePixels(afterOBJ.textures.get("road"))).toEqual(texturePixels(parseBRRES(normalized).textures.get("road")));
     expect(afterOBJ.textures.get("block")!.mipmaps).toBe(2);
     for (let level = 0; level < 2; level++) expect(texturePixels(afterOBJ.textures.get("block"), undefined, level)).toEqual(texturePixels(blockBefore, undefined, level));
     const rested = parseBRRES(restBRRESPartsOnPoint(objBytes, "course", [1, 2, 3], [50, 250, 150]));
     for (const index of [1, 2, 3]) {
-      const before = afterOBJ.models[0].objects[index].positions, after = rested.models[0].objects[index].positions;
+      const before: number[] = Array.from(afterOBJ.models[0].objects[index].positions), after: number[] = Array.from(rested.models[0].objects[index].positions);
       expect(Array.from(after).every((value, i) => Math.abs(value - before[i] - (i % 3 === 1 ? 150 : 0)) < 0.01)).toBe(true);
     }
     expect(rested.models[0].objects[0].positions).toEqual(afterOBJ.models[0].objects[0].positions);

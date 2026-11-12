@@ -158,6 +158,7 @@ export class Ops {
         case 'AREA': case 'CAME': {
           const e = make[kind](p);
           if (kind === 'CAME') { e.pos[1] += 1500; e.viewStart = [...p]; e.viewEnd = [...p]; }
+          Object.assign(e, extra.fields);
           k[kind].push(e);
           newKey = e.uid;
           break;

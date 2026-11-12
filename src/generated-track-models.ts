@@ -15,6 +15,36 @@ import { buildU8, newSzsTree, setFilePath } from "../web/js/formats/u8.js";
 
 type Model = { tris: { mat: string; v: number[]; uv?: number[] }[]; materials: Record<string, GeneratedMaterial> };
 
+// A minimap on its own (map_model.brres), with one solid texture for each of its colours.
+export async function buildMinimapModel(map: Model) {
+  if (!map?.tris?.length || map.tris.length > 65534) throw new Error("A minimap needs between 1 and 65534 triangles");
+  for (const tri of map.tris) {
+    if (!/^[A-Za-z0-9_]{1,32}$/.test(tri.mat) || !map.materials?.[tri.mat] || tri.v?.length !== 9 || !tri.v.every(Number.isFinite)) throw new Error("Invalid minimap triangle");
+  }
+  const exe = abmattPath();
+  if (!exe) throw new Error("The included model converter is unavailable.");
+  const dir = await mkdtemp(join(tmpdir(), "mkwii-minimap-"));
+  try {
+    const { textures } = await resolveGeneratedMaterials(map.materials);
+    const { obj, mtl } = modelToOBJ(map, "map.mtl", { maxTrianglesPerMaterial: 256 });
+    await writeFile(join(dir, "map.obj"), obj);
+    await writeFile(join(dir, "map.mtl"), mtl.replace(/# map_Kd ([A-Za-z0-9_]+\.png)/g, "map_Kd $1"));
+    for (const [name, texture] of textures) await writeFile(join(dir, `${name}.png`), texture.png);
+    await writeFile(join(dir, "commands.txt"), "convert map.obj to map_model.brres\n");
+    const child = Bun.spawn([exe, "-f", "commands.txt", "-o"], { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
+    const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    if (code) throw new Error(`Could not build map_model.brres: ${(out + "\n" + err).trim().slice(-800)}`);
+    const bytes = new Uint8Array(await readFile(join(dir, "map_model.brres")).catch(() => { throw new Error(`Could not create map_model.brres: ${(out + "\n" + err).trim().slice(-1800)}`); }));
+    const built = parseBRRES(bytes).models.find((m: any) => m.name === "map");
+    if (!built || built.objects.reduce((n: number, o: any) => n + o.triangles, 0) !== map.tris.length) throw new Error("The rebuilt minimap is missing geometry");
+    if (!["posLD", "posRU"].every((n) => built.bones.some((b: any) => b.name === n))) throw new Error("The rebuilt minimap has no position bounds");
+    return bytes;
+  } finally {
+    if (!resolve(dir).startsWith(resolve(tmpdir()) + sep)) throw new Error("Unsafe minimap temporary path");
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 export async function buildGeneratedTrackModels(model: Model, options: GameTextureOptions = {}) {
   if (!model?.tris?.length || model.tris.length > 65534) throw new Error("Invalid generated track geometry");
   for (const tri of model.tris) {
@@ -72,7 +102,7 @@ export async function buildGeneratedTrackModels(model: Model, options: GameTextu
       const child = Bun.spawn([exe, "-f", "commands.txt", "-o"], { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
       const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
       if (code) throw new Error(`Could not build ${target}: ${(out + "\n" + err).trim().slice(-800)}`);
-      let bytes = new Uint8Array(await readFile(join(dir, target)).catch(() => { throw new Error(`Could not create ${target}: ${(out + "\n" + err).trim().slice(-1800)}`); }));
+      let bytes: Uint8Array = new Uint8Array(await readFile(join(dir, target)).catch(() => { throw new Error(`Could not create ${target}: ${(out + "\n" + err).trim().slice(-1800)}`); }));
       if (name === "course" && courseTextures.game) for (const mat of new Set(source.tris.map((t) => t.mat))) {
         const original = courseTextures.textures.get(mat)?.original;
         if (original && ![8, 9, 10].includes(original.texture.format))

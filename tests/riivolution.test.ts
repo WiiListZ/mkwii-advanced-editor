@@ -69,7 +69,7 @@ test("problems that keep a mod from working are reported", () => {
   const mod = newRiivolutionMod("Test", []);
   mod.game = "";
   mod.sections[0].options[0].choices[0].patches.push({ id: "missing", attrs: {}, params: [] });
-  mod.patches.push({ attrs: { id: "Test" }, items: [{ tag: "file", attrs: { disc: "/a" } }] });
+  mod.patches.push({ attrs: { id: "Test" }, items: [{ tag: "file", attrs: { disc: "/a" } }] } as any);
   const problems = checkRiivolution(mod);
   expect(problems).toContain("Set the game ID (RMC for Mario Kart Wii).");
   expect(problems).toContain('Option "Enabled" uses the missing patch "missing".');

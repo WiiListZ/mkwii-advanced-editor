@@ -194,7 +194,7 @@ function parseArrays(r, entries, kind) {
       const stride = r.u8(o + 0x1C);
       const out = new Float32Array(count * 4);
       for (let i = 0; i < count; i++) out.set(readColor(r, data + i * stride, fmt), i * 4);
-      map.set(index, { name: e.name, count, size: 4, data: out });
+      map.set(index, { name: e.name, count, size: 4, data: out, format: fmt, stride, dataOffset: data });
       continue;
     }
     const div = r.u8(o + 0x1C);
@@ -665,14 +665,122 @@ const clampByte = (x) => Math.max(0, Math.min(255, Math.round(x)));
 const rgb565 = (r, g, b) => ((Math.round(r * 31 / 255) << 11) | (Math.round(g * 63 / 255) << 5) | Math.round(b * 31 / 255));
 const luminance = (r, g, b) => clampByte(r * 0.299 + g * 0.587 + b * 0.114);
 
+export const INDEXED_FORMATS = [8, 9, 10];
+
+// The palette a material draws this texture with; a PLT0 of the same name otherwise.
+export function paletteOfTexture(brres, textureName) {
+  for (const model of brres.models) for (const material of model.materials) for (const layer of material.layers || []) {
+    if (layer.texture === textureName && layer.palette && brres.palettes.get(layer.palette)) return brres.palettes.get(layer.palette);
+  }
+  return brres.palettes.get(textureName) || null;
+}
+
+// RGBA of a texture, through its palette when it has one.
+export function textureRGBA(brres, tex) {
+  return decodeTexture(tex, INDEXED_FORMATS.includes(tex.format) ? paletteOfTexture(brres, tex.name) : null);
+}
+
+// Median cut: at most `count` colours for these pixels. Fully transparent pixels share one entry.
+function quantizeColors(rgba, count) {
+  const unique = new Map();
+  for (let i = 0; i < rgba.length; i += 4) {
+    const key = rgba[i + 3] < 8 ? 0 : ((rgba[i] << 24) | (rgba[i + 1] << 16) | (rgba[i + 2] << 8) | rgba[i + 3]) >>> 0;
+    unique.set(key, (unique.get(key) || 0) + 1);
+  }
+  const color = (key) => [key >>> 24, (key >>> 16) & 255, (key >>> 8) & 255, key & 255];
+  let boxes = [[...unique.keys()]];
+  while (boxes.length < count) {
+    let target = -1, widest = 0, channel = 0;
+    boxes.forEach((box, i) => {
+      if (box.length < 2) return;
+      for (let c = 0; c < 4; c++) {
+        let low = 255, high = 0;
+        for (const key of box) { const v = color(key)[c]; low = Math.min(low, v); high = Math.max(high, v); }
+        if (high - low > widest) { widest = high - low; target = i; channel = c; }
+      }
+    });
+    if (target < 0) break;
+    const box = boxes[target].sort((a, b) => color(a)[channel] - color(b)[channel]);
+    const middle = box.length >> 1;
+    boxes.splice(target, 1, box.slice(0, middle), box.slice(middle));
+  }
+  return boxes.map((box) => {
+    const sum = [0, 0, 0, 0];
+    let weight = 0;
+    for (const key of box) { const n = unique.get(key), c = color(key); for (let k = 0; k < 4; k++) sum[k] += c[k] * n; weight += n; }
+    return sum.map((v) => Math.round(v / weight));
+  });
+}
+
+function encode16(c, fmt) {
+  if (fmt === 0) return (c[3] << 8) | luminance(c[0], c[1], c[2]);
+  if (fmt === 1) return rgb565(c[0], c[1], c[2]);
+  if (c[3] >= 224) return 0x8000 | (Math.round(c[0] * 31 / 255) << 10) | (Math.round(c[1] * 31 / 255) << 5) | Math.round(c[2] * 31 / 255);
+  return (Math.round(c[3] * 7 / 255) << 12) | (Math.round(c[0] * 15 / 255) << 8) | (Math.round(c[1] * 15 / 255) << 4) | Math.round(c[2] * 15 / 255);
+}
+
+// Indexed texture from RGBA. A palette only this texture uses is recalculated; one shared with
+// other textures keeps its colours, since changing it would repaint them too.
+export function replaceIndexedTexture(data, brres, tex, rgba) {
+  const palette = paletteOfTexture(brres, tex.name);
+  if (!palette) throw new Error(`Texture ${tex.name} has no palette in this file`);
+  const shared = brres.models.some((model) => model.materials.some((material) => (material.layers || []).some((layer) => layer.palette === palette.name && layer.texture !== tex.name)));
+  const out = data.slice(), view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  const limit = Math.min(palette.count, tex.format === 8 ? 16 : tex.format === 9 ? 256 : palette.count);
+  let colors;
+  if (shared) colors = Array.from({ length: limit }, (_, i) => [...palette.colors.subarray(i * 4, i * 4 + 4)]);
+  else {
+    colors = quantizeColors(rgba, limit);
+    colors.forEach((c, i) => view.setUint16(palette.dataOffset + i * 2, encode16(c, palette.format)));
+  }
+  const nearest = new Map();
+  const indexOf = (r, g, b, a) => {
+    const key = ((r << 24) | (g << 16) | (b << 8) | a) >>> 0;
+    if (nearest.has(key)) return nearest.get(key);
+    let best = 0, bestDistance = Infinity;
+    colors.forEach((c, i) => {
+      const distance = (c[0] - r) ** 2 + (c[1] - g) ** 2 + (c[2] - b) ** 2 + 2 * (c[3] - a) ** 2;
+      if (distance < bestDistance) { bestDistance = distance; best = i; }
+    });
+    nearest.set(key, best);
+    return best;
+  };
+  const end = Math.min(tex.offset + tex.size, out.length), [bw, bh, bits] = BLOCK[tex.format];
+  let pixels = rgba, w = tex.width, h = tex.height, at = tex.dataOffset;
+  for (let level = 0; level < Math.max(1, tex.mipmaps); level++) {
+    const columns = Math.ceil(w / bw), rows = Math.ceil(h / bh);
+    if (at + columns * rows * bw * bh * bits / 8 > end) throw new Error('Texture mipmap data is truncated');
+    let nibble = false;
+    for (let by = 0; by < rows; by++) for (let bx = 0; bx < columns; bx++) for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
+      const p = (Math.min(h - 1, by * bh + y) * w + Math.min(w - 1, bx * bw + x)) * 4;
+      const index = indexOf(pixels[p], pixels[p + 1], pixels[p + 2], pixels[p + 3]);
+      if (bits === 4) {
+        if (!nibble) out[at] = index << 4; else { out[at] |= index; at++; }
+        nibble = !nibble;
+      } else if (bits === 8) out[at++] = index;
+      else { view.setUint16(at, index); at += 2; }
+    }
+    if (w === 1 && h === 1) break;
+    const nw = Math.max(1, w >> 1), nh = Math.max(1, h >> 1), next = new Uint8Array(nw * nh * 4);
+    for (let y = 0; y < nh; y++) for (let x = 0; x < nw; x++) for (let c = 0; c < 4; c++) {
+      let sum = 0;
+      for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) sum += pixels[((Math.min(h - 1, y * 2 + dy) * w + Math.min(w - 1, x * 2 + dx)) * 4) + c];
+      next[(y * nw + x) * 4 + c] = Math.round(sum / 4);
+    }
+    pixels = next; w = nw; h = nh;
+  }
+  return out;
+}
+
 // Replace the pixels of an existing TEX0 without changing BRRES offsets or material links.
 // The PNG is resized by the UI to the existing texture size. Each mip level is regenerated.
 export function replaceBRRESTexture(data, textureName, rgba) {
-  const tex = parseBRRES(data).textures.get(textureName);
+  const brres = parseBRRES(data), tex = brres.textures.get(textureName);
   if (!tex) throw new Error(`Texture ${textureName} not found`);
+  if (rgba.length !== tex.width * tex.height * 4) throw new Error(`PNG must be ${tex.width} × ${tex.height} pixels`);
+  if (INDEXED_FORMATS.includes(tex.format)) return replaceIndexedTexture(data, brres, tex, rgba);
   if (![0, 1, 2, 3, 4, 5, 6, 14].includes(tex.format))
     throw new Error(`Texture format ${TEXTURE_FORMATS[tex.format] || tex.format} cannot be replaced yet`);
-  if (rgba.length !== tex.width * tex.height * 4) throw new Error(`PNG must be ${tex.width} × ${tex.height} pixels`);
   const out = data.slice();
   encodeTextureLevels(out, tex.dataOffset, Math.min(tex.offset + tex.size, out.length), rgba, tex.width, tex.height, tex.format, tex.mipmaps);
   return out;

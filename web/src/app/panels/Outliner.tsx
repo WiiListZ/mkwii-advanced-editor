@@ -1,5 +1,6 @@
 import * as React from "react";
-import { Box, ChevronRight, Cloud, Eye, EyeOff, FolderPlus, Plus, Search } from "lucide-react";
+import { Box, ChevronRight, Cloud, CloudFog, Eye, EyeOff, FolderPlus, Ghost, Lightbulb, Map as MapIcon, Plus, Search, Sparkles } from "lucide-react";
+import { LOOKS } from "../../../js/editor/track-looks.js";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +19,8 @@ import { cn } from "@/lib/utils";
 
 const ORDER = ["KTPT", "ENPT", "ITPT", "CKPT", "GOBJ", "POTI", "AREA", "CAME", "JGPT", "CNPT", "MSPT"];
 const GROUPED = ["ENPT", "ITPT", "CKPT", "POTI"];
+
+const LOOK_ROWS = [{ id: "lighting", Icon: Lightbulb }, { id: "fog", Icon: CloudFog }, { id: "effects", Icon: Sparkles }] as const;
 
 export function Outliner() {
   const ed = useEditor("doc", "selection", "ui", "settings");
@@ -177,6 +180,37 @@ export function Outliner() {
                 </Hint>
                 <Hint title={vp?.layers.SKY !== false ? "Hide sky" : "Show sky"} text="Show or hide the sky in the 3D view.">
                   <Button variant="ghost" size="icon-sm" className="size-6" onClick={() => ed.toggleLayer("SKY")}>{vp?.layers.SKY !== false ? <Eye /> : <EyeOff className="opacity-50" />}</Button>
+                </Hint>
+              </div>
+            )}
+            {ed.doc.szs && LOOK_ROWS.filter(({ id }) => match(LOOKS[id].search)).map(({ id, Icon }) => {
+              const chosen = ed.selectedLook === id;
+              return (
+                <div key={id} className={cn("flex h-8 cursor-pointer items-center gap-1.5 border-b border-border/60 px-2 pl-[30px] hover:bg-accent/50", chosen && "bg-primary/12 ring-1 ring-inset ring-primary/20 hover:bg-primary/15")}
+                  data-outline-tool={id} data-selected={chosen} onClick={() => ed.selectLook(id)} onDoubleClick={() => ed.cmd(id)}>
+                  <Icon className="size-3.5 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold">{LOOKS[id].title}</span>
+                  <Hint title={`Edit ${LOOKS[id].title.toLowerCase()}`} text={LOOKS[id].what}>
+                    <Button variant="ghost" size="sm" className="h-6 shrink-0 px-1.5 text-[10px]" onClick={(e) => { e.stopPropagation(); ed.cmd(id); }}>Edit…</Button>
+                  </Hint>
+                </div>
+              );
+            })}
+            {ed.doc.szs && match("minimap map_model") && (
+              <div className="flex h-8 items-center gap-1.5 border-b border-border/60 px-2 pl-[30px]">
+                <MapIcon className="size-3.5 text-muted-foreground" />
+                <span className="flex-1 cursor-pointer truncate text-[12.5px] font-semibold" onClick={() => ed.cmd("minimap")}>Minimap (beta)</span>
+                <Hint title="Edit minimap" text="Choose the parts of the track shown on the minimap, their colours and its frame.">
+                  <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[10px]" onClick={() => ed.cmd("minimap")}>Edit…</Button>
+                </Hint>
+              </div>
+            )}
+            {ed.doc.szs && match("ghost staff time trial") && (
+              <div className="flex h-8 items-center gap-1.5 border-b border-border/60 px-2 pl-[30px]">
+                <Ghost className="size-3.5 text-muted-foreground" />
+                <span className="flex-1 cursor-pointer truncate text-[12.5px] font-semibold" onClick={() => ed.cmd("trackGhosts")}>Ghosts</span>
+                <Hint title="Ghosts of this track" text="Replace the staff ghosts of this track's position with one you recorded or a .rkg file.">
+                  <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[10px]" onClick={() => ed.cmd("trackGhosts")}>Edit…</Button>
                 </Hint>
               </div>
             )}

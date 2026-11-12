@@ -2,11 +2,38 @@ import * as React from "react";
 import { CircleAlert, CircleCheck, Info, TriangleAlert, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEditor } from "../hooks";
+import { trackUsage, usageState, usageText } from "../../../js/editor/track-limits.js";
 import { cn } from "@/lib/utils";
 
 const ICON = { error: CircleAlert, warning: TriangleAlert, info: Info } as const;
 const TONE = { error: "text-destructive", warning: "text-warning", info: "text-sky-400" } as const;
 const BORDER = { error: "border-l-destructive", warning: "border-l-warning", info: "border-l-sky-400" } as const;
+
+// How much the track holds, against the largest original track and the file formats' own limits.
+function TrackUsage({ doc }: { doc: any }) {
+  const rows = trackUsage(doc), high = rows.filter((row: any) => usageState(row) !== "ok").length;
+  const bar = { ok: "bg-muted-foreground/60", high: "bg-warning", over: "bg-destructive" } as const;
+  return (
+    <details className="rounded-md border bg-card" data-track-usage data-usage-high={high}>
+      <summary className="cursor-pointer px-2.5 py-2 text-xs font-medium">Track size{high ? ` · ${high} above the original tracks` : " · within the original tracks"}</summary>
+      <div className="flex flex-col gap-1.5 border-t px-2.5 py-2">
+        {rows.map((row: any) => {
+          const state = usageState(row) as keyof typeof bar, top = state === "over" ? row.value : row.limit && row.value > row.reference ? row.limit : row.reference;
+          return (
+            <div key={row.id} data-usage-row={row.id} data-usage-state={state} title={row.limit ? `The format allows at most ${usageText(row, row.limit)}` : undefined}>
+              <div className="flex items-baseline justify-between gap-2 text-[11px]">
+                <span className="text-muted-foreground">{row.label}</span>
+                <span className="tabular-nums">{usageText(row, row.value)} <span className="text-muted-foreground">of {usageText(row, row.reference)}</span></span>
+              </div>
+              <div className="mt-0.5 h-1 overflow-hidden rounded bg-muted"><div className={cn("h-full", bar[state])} style={{ width: `${Math.min(100, row.value / (top || 1) * 100)}%` }} /></div>
+            </div>
+          );
+        })}
+        <p className="m-0 text-[11px] leading-snug text-muted-foreground">Each is measured against the largest of the game's own race tracks. Going over is not a crash by itself: there is no documented limit for memory, so test large tracks in the game.</p>
+      </div>
+    </details>
+  );
+}
 
 export function CheckPanel() {
   const ed = useEditor("ui");
@@ -27,6 +54,7 @@ export function CheckPanel() {
         {errors ? <CircleAlert className="size-4" /> : warnings ? <TriangleAlert className="size-4" /> : <CircleCheck className="size-4" />}
         {errors ? `${errors} error${errors > 1 ? "s" : ""}, ${warnings} warning${warnings !== 1 ? "s" : ""}` : warnings ? `No errors, ${warnings} warning${warnings > 1 ? "s" : ""}` : "No problems found"}
       </div>
+      <TrackUsage doc={ed.doc} />
       <div className="flex flex-col gap-1">
         {issues.map((it, i) => {
           const Icon = ICON[it.level as keyof typeof ICON];

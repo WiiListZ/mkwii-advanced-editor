@@ -14,7 +14,7 @@ const track = join(temp, "track.szs");
 const trackNoBackup = join(temp, "track-no-backup.szs");
 copyFileSync(source, track);
 copyFileSync(source, trackNoBackup);
-writeFileSync(join(temp, "settings.json"), JSON.stringify({ tourDone: true, workspace: game, commonPath: join(game, "Race", "Common.szs") }));
+writeFileSync(join(temp, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false, workspace: game, commonPath: join(game, "Race", "Common.szs") }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
 try {

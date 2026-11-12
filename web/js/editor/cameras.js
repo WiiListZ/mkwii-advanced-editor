@@ -15,6 +15,8 @@
 // - the camera is used for `time` frames (60 per second).
 // Replay and goal cameras follow the kart, so their preview uses the first start position.
 
+import { make } from '../formats/kmp.js';
+
 // Type 6 (OP_PathMoveAt) is not an intro camera: in the game it moves with the kart.
 export const OPENING_TYPES = new Set([5]);
 const KART_RELATIVE = new Set([0, 3, 4]); // goal, kart follow, kart path follow
@@ -24,6 +26,59 @@ export function introIndex(kmp) { return ((kmp.extras?.CAME ?? 0) >> 8) & 0xff; 
 export function selectionIndex(kmp) { return (kmp.extras?.CAME ?? 0) & 0xff; }
 export function setCameraHeader(kmp, intro, selection) {
   kmp.extras = { ...(kmp.extras || {}), CAME: ((intro & 0xff) << 8) | (selection & 0xff) };
+}
+
+// Replay cameras along the enemy route: one box area and camera per stretch of road, the way the
+// original tracks do it (9 to 17 areas). Values are those of Mario Circuit's fixed (type 1) and
+// follow (type 3) cameras. Returns how many stretches were added.
+export function addReplayCameras(kmp, { spacing = 14000, minimum = 6, maximum = 16 } = {}) {
+  const line = [], seen = new Set();
+  for (let g = 0; kmp.ENPT[g] && !seen.has(g); g = kmp.ENPT[g].next?.[0]) {
+    seen.add(g);
+    line.push(...kmp.ENPT[g].points);
+  }
+  if (line.length < 3) return 0;
+  const distance = [0];
+  for (let i = 1; i <= line.length; i++) {
+    const a = line[i - 1].pos, b = line[i % line.length].pos;
+    distance.push(distance[i - 1] + Math.hypot(b[0] - a[0], b[2] - a[2]));
+  }
+  const total = distance[line.length];
+  if (total < 1000) return 0;
+  const room = 0xff - kmp.CAME.length - 1;
+  const stretches = Math.min(room, Math.max(minimum, Math.min(maximum, Math.round(total / spacing))));
+  let index = 0;
+  for (let s = 0; s < stretches; s++) {
+    const from = total * s / stretches, to = total * (s + 1) / stretches;
+    const inside = [];
+    for (let i = 0; i < line.length; i++) if (distance[i] >= from && distance[i] < to) inside.push(line[i]);
+    if (!inside.length) inside.push(line[Math.min(line.length - 1, index)]);
+    index += inside.length;
+    const first = inside[0].pos, last = inside[inside.length - 1].pos, middle = inside[inside.length >> 1].pos;
+    let dx = last[0] - first[0], dz = last[2] - first[2];
+    if (Math.hypot(dx, dz) < 1) { dx = 0; dz = 1; }
+    const length = Math.hypot(dx, dz), side = [dz / length, -dx / length];
+    const half = Math.max(...inside.map((p) => (p.width || 10) * 100));
+    let low = Infinity, high = -Infinity, far = 0;
+    for (const p of inside) {
+      low = Math.min(low, p.pos[1]); high = Math.max(high, p.pos[1]);
+      far = Math.max(far, Math.abs((p.pos[0] - first[0]) * side[0] + (p.pos[2] - first[2]) * side[1]));
+    }
+    const center = [(first[0] + last[0]) / 2, low - 2000, (first[2] + last[2]) / 2];
+    const camera = make.CAME([middle[0] + side[0] * (half + 3500), high + 1800, middle[2] + side[1] * (half + 3500)]);
+    if (s % 3 === 2) Object.assign(camera, { type: 3, zoomStart: 60, zoomEnd: 45, zoomSpeed: 8, viewStart: [180, 5, 600], viewEnd: [0, 12, 0] });
+    else Object.assign(camera, { type: 1, zoomStart: 20, zoomEnd: 45, zoomSpeed: 20, viewStart: [0, 0, 0], viewEnd: [0, 0, 0] });
+    const area = make.AREA(center);
+    area.type = 0;
+    area.camera = kmp.CAME.length;
+    area.rot = [0, Math.round(Math.atan2(dx, dz) * 180 / Math.PI * 100) / 100, 0];
+    // Boxes are 10000 units per unit of scale and start at their position's height.
+    const round = (value) => Math.round(value * 1000) / 1000;
+    area.scale = [round((far + half) * 2.6 / 10000 + .2), round((high - low + 6000) / 10000), round((length * 1.2 + 2000) / 10000)];
+    kmp.CAME.push(camera);
+    kmp.AREA.push(area);
+  }
+  return stretches;
 }
 
 // Indices of the intro cameras in playing order (stops at "none", a bad index or a loop).

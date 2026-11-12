@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join as joinPath } from "node:path";
 // Isolated settings and temp files: tests never touch the real user settings.
 const testDir = mkdtempSync(joinPath(tmpdir(), "mkwii-test-"));
+await Bun.write(joinPath(testDir, "settings.json"), JSON.stringify({ discordActivity: false }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((res) => {
   worker.onmessage = (e) => e.data?.type === "ready" && res(e.data.port);

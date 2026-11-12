@@ -24,6 +24,13 @@ license and upstream source archive is kept intact.
   [Cygwin's licensing information](https://cygwin.com/licensing.html) and
   [source packages](https://cygwin.com/packages/).
 
+- **Kinoko**, by vabold and contributors, is MIT licensed (`kinoko-LICENSE.txt`).
+  `ghost-path.exe` is `native/ghost-path/main.cc` built on
+  [Kinoko](https://github.com/vabold/Kinoko) commit
+  `e16728c77e29ffb6e300e7060f8aa48610fe9c52` by `scripts/build-ghost-path.ts`, linked statically
+  with the GCC runtime of MSYS2's UCRT64 toolchain (GCC Runtime Library Exception). It is not
+  packed with the tools above: the editor copies it to its settings directory and runs it there.
+
 The editor's own code remains under MIT. The bundled programs retain their own
 licenses. The package also contains ABMatt's and Wiimm's original license texts and
 upstream source archives so recipients of the single-file editor can inspect

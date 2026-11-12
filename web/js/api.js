@@ -8,6 +8,7 @@ export const hasBackend = !!token;
 export const startupFile = params.get('open');
 export const startupCreate = params.get('new');
 export const startupDocument = params.get('document');
+export const startupGhost = params.get('ghost');
 export const startupView = params.get('view');
 
 async function call(route, { method = 'GET', query = {}, body, raw = false, headers = false, contentType } = {}) {
@@ -107,7 +108,8 @@ export const api = {
   },
   cupTrackInfo(path) { return call('cup-track', { query: { path } }); },
   cupTracksApplied(files) { return call('cup-tracks-applied', { method: 'POST', body: { files } }); },
-  async openEditorWindow({ path, create, name, data, created, view }) {
+  /** @param {{ path?: string, create?: string, name?: string, data?: Uint8Array, created?: any, view?: string, ghost?: string }} options */
+  async openEditorWindow({ path, create, name, data, created, view, ghost }) {
     // Reserve a real browser popup before awaiting the server. Native WebViews ask the server
     // for another desktop process, which keeps its own document and rendering context.
     const native = typeof window.__nativeEditorWindow === 'function';
@@ -118,7 +120,7 @@ export const api = {
       const viewQuery = view === 'visual' ? { view } : {};
       const result = await call('editor-window', data
         ? { method: 'POST', query: { name, ...viewQuery, ...(created ? { created: JSON.stringify(created) } : {}) }, body: data, contentType: 'application/octet-stream' }
-        : { method: 'POST', query: viewQuery, body: { path, create } });
+        : { method: 'POST', query: viewQuery, body: { path, create, ghost } });
       if (result.url && popup) popup.location.replace(result.url);
       else popup?.close();
       // Spawning a process is not enough: keep the caller's loading indicator until the new
@@ -240,7 +242,7 @@ export const api = {
   },
 
   // Writes data. compress: 'yaz0' compresses on the backend (or here in browser mode).
-  async writeFile(path, data, { backup = false, edited = false, compress = null } = {}) {
+  async writeFile(path, data, { backup = false, edited = false, compress = null, history = 0 } = {}) {
     if (!hasBackend) {
       if (compress === 'yaz0') {
         const { yaz0Compress } = await import('./formats/yaz0.js');
@@ -252,9 +254,18 @@ export const api = {
     const query = { path };
     if (backup) query.backup = '1';
     if (edited) query.edited = '1';
+    if (history) query.history = String(history);
     if (compress) query.compress = compress;
     return call('write', { method: 'POST', query, body: data });
   },
+
+  async versions(path) { return hasBackend ? call('versions', { query: { path } }) : []; },
+  async versionRead(path, id) {
+    const response = await fetch(`/api/version?path=${encodeURIComponent(path)}&id=${encodeURIComponent(id)}`, { headers: { 'x-token': token } });
+    if (!response.ok) throw new Error('This version could not be read');
+    return new Uint8Array(await response.arrayBuffer());
+  },
+  async versionRestore(path, id) { return call('version', { method: 'POST', query: { path, id } }); },
 
   async duplicateModel(data, modelName, partName, center, delta, triangles = null) {
     if (!hasBackend) throw new Error('Model duplication requires the desktop app and ABMatt');
@@ -344,6 +355,32 @@ export const api = {
   async generatedTrackModels(model) {
     if (!hasBackend) throw new Error('Creating playable track models requires the desktop app');
     return call('generated-track-models', { method: 'POST', body: model, raw: true });
+  },
+
+  async writeTemp(name, data) { return (await call('write-temp', { method: 'POST', query: { name }, body: data })).path; },
+  async removeTemp(path) { return call('remove-temp', { method: 'POST', query: { path } }); },
+  async ghostSources() { return call('ghost-sources'); },
+  async ghostLibrary() { return call('ghost-library'); },
+  async ghostLibraryDelete(path) { return call('ghost-library', { method: 'POST', query: { path } }); },
+  async ghostSlots(track) { return call('ghost-slots', { query: { track } }); },
+  // The path a recorded run really drove (see race-path.ts), or null.
+  // { data, source: 'kinoko' | 'game', synced, from, row } or null; track: the track file it is shown on.
+  // row: floats per frame, 8 (place and rotation) or 12 (also drift, boost, air, wheelie).
+  async ghostPath(ghost, track) {
+    const { data, headers } = await call('ghost-path', { method: 'POST', body: ghost, raw: true, headers: true, query: track ? { track } : {} });
+    if (!data.length) return null;
+    return { data, source: headers.get('x-path-source') || 'game', synced: headers.get('x-path-synced') !== '0', from: Number(headers.get('x-path-from') || 0), row: Number(headers.get('x-path-row') || 8) };
+  },
+  // Having the game race a ghost to read its path (see src/ghost-replay.ts): start with its bytes, then the status, then stop.
+  async ghostReplay(action, ghost) { return action === 'start' ? call('ghost-replay', { method: 'POST', query: { action }, body: ghost }) : action ? call('ghost-replay', { method: 'POST', query: { action } }) : call('ghost-replay'); },
+  async ghostSaveFile(path, key) { return call('ghost-save-file', { query: { path, key }, raw: true }); },
+  async ghostCapture(action) { return action ? call('ghost-capture', { method: 'POST', query: { action } }) : call('ghost-capture'); },
+  async dolphinStatus() { return call('dolphin'); },
+  async launchDolphin() { return call('dolphin', { method: 'POST' }); },
+
+  async generatedMinimap(model) {
+    if (!hasBackend) throw new Error('Rebuilding the minimap requires the desktop app');
+    return call('generated-minimap', { method: 'POST', body: model, raw: true });
   },
 
   // Converts a BRRES to .dae / .obj (chosen by the extension) with its textures, next to `path`.

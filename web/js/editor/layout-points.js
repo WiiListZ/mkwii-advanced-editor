@@ -1,5 +1,21 @@
 import { sampleSpline } from './trackgen.js';
 
+// Rounds the curves of a layout already drawn, in plan only: heights, widths and curve radii stay
+// on their points. Taubin's two steps do not shrink the track as it smooths. Level 1 to 10.
+export function smoothLayout(points, level = 5) {
+  const n = points.length;
+  if (n < 4) return points;
+  const amount = Math.max(1, Math.min(10, level)) / 10, cycles = Math.round(1 + 40 * amount * amount);
+  const grow = .6, shrink = 1 / (.01 - 1 / grow);
+  let xs = points.map((p) => p.x), zs = points.map((p) => p.z);
+  for (let pass = 0; pass < cycles * 2; pass++) {
+    const weight = pass % 2 ? shrink : grow;
+    const step = (v) => v.map((value, i) => value + ((v[(i + n - 1) % n] + v[(i + 1) % n]) / 2 - value) * weight);
+    xs = step(xs); zs = step(zs);
+  }
+  return points.map((p, i) => ({ ...p, x: xs[i], z: zs[i] }));
+}
+
 export function layoutBounds(points) {
   if (!points.length) return { cx: 0, cz: 0, width: 0, depth: 0 };
   const xs = points.map((p) => p.x), zs = points.map((p) => p.z);

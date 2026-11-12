@@ -42,7 +42,7 @@ copyFileSync(join(game, "Race", "Kart", "ldf_bike-bk.szs"), join(kart, "ldf_bike
 copyFileSync(join(game, "Race", "Kart", "lb_bike-bk.szs"), join(kart, "lb_bike-bk.szs"));
 copyFileSync(join(game, "Race", "Common.szs"), join(files, "Race", "Common.szs"));
 const settings = mkdtempSync(join(tmpdir(), "mkwii-assets-settings-"));
-await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true }));
+await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((resolve) => { worker.onmessage = (event) => event.data?.type === "ready" && resolve(event.data.port); worker.postMessage({ type: "start", token: "assets", settingsDir: settings }); });
 console.log("Server ready", port);

@@ -9,7 +9,7 @@ if (!game) throw new Error("Set MKWII_GAME_DIR to the extracted game's files fol
 const output = process.argv[2] || tmpdir();
 const track = process.argv[3] || "castle_course";
 const settings = mkdtempSync(join(tmpdir(), "mkwii-paint-"));
-await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true }));
+await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((resolve) => {
   worker.onmessage = (event) => event.data?.type === "ready" && resolve(event.data.port);

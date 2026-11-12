@@ -1,6 +1,6 @@
 // Edits/saves colours only in a temporary BMG fixture, with real game layouts and fonts.
 // MKWII_GAME_DIR=<extracted files> bun tests/game-text-colour.smoke.ts
-import puppeteer from 'puppeteer-core';
+import puppeteer, { type KeyInput } from 'puppeteer-core';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
@@ -40,7 +40,7 @@ try {
   await page.waitForSelector('canvas[data-preview-state="screen"]');
   const area = 'textarea[aria-label="Message text"]';
   const value = () => page.$eval(area, (el) => (el as HTMLTextAreaElement).value);
-  const shortcut = async (key: string) => { await page.keyboard.down('Control'); await page.keyboard.press(key); await page.keyboard.up('Control'); };
+  const shortcut = async (key: KeyInput) => { await page.keyboard.down('Control'); await page.keyboard.press(key); await page.keyboard.up('Control'); };
   const choose = async (label: string) => {
     await page.evaluate(() => { ([...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Text colour') as HTMLElement).click(); });
     await page.waitForSelector(`button[aria-label="Text colour: ${label}"]`);

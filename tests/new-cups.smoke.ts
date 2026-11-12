@@ -25,7 +25,7 @@ await Bun.write(track, buildU8({ name: "root", children: [
   { name: "course.kmp", data: buildKMP(kmp) },
   ...["course.kcl", "course_model.brres", "vrcorn_model.brres", "map_model.brres"].map((name) => ({ name, data: new Uint8Array(32) })),
 ] }));
-await Bun.write(join(temp, "settings.json"), JSON.stringify({ tourDone: true, workspace: files, keepBackups: true }));
+await Bun.write(join(temp, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false, workspace: files, keepBackups: true }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
 const check = (ok: boolean, message: string) => { if (!ok) throw new Error(message); console.log(`ok  ${message}`); };

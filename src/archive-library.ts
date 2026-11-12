@@ -20,7 +20,7 @@ async function openArchive(path: string, settingsDir: string, sourcePaths: strin
   const info = await stat(path);
   const hit = recent.find((r) => r.path === path && r.size === info.size && r.mtime === info.mtimeMs);
   if (hit) return hit.tree;
-  let bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
+  let bytes: Uint8Array = new Uint8Array(await Bun.file(path).arrayBuffer());
   if (isWLZ(bytes) || isWU8(bytes) || isWBZ(bytes) || isYBZ(bytes)) bytes = await decodeWiimmArchive(path, null, settingsDir, sourcePaths);
   if (isYaz0(bytes)) bytes = yaz0Decompress(bytes);
   if (!isU8(bytes)) throw new Error("Not an SZS archive");

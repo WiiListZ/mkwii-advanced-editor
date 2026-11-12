@@ -11,7 +11,7 @@ if (!game || !existsSync(join(game, "Race/Common.szs"))) {
   process.exit(0);
 }
 const settingsDir = mkdtempSync(join(tmpdir(), "mkwii-object-appearance-"));
-await Bun.write(join(settingsDir, "settings.json"), JSON.stringify({ tourDone: true }));
+await Bun.write(join(settingsDir, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((resolve) => {
   worker.onmessage = (event) => event.data?.type === "ready" && resolve(event.data.port);
@@ -58,7 +58,7 @@ try {
       && ![...dialog.querySelectorAll("button")].some((b) => b.textContent?.includes("Add to track"));
   }), "object picker has categories and hides preview and Add to track before selection");
   await page.keyboard.press("ArrowDown");
-  check(await page.evaluate(() => ![...document.querySelectorAll('[role="dialog"] button')].some((b) => b.textContent?.includes("Add to track"))), "keyboard highlight alone does not reveal the object picker preview");
+  check(await page.evaluate(() => ![...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].some((b) => b.textContent?.includes("Add to track"))), "keyboard highlight alone does not reveal the object picker preview");
   await page.evaluate(() => {
     const dialog = document.querySelector('[role="dialog"]')!;
     ([...dialog.querySelectorAll<HTMLElement>('[aria-label="Object categories"] button')].find((b) => b.querySelector("span")?.textContent === "Race"))?.click();
@@ -81,7 +81,7 @@ try {
     await new Promise((done) => setTimeout(done, 4500));
     await page.screenshot({ path: process.env.MKWII_OBJECT_PICKER_SCREENSHOT });
   }
-  await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent?.includes("Add to track"))?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent?.includes("Add to track"))?.click());
   check(await page.evaluate(() => (window as any).app.tool?.kind === "GOBJ" && (window as any).app.tool?.objectId === 0x65), "object picker Add to track places only the clicked object");
   await page.evaluate(() => {
     const app = (window as any).app;

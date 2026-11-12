@@ -3,7 +3,7 @@
 
 import * as THREE from "three";
 import { toast } from "sonner";
-import { api, FILTERS, hasBackend, startupFile, startupCreate, startupDocument, startupView } from "../../js/api.js";
+import { api, FILTERS, hasBackend, startupFile, startupCreate, startupDocument, startupGhost, startupView } from "../../js/api.js";
 import { TrackDocument, KIND_LABEL, SECTION_LABEL } from "../../js/editor/document.js";
 import { Viewport, LAYERS } from "../../js/editor/viewport.js";
 import { Ops, copiesCenter } from "../../js/editor/ops.js";
@@ -17,11 +17,18 @@ import { introChain, introIndex, introPose, introTimeline, selectionIndex, setCa
 import { appendShot, fixIntroShots, introKeyframes, introShotIssues, moveKey, removeKey, setKeyPose, shotSpeedLimits, splitShot } from "../../js/editor/intro-keys.js";
 import { COLLISION_SHAPES, KCL_MAX_TRIANGLES, appendCollisionTriangles, buildCollisionShape, collisionBoxFromTriangles, collisionCoverage, collisionOfModel, deleteCollisionTriangles, duplicateCollisionTriangles, flipCollisionTriangles, isFloorTriangle, modelCollisionTriangles, simplifyCollisionTriangles, transformCollisionTriangles } from "../../js/editor/collision.js";
 import { snapshotCollision, appendCopiedCollision } from "../../js/editor/copy-collision.js";
+import { buildRKG, COURSE_NAMES, parseRKG } from "../../js/formats/rkg.js";
+import { attachRecordedPath, buildGhostDrive, ghostCamera, ghostPoseAt, ghostTrackCheck } from "../../js/editor/ghost-drive.js";
+import { compareTrack, differencePlaces } from "../../js/editor/track-diff.js";
+import { DIFFERENCE_COLOURS } from "./dialogs/TrackCompareDialog";
+import { kartArchiveName } from "../../js/editor/kart-archives.js";
+import { applyCHRFrame, bindCHR, cloneModel } from "../../js/editor/brresmodel.js";
+import { primitiveOBJ } from "../../js/editor/primitives.js";
 import { parseKCL, buildKCL, patchKCLFlags } from "../../js/formats/kcl.js";
 import { parseOBJ, kclToOBJ, modelToOBJ } from "../../js/formats/obj.js";
 import { clearBRRESPolygon, isBRRES, parseBRRES, polygonPieces, resetPieceMemory, replaceBRRESTexture, restBRRESPartsOnPoint, setCHR0Loop, transformBRRESPart, translateBRRESPart } from "../../js/formats/brres.js";
 import { BrresModelBuilder, mainModel } from "../../js/editor/brresmodel.js";
-import { BUILTIN_OBJECTS, KCL_TYPES, OBJECT_DISPLAY, OBJECT_INFO, makeFlag, objectDisplayY, parseObjFlow, trackKind, trackLabel } from "../../js/data/defs.js";
+import { BUILTIN_OBJECTS, KCL_TYPES, OBJECT_DISPLAY, OBJECT_INFO, TRACK_NAMES, makeFlag, objectDisplayY, parseObjFlow, trackKind, trackLabel } from "../../js/data/defs.js";
 import { BUILTIN_OBJECT_DOCUMENTATION, OBJECT_INFO_URL, defaultDocumentation, mergeDocumentationUpdate, objectDocumentation, parseObjectDocumentation, useDefaultDocumentation } from "../../js/data/object-documentation.js";
 import { externalPath, parseRiivolution } from "../../js/formats/riivolution.js";
 import { findRiivolutionWorkspace, findWorkspaceRoot, resolveRiivolutionPath } from "../../js/editor/workspace.js";
@@ -30,7 +37,7 @@ import { isItemSlot, isStatsFile } from "../../js/formats/params.js";
 
 export const PATH_KINDS = ["ENPT", "ITPT", "CKPT", "POTI"];
 export const LAYER_LABEL: Record<string, string> = { VISUAL: "Track model", SKY: "Sky", KCL: "Collision", MODEL: "Reference model", GRID: "Grid", ...SECTION_LABEL };
-const PERSISTED = ["workspace", "riivolutionXml", "cameraPreview", "hideGrid", "confirmModelDrop", "partsFolder", "favoriteObjects", "favoriteModelSources", "favoriteModelParts", "iconSize", "checkpointWidth", "autoCheckpointWidth", "pathWidth", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "showDescriptions", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "textureBrushSize", "uiFont", "offerCopyUpdates", "keepBackups", "map2DAddSeveral", "introFollow", "introTimelineHeight", "dragToMove", "hideMoveArrows", "trackVideoPreviews", "discordActivity", "collisionCopyChoices"] as const;
+const PERSISTED = ["workspace", "riivolutionXml", "cameraPreview", "hideGrid", "confirmModelDrop", "partsFolder", "favoriteObjects", "favoriteModelSources", "favoriteModelParts", "iconSize", "checkpointWidth", "autoCheckpointWidth", "pathWidth", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "showDescriptions", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "textureBrushSize", "uiFont", "offerCopyUpdates", "keepBackups", "keepVersions", "versionsKept", "map2DAddSeveral", "introFollow", "introTimelineHeight", "dragToMove", "hideMoveArrows", "trackVideoPreviews", "discordActivity", "collisionCopyChoices"] as const;
 const VIEW_SETTINGS = new Set<keyof Settings>(["hideGrid", "iconSize", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "dragToMove", "hideMoveArrows"]);
 const textEncoder = new TextEncoder();
 const sameBytes = (a: Uint8Array, b: Uint8Array) => {
@@ -50,8 +57,8 @@ export interface Settings {
   dragToMove: boolean; hideMoveArrows: boolean;
   trackVideoPreviews: boolean; discordActivity: boolean;
   collisionCopyChoices: Record<string, boolean>;
-  workspace: string; riivolutionXml: string; partsFolder: string; favoriteObjects: number[]; favoriteModelSources: string[]; favoriteModelParts: string[];
-  confirmModelDrop: boolean; hideGrid: boolean; cameraPreview: boolean; offerCopyUpdates: boolean; keepBackups: boolean; map2DAddSeveral: boolean;
+  dolphinPath: string; dolphinGame: string; workspace: string; riivolutionXml: string; partsFolder: string; favoriteObjects: number[]; favoriteModelSources: string[]; favoriteModelParts: string[];
+  confirmModelDrop: boolean; hideGrid: boolean; cameraPreview: boolean; offerCopyUpdates: boolean; keepBackups: boolean; keepVersions: boolean; versionsKept: number; map2DAddSeveral: boolean;
   introFollow: boolean; // Cameras tab: the 3D view jumps to the intro camera at the playhead
   introTimelineHeight: number; // Cameras tab: height of the keyframe timeline under the 3D view (px)
   uiFont: "default" | "game";
@@ -63,7 +70,7 @@ export const DEFAULT_SETTINGS = {
   collisionCopyChoices: {},
   iconSize: 150, checkpointWidth: 3000, autoCheckpointWidth: true, pathWidth: 20, trackVideoPreviews: true, discordActivity: true,
   modelMode: "real", displayMode: "visual", modelEditing: true, smartAlignment: false, animations: true, showLabels: true, selectionBox: false, showAreaVolumes: true, areaOutlinesThroughWalls: false, showEffects: true, showDescriptions: true, quality: "high",
-  flySpeed: 1, lookSensitivity: 1, hideCursorWhileLooking: true, dragToMove: false, hideMoveArrows: false, textureBrushSize: 8, confirmModelDrop: true, hideGrid: true, cameraPreview: true, uiFont: "default", offerCopyUpdates: true, keepBackups: true, map2DAddSeveral: false, introFollow: true, introTimelineHeight: 118,
+  flySpeed: 1, lookSensitivity: 1, hideCursorWhileLooking: true, dragToMove: false, hideMoveArrows: false, textureBrushSize: 8, confirmModelDrop: true, hideGrid: true, cameraPreview: true, uiFont: "default", offerCopyUpdates: true, keepBackups: true, keepVersions: true, versionsKept: 20, map2DAddSeveral: false, introFollow: true, introTimelineHeight: 118,
 } satisfies Partial<Settings>;
 
 export type CollisionShapeKind = keyof typeof COLLISION_SHAPES;
@@ -137,7 +144,7 @@ export class Editor {
   assets: any = null;
   settings: Settings = {
     ...DEFAULT_SETTINGS, recent: [],
-    workspace: "", riivolutionXml: "", partsFolder: "", favoriteObjects: [], favoriteModelSources: [], favoriteModelParts: [], collisionCopyChoices: {},
+    dolphinPath: "", dolphinGame: "", workspace: "", riivolutionXml: "", partsFolder: "", favoriteObjects: [], favoriteModelSources: [], favoriteModelParts: [], collisionCopyChoices: {},
     viewCenter: () => this.viewport?.viewCenterPoint() ?? [0, 0, 0],
   };
   objectNames: Record<number, string> = { ...BUILTIN_OBJECTS };
@@ -149,6 +156,7 @@ export class Editor {
   private trackRefreshBusy = false;
   private trackRefreshTimer: ReturnType<typeof setInterval> | null = null;
   selectedAnimation: string | null = null; // CHR0 of course_model.brres shown in the Inspector
+  selectedLook: string | null = null; // lighting, fog or effects, shown in the Inspector
   private pointPick: ((point: number[] | null) => void) | null = null;
 
   // Lets the user click a point on the track (like placing an object). Esc gives null.
@@ -203,7 +211,7 @@ export class Editor {
     const d = this.doc;
     d.on("change", () => { this.introCache.clear(); this.bump("doc"); this.scheduleValidate(); this.refreshCameraViews(); });
     d.on("load", () => { this.collisionChoiceTrack = null; resetPieceMemory(); this.textureOriginals.clear(); this.bump("doc"); this.bump("selection"); this.scheduleValidate(); });
-    d.on("selection", () => { if (d.selection.size) this.selectedAnimation = null; this.cameraFrame = 0; this.bump("selection"); this.refreshCameraViews(); });
+    d.on("selection", () => { if (d.selection.size) { this.selectedAnimation = null; this.selectedLook = null; } this.cameraFrame = 0; this.bump("selection"); this.refreshCameraViews(); });
     d.on("live", () => { this.introCache.clear(); this.bump("live"); this.refreshCameraViews(); });
     d.on("kcl", () => { this.bump("kcl"); this.scheduleValidate(); });
     d.on("model", () => { void this.assets?.setTrack(d.szs).then(() => this.bump("doc")).catch((error: any) => console.error("Could not refresh track model:", error)); });
@@ -390,7 +398,14 @@ export class Editor {
       this.loadLibrary();
       this.refreshWorkspaceInfo();
       if (!s.tourDone) setTimeout(() => { this.tourActive = true; this.bump("ui"); }, 700);
-      if (startupFile) await this.openPath(startupFile);
+      if (startupFile) {
+        await this.openPath(startupFile);
+        if (startupGhost) {
+          const ghost = await api.readPath(startupGhost);
+          api.removeTemp(startupGhost).catch(() => {});
+          await this.enterGhostPreview(ghost.data);
+        }
+      }
       else if (startupDocument) {
         const file = await api.editorDocument(startupDocument);
         await this.loadFile(file);
@@ -878,7 +893,7 @@ export class Editor {
         if (!path || !/[\\/]cup-tracks[\\/]/i.test(path)) this.addRecent(path);
         await this.loadTrackAssets();
         const k = d.kmp;
-        toast.success(`Opened ${name}`, { description: `${k.GOBJ.length} objects · ${k.CKPT.reduce((s: number, g: any) => s + g.points.length, 0)} checkpoints${d.kcl ? ` · ${d.kcl.count.toLocaleString()} collision triangles` : ""}` });
+        if (!startupGhost) toast.success(`Opened ${name}`, { description: `${k.GOBJ.length} objects · ${k.CKPT.reduce((s: number, g: any) => s + g.points.length, 0)} checkpoints${d.kcl ? ` · ${d.kcl.count.toLocaleString()} collision triangles` : ""}` });
       } catch (e: any) {
         console.error(e);
         d.reset();
@@ -968,7 +983,7 @@ export class Editor {
           if (kcl) { setFile(d.szs, "course.kcl", kcl); this.afterKclSaved(kcl); }
           const missing = ["course_model.brres", "vrcorn_model.brres"].filter((f) => !findFile(d.szs, f));
           written = buildU8(d.szs);
-          result = await api.writeFile(path, written, { backup: this.settings.keepBackups, edited: true, compress: "yaz0" });
+          result = await api.writeFile(path, written, { backup: this.settings.keepBackups, edited: true, compress: "yaz0", history: this.settings.keepVersions ? this.settings.versionsKept : 0 });
           if (missing.length) toast.warning(`The SZS has no ${missing.join(" / ")}`, { description: "The game needs them: add them with File › SZS contents.", duration: 9000 });
         } else if (kind === "kmp") {
           written = buildKMP(d.kmp);
@@ -1203,6 +1218,346 @@ export class Editor {
       this.doc.changeArchiveFile("Replace sky", this.skyResource()?.path || "vrcorn_model.brres", file.data);
       toast.success("Sky replaced", { description: "Save the course SZS to keep it." });
     } catch (e: any) { toast.error("Could not replace the sky", { description: e.message }); }
+  }
+
+  // ---- Dolphin ----------------------------------------------------------------------------------
+  // Opens the game itself: the extracted game folder when there is one, so edits saved there show.
+  async openInDolphin() {
+    try {
+      if (this.doc.dirty && this.doc.filePath) {
+        const save = await dialogs.confirm({ title: "Save before opening the game?", description: `Dolphin reads the files on disk, so unsaved changes to ${this.doc.fileName} will not be there.`, confirmLabel: "Save and open", cancelLabel: "Open without saving" });
+        if (save && !await this.save(false)) return;
+      }
+      let status = await api.dolphinStatus();
+      if (!status.exe) {
+        const exe = await api.choosePath([{ name: "Dolphin", extensions: ["exe"] }], "Where is Dolphin.exe?");
+        if (!exe) return;
+        await this.setSetting("dolphinPath", exe);
+      }
+      status = await api.dolphinStatus();
+      if (!status.game) {
+        const game = await api.choosePath([{ name: "Wii game", extensions: ["iso", "wbfs", "rvz", "ciso", "gcz", "wia", "dol", "elf"] }], "Choose the game to open in Dolphin");
+        if (!game) return;
+        await this.setSetting("dolphinGame", game);
+      }
+      const { game } = await api.launchDolphin();
+      toast.success("Opening the game in Dolphin", { description: game });
+    } catch (e: any) {
+      toast.error("Could not open Dolphin", { description: e.message });
+    }
+  }
+
+  // ---- Ghost preview: this window shows only the track and the ghost ------------------------------
+  ghostView: { ghost: any; drive: any; kart: any; check?: any } | null = null;
+  comparison: { result: any; label: string; places: any[]; index: number; group: THREE.Group } | null = null;
+
+  // From the ghost editor: the track of the ghost's position, in a window of its own.
+  // trackPath: the track to see it on, instead of the one of the ghost's position in the game.
+  async openGhostPreview(ghost: any, trackPath?: string) {
+    try {
+      const stem = Object.entries(TRACK_NAMES).find(([, name]) => name === COURSE_NAMES[ghost.track])?.[0];
+      const usual = trackPath || (stem && this.workspace() ? this.workspacePath("Race", "Course", `${stem}.szs`) : "");
+      const path = usual && await api.exists(usual) ? usual : await api.choosePath(FILTERS.track, `Choose the track of this ghost (${COURSE_NAMES[ghost.track] ?? "unknown"})`);
+      if (!path) return;
+      const file = await api.writeTemp("ghost.rkg", buildRKG(ghost, { compressed: true }));
+      await this.withBusy("Opening the track…", () => api.openEditorWindow({ path, ghost: file }));
+    } catch (e: any) { toast.error("Could not open the ghost's preview", { description: e.message }); }
+  }
+
+  // Where the ghost drives on the track shown: worked out with Kinoko, or read from the game in
+  // Dolphin (see the ghost-path route). Null leaves the approximation.
+  private async ghostPathFor(data: Uint8Array) {
+    return hasBackend ? await api.ghostPath(data, this.doc.filePath || undefined).catch(() => null) : null;
+  }
+
+  // The path read from the game since the preview opened (see GhostReplayDialog): shown at once.
+  async reloadGhostPath() {
+    const state = this.ghostView;
+    if (!state) return;
+    const found = await this.ghostPathFor(buildRKG(state.ghost, { compressed: true }));
+    if (!found) return;
+    attachRecordedPath(state.drive, found.data, found);
+    this.bump("ui");
+  }
+
+  async enterGhostPreview(data: Uint8Array) {
+    const vp = this.viewport;
+    if (!vp || !this.doc.kmp) return;
+    try {
+      const ghost = parseRKG(data), drive = buildGhostDrive(ghost, this.doc.kmp, this.doc.heights);
+      const found = await this.ghostPathFor(data);
+      if (found) attachRecordedPath(drive, found.data, found);
+      await this.loadGhostKart(ghost);
+      // Nothing of the editing shows: only the track and its objects.
+      for (const layer of ["KTPT", "ENPT", "ITPT", "CKPT", "POTI", "AREA", "CAME", "JGPT", "CNPT", "MSPT", "KCL", "GRID"]) vp.layers[layer] = false;
+      vp.showLabels = false;
+      // A ghost is a Time Trial, and those have no item boxes.
+      vp.hideObject = (object: any, name: string) => object.objectId === 0x65 || /itembox/i.test(name || "");
+      this.settings.displayMode = "visual";
+      this.settings.hideGrid = true;
+      vp.applyDisplayMode();
+      vp.clearCache();
+      vp.selectGeometry(null);
+      this.doc.clearSelection();
+      vp.controls.enabled = false;
+      const real = this.assets?.kart;
+      const kart = real ? cloneModel(real.template) : new THREE.Mesh(new THREE.BoxGeometry(160, 100, 240).translate(0, 50, 0), new THREE.MeshLambertMaterial({ color: 0xef4444 }));
+      kart.userData.chrBinding = real?.chr ? bindCHR(real.chr, kart) : null;
+      kart.userData.boostFlames = this.addBoostFlames(kart, ghost.vehicle >= 18);
+      kart.userData.driftEffects = this.addDriftEffects(kart, ghost.vehicle >= 18);
+      vp.scene.add(kart);
+      this.homeVisible = false;
+      this.ghostView = { ghost, drive, kart, check: ghostTrackCheck(ghost, { fileName: this.doc.fileName, laps: this.doc.kmp.STGI?.[0]?.laps ?? null, routeLength: drive.route.length, trackNames: TRACK_NAMES, courseNames: COURSE_NAMES }) };
+      this.showGhostFrame(0, "chase");
+      this.bump("ui");
+    } catch (e: any) {
+      toast.error("Could not show the ghost", { description: e.message });
+    }
+  }
+
+  // ---- Comparing with another version of the track --------------------------------------------------
+  // data: an .szs as it is on disk. Opens the list of what differs; false if it could not be compared.
+  async compareWith(data: Uint8Array, label: string) {
+    const raw = await api.decodeArchiveBytes(data, "version.szs", this.commonPath || "");
+    const tree = parseU8(raw), kmpFile = findFile(tree, "course.kmp"), kclFile = findFile(tree, "course.kcl");
+    if (!kmpFile) throw new Error("That file is not a track: it has no course.kmp");
+    const other = { szs: tree, kmp: parseKMP(kmpFile.data), kcl: kclFile ? parseKCL(kclFile.data) : null };
+    const result = compareTrack({ szs: this.doc.szs, kmp: this.doc.kmp, kcl: this.doc.kcl }, other, (id: number) => this.objectLabel(id));
+    void dialogs.open("trackCompare", { result, label });
+    return true;
+  }
+
+  // Marks on the track: green added, red removed with a line for what moved, purple around collision.
+  showComparison(result: any, label: string, index = 0) {
+    this.clearComparison();
+    const places = differencePlaces(result), group = new THREE.Group();
+    group.name = "comparison";
+    const sphere = new THREE.SphereGeometry(170, 12, 8);
+    const material = (color: string, opacity = .75) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false });
+    const onTop = <T extends THREE.Object3D>(object: T) => { object.renderOrder = 20; return object; };
+    for (const place of places) {
+      const color = DIFFERENCE_COLOURS[place.state];
+      if (place.kind === "collision") {
+        const box = new THREE.Box3(new THREE.Vector3(...(place.min as [number, number, number])).subScalar(100), new THREE.Vector3(...(place.max as [number, number, number])).addScalar(100));
+        group.add(onTop(new THREE.Box3Helper(box, new THREE.Color(color))));
+        continue;
+      }
+      const mark = onTop(new THREE.Mesh(sphere, material(color)));
+      mark.position.set(...(place.pos as [number, number, number]));
+      group.add(mark);
+      if (place.from) {
+        const shape = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...(place.from as [number, number, number])), new THREE.Vector3(...(place.pos as [number, number, number]))]);
+        group.add(onTop(new THREE.Line(shape, new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true }))));
+        const before = onTop(new THREE.Mesh(sphere, material(color, .3)));
+        before.position.set(...(place.from as [number, number, number]));
+        group.add(before);
+      }
+    }
+    this.viewport.scene.add(group);
+    this.comparison = { result, label, places, index: 0, group };
+    this.goToDifference(index);
+  }
+
+  goToDifference(index: number) {
+    const state = this.comparison;
+    if (!state || !state.places.length) { this.bump("ui"); return; }
+    state.index = ((index % state.places.length) + state.places.length) % state.places.length;
+    const place = state.places[state.index], vp = this.viewport;
+    if (place.key != null) this.doc.select(String(place.key));
+    const target = new THREE.Vector3(...(place.pos as [number, number, number]));
+    const reach = place.kind === "collision" ? Math.max(2500, Math.hypot(place.max[0] - place.min[0], place.max[2] - place.min[2]) * 1.2) : 2500;
+    vp.animateCamera(target, target.clone().add(new THREE.Vector3(reach * .55, reach * .6, reach * .55)));
+    vp.needsRender = true;
+    this.bump("ui");
+  }
+
+  clearComparison() {
+    const state = this.comparison;
+    if (!state) return;
+    this.viewport.scene.remove(state.group);
+    state.group.traverse((object: any) => { object.geometry?.dispose(); object.material?.dispose(); });
+    this.comparison = null;
+    this.viewport.needsRender = true;
+    this.bump("ui");
+  }
+
+  // The flames of a mushroom, behind the vehicle: one at the middle of a bike, two on a kart.
+  private addBoostFlames(kart: THREE.Object3D, isBike: boolean) {
+    const box = new THREE.Box3().setFromObject(kart);
+    const back = Number.isFinite(box.min.z) && box.min.z < 0 ? box.min.z : -90;
+    const across = Number.isFinite(box.max.x) && box.max.x > 0 ? box.max.x * .4 : 40;
+    const flames = new THREE.Group();
+    flames.name = "boost-flames";
+    const flame = (radius: number, length: number, color: number) => {
+      const shape = new THREE.ConeGeometry(radius, length, 10).rotateX(-Math.PI / 2).translate(0, 0, -length / 2);
+      return new THREE.Mesh(shape, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .85, blending: THREE.AdditiveBlending, depthWrite: false }));
+    };
+    for (const x of isBike ? [0] : [-across, across]) {
+      const outer = flame(20, 110, 0xff7a18), inner = flame(11, 70, 0xffe08a);
+      outer.position.set(x, 45, back + 10);
+      inner.position.set(x, 45, back + 10);
+      flames.add(outer, inner);
+    }
+    flames.visible = false;
+    kart.add(flames);
+    return flames;
+  }
+
+  // A drift's effects at the rear wheels (one on a bike): sparks once a mini-turbo is charged, blue,
+  // then orange for a super mini-turbo; light smoke while it is still charging. Shown by showGhostFrame
+  // from the path's own drift state; they move only with the frame, so a frame always looks the same.
+  private addDriftEffects(kart: THREE.Object3D, isBike: boolean) {
+    const box = new THREE.Box3().setFromObject(kart);
+    const back = Number.isFinite(box.min.z) && box.min.z < 0 ? box.min.z + 25 : -80;
+    const side = Number.isFinite(box.max.x) && box.max.x > 0 ? box.max.x * .75 : 60;
+    const group = new THREE.Group();
+    group.name = "drift-effects";
+    // Full colour, not added to what is behind: on a light road added colour turns white.
+    const spark = new THREE.MeshBasicMaterial({ color: 0x2f9dff, transparent: true, opacity: .95, depthWrite: false });
+    const glow = new THREE.MeshBasicMaterial({ color: 0x2f9dff, transparent: true, opacity: .55, depthWrite: false });
+    const smoke = new THREE.MeshBasicMaterial({ color: 0xd9dde2, transparent: true, opacity: .32, depthWrite: false });
+    const sparkShape = new THREE.ConeGeometry(4.5, 80, 5).rotateX(-Math.PI / 2).translate(0, 0, -40);
+    const puffShape = new THREE.SphereGeometry(1, 10, 8);
+    const wheels: { sparks: THREE.Mesh[]; puffs: THREE.Mesh[]; glow: THREE.Mesh }[] = [];
+    for (const x of isBike ? [0] : [-side, side]) {
+      const wheel = new THREE.Group();
+      wheel.position.set(x, 8, back);
+      const sparks = Array.from({ length: 12 }, () => new THREE.Mesh(sparkShape, spark));
+      const puffs = Array.from({ length: 4 }, () => new THREE.Mesh(puffShape, smoke));
+      const light = new THREE.Mesh(puffShape, glow);
+      light.scale.setScalar(18);
+      wheel.add(light, ...sparks, ...puffs);
+      group.add(wheel);
+      wheels.push({ sparks, puffs, glow: light });
+    }
+    group.visible = false;
+    group.userData = { wheels, spark, glow, side: isBike ? 0 : 1 };
+    kart.add(group);
+    return group;
+  }
+
+  private showDriftEffects(group: THREE.Group, drift: number, airborne: boolean, frame: number) {
+    group.visible = drift > 0 && !airborne;
+    if (!group.visible) return;
+    const { wheels, spark, glow } = group.userData as { wheels: { sparks: THREE.Mesh[]; puffs: THREE.Mesh[]; glow: THREE.Mesh }[]; spark: THREE.MeshBasicMaterial; glow: THREE.MeshBasicMaterial };
+    const colour = drift >= 3 ? 0xff7a14 : 0x2f9dff;
+    spark.color.setHex(colour);
+    glow.color.setHex(colour);
+    // A number from 0 to 1 that only depends on the frame and the piece.
+    const noise = (n: number) => { const v = Math.sin(n * 12.9898 + frame * 78.233) * 43758.5453; return v - Math.floor(v); };
+    wheels.forEach(({ sparks, puffs, glow: light }, w) => {
+      const out = wheels.length > 1 ? (w === 0 ? -1 : 1) : 0;
+      light.visible = drift >= 2;
+      light.scale.setScalar(16 + noise(w * 3 + 40) * 8);
+      sparks.forEach((piece, i) => {
+        piece.visible = drift >= 2;
+        const length = .4 + noise(w * 31 + i) * .9;
+        piece.scale.set(1, 1, length);
+        piece.rotation.set(-(.25 + noise(w * 17 + i + 5) * .7), out * .35 + (noise(w * 7 + i + 9) - .5) * 1.1, 0, "YXZ");
+      });
+      puffs.forEach((piece, i) => {
+        // Each puff grows and drifts back over 16 frames, one after another.
+        const age = ((frame + i * 4) % 16) / 16;
+        piece.visible = drift >= 1;
+        piece.scale.setScalar(8 + age * 22);
+        piece.position.set(out * age * 18, 6 + age * 14, -age * 90);
+        (piece.material as THREE.MeshBasicMaterial).opacity = .32;
+      });
+    });
+  }
+
+  // The ghost's own character on its own vehicle, or the usual kart if that archive is not there.
+  private async loadGhostKart(ghost: any) {
+    const race = this.commonPath?.replace(/[\\/][^\\/]+$/, "") || this.settings.partsFolder?.replace(/[\\/][^\\/]+$/, "");
+    const file = kartArchiveName(ghost.vehicle, ghost.character);
+    if (!race || !hasBackend || !this.assets) return;
+    const read = async (p: string) => api.decodeArchiveBytes((await api.readPath(p)).data, p, this.commonPath || "");
+    if (file) await this.assets.loadKart(read, race, file, true, { vehicle: ghost.vehicle, character: ghost.character });
+    if (!this.assets.kart) await this.assets.loadKart(read, race, "mdf_kart-mr.szs", true);
+  }
+
+  showGhostFrame(frame: number, view: string) {
+    const state = this.ghostView, vp = this.viewport;
+    if (!state || !vp) return;
+    const pose = ghostPoseAt(state.drive, frame);
+    const { kart } = state;
+    kart.rotation.set(...(pose.rotation as [number, number, number]), "YXZ");
+    // It turns about its middle, not about the point between its wheels.
+    const middle = new THREE.Vector3(0, 70, 0);
+    kart.position.set(...(pose.position as [number, number, number])).add(middle).sub(middle.clone().applyEuler(kart.rotation));
+    const flames = kart.userData.boostFlames;
+    if (flames) {
+      flames.visible = pose.boost > 0;
+      // They flicker from frame to frame, in a way that depends only on the frame.
+      flames.scale.set(pose.boost, pose.boost, pose.boost * (.8 + .35 * Math.abs(Math.sin(frame * 1.7))));
+    }
+    if (kart.userData.driftEffects) this.showDriftEffects(kart.userData.driftEffects, pose.drift || 0, !!pose.airborne, frame);
+    const binding = kart.userData.chrBinding;
+    if (binding) applyCHRFrame(binding, binding.loop ? frame % binding.frames : Math.min(frame, binding.frames));
+    const camera = ghostCamera(pose, view);
+    vp.camera.position.set(...camera.position);
+    vp.controls.target.set(...camera.target);
+    vp.camera.lookAt(...camera.target);
+    vp.camera.fov = camera.fov;
+    vp.camera.updateProjectionMatrix();
+    vp.needsRender = true;
+  }
+
+  // ---- Primitive models ---------------------------------------------------------------------------
+  // Beta. tris: flat triangles with their base on y = 0, centred on the origin.
+  async addPrimitive(tris: number[][], color: string, collisionType: number | null) {
+    const node = this.doc.szs && findFile(this.doc.szs, "course_model.brres");
+    if (!node) return toast.error("Open a track with course_model.brres first");
+    const point = await this.pickPoint("Click on the track where the shape goes · Esc for the centre of the view");
+    const target = point || this.viewport?.viewCenterPoint() || [0, 0, 0];
+    const path = await api.writeTemp("primitive.obj", new TextEncoder().encode(primitiveOBJ(tris, color)));
+    try {
+      const before = node.data;
+      await this.importTrackModelPath(path, target);
+      if (node.data === before) return;
+      if (collisionType === null) return;
+      const kcl = this.doc.kcl, oldVerts = kcl?.verts || new Float32Array(0), oldFlags = kcl?.flags || new Uint16Array(0);
+      const count = oldFlags.length, verts = new Float32Array((count + tris.length) * 9), flags = new Uint16Array(count + tris.length);
+      for (let i = 0; i < count; i++) { flags[i] = oldFlags[i]; }
+      verts.set(oldVerts.subarray(0, count * 9));
+      tris.forEach((tri, t) => {
+        for (let c = 0; c < 9; c += 3) verts.set([tri[c] + target[0], tri[c + 1] + target[1], tri[c + 2] + target[2]], (count + t) * 9 + c);
+        flags[count + t] = makeFlag(collisionType, 0, 0);
+      });
+      const next = parseKCL(buildKCL(verts, flags));
+      this.doc.change("Add primitive collision", () => { this.doc.setKCL(next, true); }, { structural: false });
+      toast.success("Collision added with the shape");
+    } catch (e: any) {
+      toast.error("Could not add the shape", { description: e.message });
+    } finally {
+      api.removeTemp(path).catch(() => {});
+    }
+  }
+
+  // ---- Minimap (map_model.brres of the open track) ---------------------------------------------
+  minimapResource() {
+    const found = this.doc.szs && listFiles(this.doc.szs).find((f: any) => /(^|\/)map_model\.brres$/i.test(f.path));
+    return found ? { path: found.path, data: found.node.data as Uint8Array } : null;
+  }
+
+  saveMinimapBytes(label: string, bytes: Uint8Array) {
+    if (!this.doc.szs) return false;
+    this.doc.changeArchiveFile(label, this.minimapResource()?.path || "map_model.brres", bytes);
+    return true;
+  }
+
+  // A minimap from another track or made elsewhere. The game draws the model named "map".
+  async replaceMinimap() {
+    if (!this.doc.szs) return toast.error("Open a track archive first");
+    const file = await api.openFile(FILTERS.brres, "Choose the minimap BRRES (map_model.brres)");
+    if (!file) return;
+    try {
+      if (!isBRRES(file.data)) throw new Error("This is not a BRRES archive");
+      const models = parseBRRES(file.data).models.map((m: any) => m.name);
+      if (!models.includes("map")) throw new Error(`The game needs a model named "map" (this BRRES has ${models.join(", ") || "no models"}).`);
+      this.saveMinimapBytes("Replace minimap", file.data);
+      toast.success("Minimap replaced", { description: "Save the course SZS to keep it." });
+    } catch (e: any) { toast.error("Could not replace the minimap", { description: e.message }); }
   }
 
   async copySelectedModel() {
@@ -1698,7 +2053,13 @@ export class Editor {
 
   selectAnimation(name: string | null) {
     this.selectedAnimation = name;
-    if (name) { this.viewport?.selectGeometry(null); this.doc.clearSelection(); }
+    if (name) { this.selectedLook = null; this.viewport?.selectGeometry(null); this.doc.clearSelection(); }
+    this.bump("ui");
+  }
+
+  selectLook(id: string | null) {
+    this.selectedLook = id;
+    if (id) { this.selectedAnimation = null; this.viewport?.selectGeometry(null); this.doc.clearSelection(); }
     this.bump("ui");
   }
 
@@ -2377,6 +2738,17 @@ export class Editor {
       case "effects": return this.doc.szs ? dialogs.open("effects", {}) : toast.warning("Open a track archive (.szs) to edit its effects.");
       case "lighting": return this.doc.szs ? dialogs.open("params", { mode: "lighting" }) : toast.warning("Open a track archive (.szs) to edit its lighting.");
       case "sky": return this.doc.szs ? dialogs.open("sky", {}) : toast.warning("Open a track archive (.szs) to edit its sky.");
+      case "dolphin": return this.openInDolphin();
+      case "ghosts": return dialogs.open("ghosts", {});
+      case "ghostRecord": return dialogs.open("ghostRecord", {});
+      case "trackGhosts": return this.workspace() ? dialogs.open("trackGhosts", {}) : toast.warning("Choose the game folder first", { description: "A track's ghosts are in Race/TimeAttack, in the game folder." });
+      case "materials": return this.doc.szs ? dialogs.open("materials", {}) : toast.warning("Open a track archive (.szs) to edit its materials.");
+      case "sculpt": return this.doc.szs ? dialogs.open("sculpt", {}) : toast.warning("Open a track archive (.szs) to sculpt its model.");
+      case "primitive": return this.doc.szs ? dialogs.open("primitive", {}) : toast.warning("Open a track archive (.szs) to add a primitive model.");
+      case "versions": return this.doc.filePath && hasBackend ? dialogs.open("versions", {}) : toast.warning("Save the track first", { description: "Versions are kept each time a track file is saved." });
+      case "fog": return this.doc.szs ? dialogs.open("fog", {}) : toast.warning("Open a track archive (.szs) to edit its fog.");
+      case "mapColour": return this.workspace() ? dialogs.open("mapColour", {}) : toast.warning("Choose the game folder first");
+      case "minimap": return this.doc.szs ? dialogs.open("minimap", {}) : toast.warning("Open a track archive (.szs) to edit its minimap.");
       case "trackObjects": return this.doc.szs ? this.openTrackObjects() : toast.warning("Open a track archive (.szs) to edit its objects.");
       case "about": return dialogs.open("about", {});
       case "tour": this.tourActive = true; this.bump("ui"); break;
@@ -2392,7 +2764,7 @@ export class Editor {
     return this.withBusy("Building the track…", async () => {
       try {
         const szs = res.keepSzs ? d.szs : null;
-        const { out, tree, kclBytes } = await generateTrackArchive(res.points, res.params, szs, (text) => { this.busy = text; this.bump("ui"); });
+        const { out, tree, kclBytes } = await generateTrackArchive(res.points, res.params, szs, (text) => { this.busy = text; this.bump("ui"); }, this.workspace() ? this.workspacePath("Race", "Course") : "");
         if (separate) {
           // The generator is a modal here. Only the completed track belongs in a separate 3D
           // editor; the current document and its unsaved work must stay untouched.
@@ -3046,6 +3418,7 @@ export class Editor {
 
   // ---- Keyboard ----------------------------------------------------------------------------
   handleKey(e: KeyboardEvent) {
+    if (this.ghostView) return; // nothing to edit in a ghost preview
     const tag = (e.target as HTMLElement).tagName;
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || document.querySelector("[role=dialog]") || this.tourActive) return;
     const vp = this.viewport;

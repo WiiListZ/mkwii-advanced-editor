@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { buildKMP, emptyKMP } from "../web/js/formats/kmp.js";
 
 const settings = mkdtempSync(join(tmpdir(), "mkwii-home-"));
-await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true }));
+await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((resolve) => {
   worker.onmessage = (event) => event.data?.type === "ready" && resolve(event.data.port);

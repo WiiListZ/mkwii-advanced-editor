@@ -30,7 +30,7 @@ export class GameAssets {
   // Start position model: Mario on the Standard Kart M, built from the game's own files
   // (Race/Kart/mdf_kart-mr.szs, wheel positions and ride height from Common.szs bsp/mdf_kart.bsp).
   // Without them the editor draws its own Mario on the kart (models.js).
-  async loadKart(readFile, raceDir, kartFile = 'mdf_kart-mr.szs', force = false) {
+  async loadKart(readFile, raceDir, kartFile = 'mdf_kart-mr.szs', force = false, seat = null) {
     if (!raceDir || (!force && this.kartDir === raceDir + kartFile)) return;
     this.kartDir = raceDir + kartFile;
     try {
@@ -41,7 +41,8 @@ export class GameAssets {
       const stem = kartFile.replace(/-.*$/, '');
       const bsp = this.common && findFile(this.common, `bsp/${stem}.bsp`);
       const disp = this.common && findFile(this.common, 'kartDriverDispParam.bin');
-      this.kart = buildKart(tree, bsp?.data || null, driverOffset(disp?.data, VEHICLE_ID[stem] ?? 1, 0));
+      const bike = this.common && findFile(this.common, 'bikePartsDispParam.bin');
+      this.kart = buildKart(tree, bsp?.data || null, driverOffset(disp?.data, seat?.vehicle ?? VEHICLE_ID[stem] ?? 1, seat?.character ?? 0), bikeParts(bike?.data, (seat?.vehicle ?? FIRST_BIKE) - FIRST_BIKE));
       this.viewport.clearCache();
     } catch (e) {
       console.warn('Kart model not loaded:', e);
@@ -334,7 +335,19 @@ function driverOffset(data, vehicle, character) {
   return { y: v.getFloat32(at), z: v.getFloat32(at + 4) };
 }
 
-function buildKart(tree, bspData, seat = { y: 0, z: 0 }) {
+// Where a bike's parts sit, from Common.szs bikePartsDispParam.bin: a count, then 0xB0 bytes per bike
+// in the order of their vehicle IDs. Tilts are in degrees, about the axle's direction. The tilt of
+// the rear suspension (0x48) is not documented: its value lines the part up with the swingarm.
+const FIRST_BIKE = 18;
+function bikeParts(data, index) {
+  const at = 4 + index * 0xB0;
+  if (!data || index < 0 || at + 0xB0 > data.length) return { handle: [25, 50], handleTilt: -28, swingarm: [-25, -20], suspension: [10, -45], suspensionTilt: 25 };
+  const v = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const pair = (o) => [v.getFloat32(at + o + 4), v.getFloat32(at + o + 8)]; // height and forward
+  return { handle: pair(0x0C), handleTilt: v.getFloat32(at + 0x18), swingarm: pair(0x24), suspension: pair(0x3C), suspensionTilt: v.getFloat32(at + 0x48) };
+}
+
+function buildKart(tree, bspData, seat = { y: 0, z: 0 }, bike = bikeParts(null, 0)) {
   const kartFile = findFile(tree, 'kart_model.brres'), driverFile = findFile(tree, 'driver_model.brres');
   if (!kartFile || !driverFile) throw new Error('kart_model.brres or driver_model.brres missing');
   const kb = parseBRRES(kartFile.data), db = parseBRRES(driverFile.data);
@@ -366,7 +379,28 @@ function buildKart(tree, bspData, seat = { y: 0, z: 0 }) {
     materials.push(...(g.userData.materials || []));
   };
   add(part('body'), 0, rideHeight, 0);
-  wheels.forEach((w, i) => {
+  // A bike's wheels are on the middle line. The front one hangs from the handlebars, as far along
+  // their tilt as reaches the ground (the BSP gives it relative to them, with the suspension hanging
+  // free), and the rear one from the swingarm.
+  const bikePart = (name, y, z, tilt = 0, scale = 1) => {
+    const g = part(name);
+    if (!g) return;
+    g.name = name;
+    add(g, 0, y, z, scale);
+    g.rotation.x = tilt;
+  };
+  if (kb.models.some((m) => m.name === 'tire_f')) {
+    const [front, rear] = wheels, radians = Math.PI / 180;
+    const handleY = rideHeight + bike.handle[0], handleZ = bike.handle[1], tilt = bike.handleTilt * radians;
+    const frontZ = handleZ - Math.tan(tilt) * (handleY - front.radius);
+    bikePart('handle', handleY, handleZ, tilt);
+    bikePart('f_sus', front.radius, frontZ, tilt);
+    bikePart('tire_f', front.radius, frontZ, 0, front.radius / tireRadius('tire_f'));
+    bikePart('tire_r', rear.radius, rear.z, 0, rear.radius / tireRadius('tire_r'));
+    const armY = rideHeight + bike.swingarm[0], armZ = bike.swingarm[1];
+    bikePart('swingarm', armY, armZ, Math.atan2(rear.radius - armY, armZ - rear.z));
+    bikePart('r_sus', rideHeight + bike.suspension[0], bike.suspension[1], bike.suspensionTilt * radians);
+  } else wheels.forEach((w, i) => {
     const front = i === 0;
     for (const side of [1, -1]) {
       const right = side > 0;

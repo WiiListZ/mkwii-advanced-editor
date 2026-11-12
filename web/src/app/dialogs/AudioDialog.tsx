@@ -3,16 +3,18 @@
 // audio file; replacements are kept until Save, which writes the game files (optionally with a .bak copy).
 
 import * as React from "react";
-import { Check, ChevronRight, Download, FileAudio, LoaderCircle, LocateFixed, Play, Repeat, RotateCcw, Save, Search, Square, Undo2, X } from "lucide-react";
+import { BookOpen, Check, Download, FileAudio, MoveHorizontal, Volume, Volume1, Volume2, VolumeX, LoaderCircle, LocateFixed, Paintbrush, Play, Plus, Repeat, RotateCcw, Save, Search, Square, Trash2, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { api, FILTERS } from "../../../js/api.js";
-import { buildBRSTM, decodeBRSTM, parseBRSTM, setBRSTMLoop } from "../../../js/formats/brstm.js";
-import { listWaves, parseBRSAR, readWave, replaceWave } from "../../../js/formats/brsar.js";
-import { encodeFLAC, encodeWAV, isolateTrack, musicLabel, toFloat32, toInt16 } from "../../../js/editor/audio.js";
+import { buildBRSTM, decodeBRSTM, parseBRSTM, setBRSTMLoop, setBRSTMTrackMix } from "../../../js/formats/brstm.js";
+import { listWaves, parseBRSAR, readWave, replaceWave, setStreamRoom, streamSound, streamTrackCount } from "../../../js/formats/brsar.js";
+import { MAX_CHANNELS, MAX_TRACKS, musicTriggers, SOUND_TRIGGER, trackPlays } from "../../../js/data/music-tracks.js";
+import { replaceTrack, withoutTrack, withTrack } from "../../../js/editor/stream-tracks.js";
+import { encodeFLAC, encodeWAV, isolateTrack, mixTracks, musicLabel, panGains, toFloat32, toInt16 } from "../../../js/editor/audio.js";
 import { encodeOggOpus } from "../../../js/editor/ogg-opus.js";
 import { AAC_RATE, aacSupported, encodeAIFF, encodeM4A, encodeMP3, mp3Rate } from "../../../js/editor/audio-export.js";
 import { audioContext, decodeFile, resample, suspendAudio } from "../audio-convert";
@@ -60,19 +62,8 @@ function ExportMenu({ onExport }: { onExport: (format: ExportFormat) => void }) 
 }
 
 
-// Two channels to listen to: each track's pair at its volume, summed.
-function stereo(clip: Clip, trackIndex: number | null = null) {
-  const n = clip.channels[0].length;
-  const left = new Float32Array(n), right = new Float32Array(n);
-  const tracks = trackIndex !== null ? [clip.tracks![trackIndex]] : clip.tracks?.length ? clip.tracks : [{ volume: 127, pan: 64, channels: clip.channels.map((_, i) => i) }];
-  const gain = 1 / Math.max(1, tracks.length) ** 0.5;
-  for (const t of tracks) {
-    const l = clip.channels[t.channels[0]], r = clip.channels[t.channels[1] ?? t.channels[0]];
-    const g = (t.volume / 127) * gain / 32768;
-    for (let i = 0; i < n; i++) { left[i] += l[i] * g; right[i] += r[i] * g; }
-  }
-  return [left, right];
-}
+// Two channels to listen to: each track at its volume and pan, as the game places them (mixTracks).
+const stereo = (clip: Clip, trackIndex: number | null = null) => mixTracks(clip, trackIndex);
 
 function drawWaveform(canvas: HTMLCanvasElement, samples: Float32Array, loopAt?: number) {
   const g = canvas.getContext("2d");
@@ -149,8 +140,9 @@ export function AudioDialog({ file, loose, close }: { file?: string; loose?: { n
       catch (e: any) { toast.error("Could not read the sound archive", { description: e.message }); }
       return;
     }
-    if (tab !== "sounds" || archive || !brsarPath) return;
-    setLoading("Reading revo_kart.brsar…");
+    // Also for music: it says how much of each music the game plays (its tracks and channels).
+    if (archive || !brsarPath) return;
+    if (tab === "sounds") setLoading("Reading revo_kart.brsar…");
     api.readPath(brsarPath).then(async (f: any) => {
       const a = parseBRSAR(await api.decodeArchiveBytes(f.data, f.path));
       setArchive(a); setWaves(listWaves(a));
@@ -237,10 +229,18 @@ export function AudioDialog({ file, loose, close }: { file?: string; loose?: { n
             </div>
             <div className="min-h-0 overflow-y-auto">
               {current ? (
-                <SoundPanel key={current.key + (pendingMusic[current.path || ""] ? ":p" : "") + (changedWaves.has(current.key) ? ":c" : "")} item={current} archive={archive}
+                <SoundPanel key={current.key + (changedWaves.has(current.key) ? ":c" : "")} item={current} archive={archive}
                   pending={current.path ? pendingMusic[current.path] : undefined} brsarPath={brsarPath} sourceBytes={looseMusic ? loose?.data : undefined}
                   onReplaceMusic={(bytes) => setPendingMusic((p) => { const next = { ...p }; if (bytes) next[current.path!] = bytes; else delete next[current.path!]; return next; })}
-                  onReplaceWave={(next) => { setArchive(next); setArchiveChanged(true); setChangedWaves((s) => new Set(s).add(current.key)); }} />
+                  onReplaceWave={(next) => { setArchive(next); setArchiveChanged(true); setChangedWaves((s) => new Set(s).add(current.key)); }}
+                  onArchiveChange={(next, key) => { setArchive(next); setArchiveChanged(true); setChangedWaves((s) => new Set(s).add(key)); }}
+                  onPaintTrigger={(variant) => {
+                    if (pendingCount) { toast.warning("Save the sounds first", { description: "Painting closes this window." }); return; }
+                    suspendAudio();
+                    close(null);
+                    editor.setPaint({ type: SOUND_TRIGGER, variant });
+                    editor.startPainting();
+                  }} />
               ) : <div className="grid h-full place-items-center text-xs text-muted-foreground">{loading ? <LoaderCircle className="size-5 animate-spin" /> : "Choose a sound on the left."}</div>}
             </div>
           </div>
@@ -253,16 +253,16 @@ export function AudioDialog({ file, loose, close }: { file?: string; loose?: { n
   );
 }
 
-function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceMusic, onReplaceWave }: {
+function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceMusic, onReplaceWave, onArchiveChange, onPaintTrigger }: {
   item: Item; archive: any; pending?: Uint8Array; brsarPath: string; sourceBytes?: Uint8Array;
   onReplaceMusic: (bytes: Uint8Array | null) => void; onReplaceWave: (archive: any) => void;
+  onArchiveChange: (archive: any, key: string) => void; onPaintTrigger: (variant: number) => void;
 }) {
   const [clip, setClip] = React.useState<Clip | null>(null);
   const [error, setError] = React.useState("");
   const [playing, setPlaying] = React.useState(false);
   const [playingTrack, setPlayingTrack] = React.useState<number | null>(null);
   const [elapsed, setElapsed] = React.useState(0);
-  const [separateTracks, setSeparateTracks] = React.useState(false);
   const [loopPreview, setLoopPreview] = React.useState(true);
   const [loopEnabled, setLoopEnabled] = React.useState(false);
   const [loopStartText, setLoopStartText] = React.useState("0");
@@ -273,12 +273,25 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
   const ticker = React.useRef<ReturnType<typeof setInterval> | null>(null);
   const generation = React.useRef(0);
   const buffers = React.useRef(new Map<number, AudioBuffer>());
+  // While playing: the other tracks' sources, and each track's gains (see play).
+  const others = React.useRef<AudioBufferSourceNode[]>([]);
+  const live = React.useRef(new Map<number, { gains: GainNode[][]; count: number }>());
+  // Set when only a track's volume or pan changed: the music is not read again, and goes on playing.
+  const mixOnly = React.useRef<Uint8Array | null>(null);
   const scrubbing = React.useRef(false);
   const wave = React.useRef<HTMLCanvasElement>(null);
   const musicBytes = async () => pending || sourceBytes || await api.decodeArchiveBytes((await api.readPath(item.path!)).data, item.path!);
 
   // Decode the sound (the replacement when there is one).
   React.useEffect(() => {
+    if (pending && pending === mixOnly.current) {
+      mixOnly.current = null;
+      const tracks = parseBRSTM(pending).tracks;
+      setClip((c) => c && { ...c, tracks, trackType: 1 });
+      return;
+    }
+    mixOnly.current = null;
+    stop();
     let cancelled = false;
     setClip(null); setError("");
     setElapsed(0); buffers.current.clear();
@@ -295,8 +308,14 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
         setHasBackup(!!brsarPath && await api.exists(brsarPath + ".bak"));
       }
     })().catch((e) => !cancelled && setError(e.message));
-    return () => { cancelled = true; stop(); };
-  }, [item.key, pending, archive]);
+    // A change of a track's volume or pan only (mixOnly) leaves it playing.
+    return () => { cancelled = true; if (!mixOnly.current) stop(); };
+    // A music does not depend on the sound archive (read later, for its tracks' room): it is not read again then.
+  }, [item.key, pending, item.kind === "wave" ? archive : null]);
+
+  // Whatever plays stops when another sound is chosen or the window closes, also after a volume or
+  // pan change, which leaves the music playing (mixOnly) and so has nothing of its own to stop.
+  React.useEffect(() => () => stop(), []);
 
   // RMS envelope of the stereo mix, scaled to the clip's loudest sample.
   React.useEffect(() => {
@@ -306,10 +325,19 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
   const stop = () => {
     generation.current++;
     try { source.current?.stop(); } catch { /* not started */ }
+    for (const node of others.current) { try { node.stop(); } catch { /* not started */ } }
+    others.current = []; live.current = new Map();
     source.current = null; playback.current = null;
     if (ticker.current) clearInterval(ticker.current);
     ticker.current = null;
     setPlaying(false); setPlayingTrack(null);
+  };
+  // One source per track, played together: each side of a track goes to the left and the right
+  // through gains set from its volume and pan (panGains), so that both can change while it plays.
+  const tracksOf = (c: Clip) => c.tracks?.length ? c.tracks : [{ volume: 127, pan: 64, channels: c.channels.map((_, i) => i) }];
+  const sideGains = (track: { volume: number; pan: number; channels: number[] }, count: number) => {
+    const norm = (track.volume / 127) / Math.max(1, count) ** 0.5, sides = Math.min(2, track.channels.length);
+    return [0, 1].map((side) => panGains(track.pan ?? 64, Math.min(side, sides - 1), sides).map((g) => g * norm * (sides < 2 && side === 1 ? 0 : 1)));
   };
   const play = async (trackIndex: number | null = null, from = elapsed) => {
     if (!clip) return;
@@ -320,26 +348,48 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
     if (run !== generation.current) return;
     const duration = clip.channels[0].length / clip.sampleRate;
     const offset = from >= duration ? 0 : Math.max(0, from);
-    const key = trackIndex ?? -1;
-    let buffer = buffers.current.get(key);
-    if (!buffer) {
-      const [l, r] = stereo(clip, trackIndex);
-      buffer = ctx.createBuffer(2, l.length, clip.sampleRate);
-      buffer.copyToChannel(l, 0); buffer.copyToChannel(r, 1);
-      buffers.current.set(key, buffer);
+    const all = tracksOf(clip), chosen = trackIndex !== null ? [trackIndex] : all.map((_, i) => i);
+    const at = ctx.currentTime + 0.05;
+    const nodes: AudioBufferSourceNode[] = [];
+    live.current = new Map();
+    for (const index of chosen) {
+      const track = all[index];
+      let buffer = buffers.current.get(index);
+      if (!buffer) {
+        buffer = ctx.createBuffer(2, clip.channels[0].length, clip.sampleRate);
+        [0, 1].forEach((side) => {
+          const data = clip.channels[track.channels[Math.min(side, track.channels.length - 1)]], out = new Float32Array(data.length);
+          for (let i = 0; i < data.length; i++) out[i] = data[i] / 32768;
+          buffer!.copyToChannel(out, side);
+        });
+        buffers.current.set(index, buffer);
+      }
+      const node = ctx.createBufferSource();
+      node.buffer = buffer;
+      if (clip.loop && loopPreview) { node.loop = true; node.loopStart = clip.loopStart / clip.sampleRate; node.loopEnd = duration; }
+      const split = ctx.createChannelSplitter(2), merge = ctx.createChannelMerger(2);
+      node.connect(split);
+      const gains = sideGains(track, chosen.length).map((pair, side) => pair.map((value, to) => {
+        const gain = ctx.createGain();
+        gain.gain.value = value;
+        split.connect(gain, side);
+        gain.connect(merge, 0, to);
+        return gain;
+      }));
+      merge.connect(ctx.destination);
+      live.current.set(index, { gains, count: chosen.length });
+      nodes.push(node);
     }
-    const node = ctx.createBufferSource();
-    node.buffer = buffer;
-    if (clip.loop && loopPreview) { node.loop = true; node.loopStart = clip.loopStart / clip.sampleRate; node.loopEnd = duration; }
-    node.connect(ctx.destination);
+    const node = nodes[0];
     node.onended = () => { if (source.current === node) { stop(); setElapsed(duration); } };
-    node.start(0, offset);
+    for (const n of nodes) n.start(at, offset);
     source.current = node;
-    playback.current = { start: ctx.currentTime, offset };
+    others.current = nodes.slice(1);
+    playback.current = { start: at, offset };
     setElapsed(offset);
     ticker.current = setInterval(() => {
       if (!playback.current || scrubbing.current) return;
-      const raw = playback.current.offset + ctx.currentTime - playback.current.start;
+      const raw = playback.current.offset + Math.max(0, ctx.currentTime - playback.current.start);
       const loopStart = clip.loopStart / clip.sampleRate;
       const position = node.loop && raw >= duration && loopStart < duration
         ? loopStart + (raw - duration) % (duration - loopStart)
@@ -348,6 +398,13 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
     }, 50);
     setPlaying(true);
     setPlayingTrack(trackIndex);
+  };
+  // A track's volume or pan while it plays: heard at once.
+  const liveMix = (index: number, mix: { volume: number; pan: number }) => {
+    const entry = live.current.get(index);
+    if (!entry || !clip) return;
+    const track = { ...tracksOf(clip)[index], ...mix };
+    sideGains(track, entry.count).forEach((pair, side) => pair.forEach((value, to) => { entry.gains[side][to].gain.value = value; }));
   };
   const seek = (position: number) => {
     if (!clip) return;
@@ -526,41 +583,13 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
             {hasBackup && !pending && <Button size="sm" variant="ghost" disabled={!!busy} onClick={restore}><RotateCcw /> Restore original</Button>}
             {busy && <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground"><LoaderCircle className="size-3.5 animate-spin" /> {busy}</span>}
           </div>
-          {item.kind === "music" && (clip.tracks?.length || 0) > 1 && (
-            <div className="border-t pt-3">
-              <button type="button" className="flex w-fit cursor-pointer items-center gap-2 text-xs font-medium hover:text-primary" aria-expanded={separateTracks} aria-controls={separateTracks ? "separate-audio-tracks" : undefined} onClick={() => { stop(); setSeparateTracks((open) => !open); }}>
-                <ChevronRight className={cn("size-4 transition-transform", separateTracks && "rotate-90")} aria-hidden="true" />
-                Separate tracks
-              </button>
-              {separateTracks && (
-                <div id="separate-audio-tracks" className="mt-2 space-y-1">
-                  {clip.tracks!.map((track, index) => (
-                    <div key={index} className="flex min-h-10 flex-wrap items-center gap-1.5 rounded border px-2 py-1">
-                      <div className="min-w-0 flex-1 text-xs">
-                        <span className="font-medium">Track {index + 1}</span>
-                        <span className="ml-2 text-[11px] text-muted-foreground">{track.channels.length} channel{track.channels.length === 1 ? "" : "s"}</span>
-                      </div>
-                      <Button size="sm" variant={playing && playingTrack === index ? "default" : "ghost"} onClick={() => playing && playingTrack === index ? stop() : play(index)} title={playing && playingTrack === index ? `Stop track ${index + 1}` : `Play track ${index + 1}`}>
-                        {playing && playingTrack === index ? <Square /> : <Play />}
-                        {playing && playingTrack === index ? "Stop" : "Play"}
-                      </Button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild><Button size="sm" variant="ghost" disabled={!!busy} title={`Export track ${index + 1}`}><Download /> Export</Button></DropdownMenuTrigger>
-                        <ExportMenu onExport={(format) => exportAs(format, index)} />
-                      </DropdownMenu>
-                      <TrackWaveform clip={clip} index={index} elapsed={elapsed} active={playing && playingTrack === index}
-                        onPlay={(at) => { setElapsed(at); void play(index, at); }} />
-                    </div>
-                  ))}
-                  <p className="m-0 text-[11px] leading-relaxed text-muted-foreground">These are the game's actual audio layers. A layer may contain several instruments; the file does not name them.</p>
-                </div>
-              )}
-            </div>
-          )}
+          {item.kind === "music" && <TracksSection item={item} clip={clip} archive={archive} busy={busy} setBusy={setBusy} elapsed={elapsed}
+            playing={playing} playingTrack={playingTrack} play={play} stop={stop} setElapsed={setElapsed} exportAs={exportAs} liveMix={liveMix}
+            musicBytes={musicBytes} onReplaceMusic={onReplaceMusic} onMixOnly={(bytes) => { mixOnly.current = bytes; onReplaceMusic(bytes); }} onArchiveChange={onArchiveChange} onPaintTrigger={onPaintTrigger} />}
           <p className="m-0 text-[11px] leading-relaxed text-muted-foreground">
             {item.kind === "music"
               ? (clip.tracks?.length || 0) > 1
-                ? "Most courses have normal and final-lap versions: replace both. Mix exports combine the audio tracks into stereo; BRSTM keeps them separate."
+                ? "Most courses have normal and final-lap versions: replace both, and change their tracks alike. Mix exports combine the audio tracks into stereo; BRSTM keeps them separate."
                 : "This stream is a single stereo mix; its original instruments cannot be extracted. Most courses have normal and final-lap versions: replace both."
               : item.wave?.kind === "Sound"
                 ? "Every sound that plays this wave changes. Voices and effects are mono at their original sample rate."
@@ -570,4 +599,134 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
       )}
     </div>
   );
+}
+
+// A music's tracks: each played, replaced, exported, mixed or taken out on its own, new ones added up
+// to what the game can play (see music-tracks.js), and when the game plays each.
+function TracksSection({ item, clip, archive, busy, setBusy, elapsed, playing, playingTrack, play, stop, setElapsed, exportAs, liveMix, musicBytes, onReplaceMusic, onMixOnly, onArchiveChange, onPaintTrigger }: {
+  item: Item; clip: Clip; archive: any; busy: string; setBusy: (text: string) => void; elapsed: number; playing: boolean; playingTrack: number | null;
+  play: (track?: number | null, from?: number) => Promise<void>; stop: () => void; setElapsed: (at: number) => void; exportAs: (format: ExportFormat, track?: number | null) => Promise<void>;
+  liveMix: (index: number, mix: { volume: number; pan: number }) => void; onMixOnly: (bytes: Uint8Array) => void;
+  musicBytes: () => Promise<Uint8Array>; onReplaceMusic: (bytes: Uint8Array | null) => void; onArchiveChange: (archive: any, key: string) => void; onPaintTrigger: (variant: number) => void;
+}) {
+  const tracks = clip.tracks?.length ? clip.tracks : [{ volume: 127, pan: 64, channels: clip.channels.map((_, i) => i) }];
+  const file = item.path || item.detail;
+  const triggers = musicTriggers(file);
+  const sound = archive && item.path ? streamSound(archive, item.path) : null;
+  const room = sound ? { tracks: streamTrackCount(sound.stream), channels: sound.stream.channels } : null;
+  const canAdd = tracks.length < MAX_TRACKS && clip.channels.length + 2 <= MAX_CHANNELS;
+  const canPaint = !!editor.doc.kcl;
+  const [mix, setMix] = React.useState(tracks.map((t) => ({ volume: t.volume, pan: t.pan })));
+  React.useEffect(() => { setMix(tracks.map((t) => ({ volume: t.volume, pan: t.pan }))); }, [clip]);
+
+  const write = (next: any) => onReplaceMusic(buildBRSTM({ channels: next.channels, sampleRate: next.sampleRate, loop: next.loop, loopStart: next.loopStart, tracks: next.tracks, trackType: next.trackType }));
+  const audio = async (title: string, description: string) => {
+    const f = await api.openFile(FILTERS.audio, title);
+    if (!f) return null;
+    const options: any = await dialogs.form({ title, description, fields: [{ key: "volume", label: "Volume (%)", type: "number", value: 100, min: 10, max: 400, step: 5 }], confirmLabel: "Use it" });
+    if (!options) return null;
+    const decoded = await decodeFile(f.name, f.data);
+    if (!decoded.channels.length || !decoded.channels[0].length) throw new Error("The audio file is empty");
+    const gain = Number(options.volume) / 100;
+    return (await resample(decoded.channels.map((c) => (gain === 1 ? c : c.map((v) => v * gain))), decoded.rate, clip.sampleRate)).map(toInt16);
+  };
+  const length = seconds(clip.channels[0].length, clip.sampleRate);
+  const add = async () => {
+    const count = tracks.length + 1, channels = clip.channels.length + 2;
+    // More than the game sets aside for this music: its room in revo_kart.brsar grows with it.
+    const grow = !!room && (count > room.tracks || channels > room.channels);
+    try {
+      const pcm = await audio(`Add track ${count} to ${item.label}`, `The audio is converted to the game's format (DSP-ADPCM, ${clip.sampleRate} Hz, 2 channels) and fitted to this music's length (${length}): cut if longer, silent at the end if shorter. It loops with the music.${grow ? ` The game sets aside room for ${room!.tracks} track${room!.tracks === 1 ? "" : "s"} of this music: revo_kart.brsar is changed to play ${count}, and saved with it.` : ""}`);
+      if (!pcm) return;
+      setBusy("Adding the track…");
+      write(withTrack(clip, pcm));
+      if (grow) onArchiveChange(setStreamRoom(archive, sound, Math.max(room!.channels, channels), Math.max(room!.tracks, count)), `stream:${sound.name}`);
+      toast.success(`Track ${count} added`, { description: triggers ? "Save to write it into the game files." : "This music's tracks all play together, all the time. Save to write it into the game files." });
+    } catch (e: any) { toast.error("Could not add the track", { description: e.message }); }
+    setBusy("");
+  };
+  const replace = async (index: number) => {
+    try {
+      const pcm = await audio(`Replace track ${index + 1} of ${item.label}`, `Only this track changes. The audio is converted to the game's format and fitted to the music's length (${length}).`);
+      if (!pcm) return;
+      setBusy("Replacing the track…");
+      write(replaceTrack(clip, index, pcm));
+    } catch (e: any) { toast.error("Could not replace the track", { description: e.message }); }
+    setBusy("");
+  };
+  const remove = async (index: number) => {
+    if (!await dialogs.confirm({ title: `Take out track ${index + 1}?`, description: "Its audio leaves this music. The tracks after it move up, so the course's Sound Triggers then play other tracks than before.", confirmLabel: "Take out", destructive: true })) return;
+    setBusy("Taking the track out…");
+    try { stop(); write(withoutTrack(clip, index)); } catch (e: any) { toast.error("Could not take out the track", { description: e.message }); }
+    setBusy("");
+  };
+  const applyMix = async (index: number) => {
+    const { volume, pan } = mix[index];
+    if (volume === tracks[index].volume && pan === tracks[index].pan) return;
+    try {
+      // In the header only, when the file keeps them; else written again with them.
+      if (clip.trackType === 1) onMixOnly(setBRSTMTrackMix(await musicBytes(), index, volume, pan));
+      else write({ ...clip, tracks: tracks.map((t, i) => i === index ? { ...t, volume, pan } : t), trackType: 1 });
+    } catch (e: any) { toast.error("Could not change the track", { description: e.message }); }
+  };
+  // When a track plays, in words, when no Sound Trigger list says it.
+  const plainly = (index: number) => {
+    const when = trackPlays(file, index);
+    if (when.always) return index === 0 ? "all the time." : "all the time, with the others: the game changes no tracks of this music.";
+    if (!when.variants.length) return when.unsaid.length ? `not documented: ${triggers!.course}'s music changes on Sound Triggers ${when.unsaid.map((v: any) => v.variant).join(", ")}, but which track each plays is not known.` : "never: no Sound Trigger of this course plays it.";
+    return null;
+  };
+  const panText = (pan: number) => pan === 64 ? "middle" : pan < 64 ? `L ${64 - pan}` : `R ${pan - 64}`;
+
+  return <div className="border-t pt-3" data-music-tracks>
+    <div className="mb-1 flex flex-wrap items-center gap-2">
+      <div className="text-xs font-medium">Tracks</div>
+      <span className="text-[11px] text-muted-foreground" data-music-room>{tracks.length} of up to {MAX_TRACKS}{room ? ` · the game plays ${room.tracks} of this music (revo_kart.brsar)` : ""}</span>
+      <div className="flex-1" />
+      <Button size="sm" variant="ghost" title="A tutorial: tracks, when the game plays each, and Sound Triggers" onClick={() => dialogs.open("help", { tab: "tutorials", tutorial: "music-tracks" })}><BookOpen /> How it works</Button>
+      <Button size="sm" variant="secondary" disabled={!canAdd || !!busy} title={canAdd ? "Add a track of your own audio to this music" : `The game plays at most ${MAX_TRACKS} tracks (${MAX_CHANNELS} channels) of a music`} onClick={add}><Plus /> Add a track…</Button>
+    </div>
+    <p className="m-0 mb-2 text-[11px] leading-relaxed text-muted-foreground">
+      {triggers ? `In ${triggers.course}'s position the game turns these tracks up and down when a kart drives over Sound Trigger collision (KCL type 0x18); what each variant does is fixed by the game for this position. Paint it where the music should change.`
+        : "The game changes no tracks of this music: every track plays all the time, mixed together. Only some positions change tracks as a kart drives: Toad's Factory, Wario's Gold Mine, Koopa Cape, Dry Dry Ruins, Moonview Highway and Bowser's Castle."}
+    </p>
+    <div className="space-y-1.5">
+      {tracks.map((track, index) => {
+        const when = trackPlays(file, index), text = plainly(index), on = playing && playingTrack === index;
+        return <div key={index} className="flex flex-col gap-1.5 rounded border px-2 py-1.5" data-music-track={index + 1}>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <div className="min-w-0 flex-1 text-xs"><span className="font-medium">Track {index + 1}</span><span className="ml-2 text-[11px] text-muted-foreground">{track.channels.length} channel{track.channels.length === 1 ? "" : "s"}</span></div>
+            <Button size="sm" variant={on ? "default" : "ghost"} onClick={() => on ? stop() : play(index)} title={on ? `Stop track ${index + 1}` : `Play track ${index + 1}`}>{on ? <Square /> : <Play />}{on ? "Stop" : "Play"}</Button>
+            <Button size="sm" variant="ghost" disabled={!!busy} title={`Replace only track ${index + 1}`} onClick={() => replace(index)}><FileAudio /> Replace…</Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild><Button size="sm" variant="ghost" disabled={!!busy} title={`Export track ${index + 1}`}><Download /> Export</Button></DropdownMenuTrigger>
+              <ExportMenu onExport={(format) => exportAs(format, index)} />
+            </DropdownMenu>
+            {tracks.length > 1 && <Button size="icon-sm" variant="ghost" disabled={!!busy} aria-label={`Take out track ${index + 1}`} title="Take this track out of the music" onClick={() => remove(index)}><Trash2 /></Button>}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+            {(["volume", "pan"] as const).map((key) => <label key={key} className="flex items-center gap-1.5" title={key === "volume" ? "Volume" : "Pan (left to right)"}>
+              {key === "pan" ? <MoveHorizontal className="size-3.5" aria-hidden="true" />
+                : (() => { const v = mix[index]?.volume ?? 127, Icon = v === 0 ? VolumeX : v < 43 ? Volume : v < 86 ? Volume1 : Volume2; return <Icon className="size-3.5" aria-hidden="true" />; })()}
+              <span>{key === "volume" ? "Volume" : "Pan"}</span>
+              <input type="range" min="0" max="127" step="1" aria-label={`Track ${index + 1} ${key}`} value={mix[index]?.[key] ?? 64} className="w-28 cursor-pointer accent-primary"
+                onChange={(e) => { const value = Number(e.currentTarget.value); setMix((m) => m.map((x, i) => i === index ? { ...x, [key]: value } : x)); liveMix(index, { ...mix[index], [key]: value }); }}
+                onPointerUp={() => applyMix(index)} onKeyUp={() => applyMix(index)} />
+              <span className="w-12 tabular-nums">{key === "pan" ? panText(mix[index]?.pan ?? 64) : mix[index]?.volume}</span>
+            </label>)}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px]" data-music-track-plays>
+            <span className="text-muted-foreground">Plays</span>
+            {text ? <span className="text-muted-foreground">{text}</span>
+              : when.variants.map((v: any) => <span key={v.variant} className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5">
+                on Sound Trigger {v.variant}: {v.text}
+                {canPaint && <button type="button" className="cursor-pointer text-muted-foreground hover:text-foreground" aria-label={`Paint Sound Trigger variant ${v.variant}`} title={`Paint Sound Trigger variant ${v.variant} on the open track's collision, where this should start`} onClick={() => onPaintTrigger(v.variant)}><Paintbrush className="size-3" /></button>}
+              </span>)}
+          </div>
+          <TrackWaveform clip={clip} index={index} elapsed={elapsed} active={on} onPlay={(at) => { setElapsed(at); void play(index, at); }} />
+        </div>;
+      })}
+    </div>
+    {triggers && !canPaint && <p className="m-0 mt-1.5 text-[11px] text-muted-foreground">Open the track to paint its Sound Triggers from here.</p>}
+  </div>;
 }

@@ -10,6 +10,8 @@ import { centrelineCrossings, crossingPairs, lowCrossings } from './road-crossin
 import { curveCorner, roundedSegmentXZ } from './curve-radius.js';
 import { limitRoadClearance } from './road-clearance.js';
 import { smoothRoadWidths } from './road-widths.js';
+import { addReplayCameras } from './cameras.js';
+import { buildShortcuts, linkSections, placeScenery, shortcutWallGaps } from './track-branches.js';
 
 // MKW forces a respawn whenever the kart's world Y is below zero, regardless
 // of KCL. Generator heights are relative to this safe world-space baseline.
@@ -32,6 +34,8 @@ export const DEFAULT_PARAMS = {
   itemRows: 2,
   boostPads: 1,
   boostLength: 1200,
+  scenery: 'none',
+  shortcuts: [],
   laps: 3,
   walls: true,
   autoBridges: false,
@@ -62,6 +66,36 @@ export const PRESETS = {
   Kidney: () => ring(10, 20000, 14000, () => 0, (t) => 1 - 0.35 * Math.max(0, Math.cos(t)) ** 2),
   Hilly: () => ring(12, 24000, 18000, (t) => 1500 + Math.sin(t * 3) * 1500),
   Random: () => ring(10, 22000, 18000, () => Math.round(Math.random() * 6) * 300, () => 0.7 + Math.random() * 0.45),
+};
+
+// Complete starts for a track: a shape with the look, road and scenery that go with it. All of it can
+// still be changed afterwards.
+export const TEMPLATES = {
+  'Grand Prix circuit': {
+    help: 'A fast oval on asphalt: wide road, boost pads, trees.',
+    points: () => PRESETS.Oval(),
+    params: { style: 'circuit', roadWidth: 3800, offroadWidth: 1800, wallHeight: 700, itemRows: 2, boostPads: 2, scenery: 'light', laps: 3 },
+  },
+  'Mountain rally': {
+    help: 'Up and down on dirt: a narrower road, wide verges, thick woods.',
+    points: () => ring(12, 24000, 18000, (t) => 1000 + Math.sin(t * 3) * 900),
+    params: { style: 'rally', roadWidth: 2800, offroadWidth: 2400, wallHeight: 500, itemRows: 2, boostPads: 1, scenery: 'dense', laps: 3 },
+  },
+  'Desert dunes': {
+    help: 'Sand everywhere with one tight turn and palm trees.',
+    points: () => PRESETS.Kidney(),
+    params: { style: 'desert', roadWidth: 3400, offroadWidth: 3000, wallHeight: 500, itemRows: 2, boostPads: 2, scenery: 'light', laps: 3 },
+  },
+  'Snow valley': {
+    help: 'A snowy road with barriers, going up and down through pines.',
+    points: () => ring(12, 26000, 17000, (t) => 800 + Math.sin(t * 2) * 750),
+    params: { style: 'snow', roadWidth: 3200, offroadWidth: 1600, wallHeight: 700, itemRows: 2, boostPads: 1, scenery: 'light', laps: 3 },
+  },
+  'Castle crossing': {
+    help: 'Stone paving and a road that crosses itself over a bridge.',
+    points: () => PRESETS['Figure eight'](),
+    params: { style: 'castle', roadWidth: 3000, offroadWidth: 1400, wallHeight: 900, itemRows: 2, boostPads: 1, scenery: 'light', laps: 3 },
+  },
 };
 
 function ring(n, rx, rz, height, radius = () => 1) {
@@ -132,7 +166,7 @@ export function sampleSpline(points, step, maxSamples = 32768) {
   return { samples: out, length: total, parameters };
 }
 
-// The UI supplies a tolerance in world units corresponding to two screen pixels.
+// The UI supplies a tolerance in world units corresponding to three screen pixels.
 export function pointsFromStroke(stroke, options = {}) {
   return fitFreehand(stroke, options, sampleSpline);
 }
@@ -399,11 +433,15 @@ export function roadFrames(samples, params = {}) {
   });
 }
 
+export const GOAL_VIEW = { zoomStart: 85, zoomEnd: 40, zoomSpeed: 30, viewStart: [-30, -1, 550], viewEnd: [-5, 1, 0] };
+
 export function generateTrack(points, params = {}) {
   const P = { ...DEFAULT_PARAMS, ...params };
   const { samples, length, sampleStep } = trackSamples(points, P);
   P.step = sampleStep;
   const n = samples.length, frames = roadFrames(samples, P);
+  const { shortcuts, problems: shortcutProblems } = buildShortcuts(frames, P);
+  const wallGaps = shortcutWallGaps(frames, shortcuts, P);
   const yaw = (dx, dz) => Math.round((Math.atan2(dx, dz) * 180) / Math.PI * 100) / 100;
 
   // Boost pads: samples on the straightest parts of the track.
@@ -489,10 +527,14 @@ export function generateTrack(points, params = {}) {
       const up = (p) => [p[0], p[1] + P.wallHeight, p[2]];
       const lb0 = P.offroadWidth > 0 ? f.LO : f.L, lb1 = P.offroadWidth > 0 ? g.LO : g.L;
       const rb0 = P.offroadWidth > 0 ? f.RO : f.R, rb1 = P.offroadWidth > 0 ? g.RO : g.R;
-      tri(lb0, lb1, up(lb1), 0x000C, 'wall', [v0, 0, v1, 0, v1, 1]);
-      tri(lb0, up(lb1), up(lb0), 0x000C, 'wall', [v0, 0, v1, 1, v0, 1]);
-      tri(rb0, up(rb1), rb1, 0x000C, 'wall', [v0, 0, v1, 1, v1, 0]);
-      tri(rb0, up(rb0), up(rb1), 0x000C, 'wall', [v0, 0, v0, 1, v1, 1]);
+      if (!wallGaps.has(`${i}:1`)) {
+        tri(lb0, lb1, up(lb1), 0x000C, 'wall', [v0, 0, v1, 0, v1, 1]);
+        tri(lb0, up(lb1), up(lb0), 0x000C, 'wall', [v0, 0, v1, 1, v0, 1]);
+      }
+      if (!wallGaps.has(`${i}:-1`)) {
+        tri(rb0, up(rb1), rb1, 0x000C, 'wall', [v0, 0, v1, 1, v1, 0]);
+        tri(rb0, up(rb0), up(rb1), 0x000C, 'wall', [v0, 0, v0, 1, v1, 1]);
+      }
     }
     // The track is a solid deck rather than a zero-thickness ribbon. Side
     // faces and its underside make the actual spline heights readable.
@@ -530,6 +572,34 @@ export function generateTrack(points, params = {}) {
             && Math.hypot(other.c[0] - center[0], other.c[2] - center[2]) < other.half + P.offroadWidth + 350;
         });
         if (!blocked) support(center, f.c[1] - depth);
+      }
+    }
+  }
+
+  // Shortcuts: road with its underside and walls, open where they meet the main road.
+  for (const { frames: branch } of shortcuts) {
+    const flag = P.trickable ? 0x2000 : 0;
+    let along = 0;
+    const open = Math.max(3, Math.ceil(P.roadWidth * 1.5 / P.step));
+    for (let i = 0; i + 1 < branch.length; i++) {
+      const f = branch[i], g = branch[i + 1], step = Math.hypot(g.c[0] - f.c[0], g.c[2] - f.c[2]);
+      const v0 = along / P.roadWidth, v1 = (along + step) / P.roadWidth, u0 = along / 900, u1 = (along + step) / 900;
+      along += step;
+      tri(f.L, f.R, g.R, flag, 'road', [0, v0, 1, v0, 1, v1]);
+      tri(f.L, g.R, g.L, flag, 'road', [0, v0, 1, v1, 0, v1]);
+      const lf = lower(f.L), lg = lower(g.L), rf = lower(f.R), rg = lower(g.R);
+      face(f.L, g.L, lg, 'foundation', [u0, 0, u1, 0, u1, 1]);
+      face(f.L, lg, lf, 'foundation', [u0, 0, u1, 1, u0, 1]);
+      face(f.R, rg, g.R, 'foundation', [u0, 0, u1, 1, u1, 0]);
+      face(f.R, rf, rg, 'foundation', [u0, 0, u0, 1, u1, 1]);
+      face(lf, lg, rg, 'foundation', [0, u0, 0, u1, 1, u1]);
+      face(lf, rg, rf, 'foundation', [0, u0, 1, u1, 1, u0]);
+      if (P.walls && P.wallHeight > 0 && i >= open && i + 1 < branch.length - open) {
+        const up = (p) => [p[0], p[1] + P.wallHeight, p[2]];
+        tri(f.L, g.L, up(g.L), 0x000C, 'wall', [v0, 0, v1, 0, v1, 1]);
+        tri(f.L, up(g.L), up(f.L), 0x000C, 'wall', [v0, 0, v1, 1, v0, 1]);
+        tri(f.R, up(g.R), g.R, 0x000C, 'wall', [v0, 0, v1, 1, v1, 0]);
+        tri(f.R, up(f.R), up(g.R), 0x000C, 'wall', [v0, 0, v0, 1, v1, 1]);
       }
     }
   }
@@ -593,7 +663,9 @@ export function generateTrack(points, params = {}) {
   cps.push(gates[0]);
   for (let i = 0; i < n; i += cpStep) appendGates(i, Math.min(n, i + cpStep));
   cps[0].type = 0;
-  for (let k = 1; k <= P.keyCheckpoints && cps.length > P.keyCheckpoints + 1; k++) cps[Math.round((k * cps.length) / (P.keyCheckpoints + 1))].type = k;
+  // Key checkpoints only where every driver passes: a shortcut must not skip one.
+  const shared = shortcuts.length ? cps.filter((cp) => !shortcuts.some((s) => cp._i >= s.i && cp._i < s.j)) : cps;
+  for (let k = 1; k <= P.keyCheckpoints && shared.length > P.keyCheckpoints + 1; k++) shared[Math.round((k * shared.length) / (P.keyCheckpoints + 1))].type = k;
 
   // Respawns every N checkpoints (placed slightly after the checkpoint so they are "behind" the next ones).
   cps.forEach((cp, ci) => {
@@ -603,10 +675,32 @@ export function generateTrack(points, params = {}) {
     j.id = kmp.JGPT.length;
     kmp.JGPT.push(j);
   });
-  cps.forEach((cp, ci) => { cp.respawn = Math.floor(ci / P.respawnEvery); delete cp._i; });
-  const ckGroup = make.group(cps);
-  ckGroup.prev = [0]; ckGroup.next = [0];
-  kmp.CKPT.push(ckGroup);
+  cps.forEach((cp, ci) => { cp.respawn = Math.floor(ci / P.respawnEvery); });
+  if (shortcuts.length) {
+    // Each shortcut has its own gates and respawn point.
+    const branchGates = shortcuts.map((shortcut) => {
+      const { frames: branch } = shortcut, every = Math.max(1, Math.round(P.checkpointSpacing / P.step));
+      const middle = branch[branch.length >> 1];
+      const respawn = make.JGPT([middle.c[0], middle.c[1] + 10, middle.c[2]], [0, yaw(middle.t[0], middle.t[1]), 0]);
+      respawn.id = kmp.JGPT.length;
+      kmp.JGPT.push(respawn);
+      const gates = [];
+      for (let b = Math.max(1, every >> 1); b < branch.length - 1; b += every) {
+        const f = branch[b], wide = f.half + 300;
+        const gate = make.CKPT([f.c[0] + f.left[0] * wide, f.c[2] + f.left[1] * wide], [f.c[0] - f.left[0] * wide, f.c[2] - f.left[1] * wide]);
+        gate.respawn = respawn.id;
+        gates.push(gate);
+      }
+      return gates;
+    });
+    const linked = linkSections(make.group, cps, (cp) => cp._i, shortcuts, (s) => branchGates[s]);
+    for (const group of linked) { for (const point of group.points) delete point._i; kmp.CKPT.push(group); }
+  } else {
+    cps.forEach((cp) => { delete cp._i; });
+    const ckGroup = make.group(cps);
+    ckGroup.prev = [0]; ckGroup.next = [0];
+    kmp.CKPT.push(ckGroup);
+  }
 
   // Enemy and item routes along the centerline.
   const enStep = Math.max(1, Math.ceil(n / 255), Math.round(P.enemySpacing / P.step));
@@ -616,13 +710,28 @@ export function generateTrack(points, params = {}) {
     // Stay inside the checkpoint sector rather than exactly on its border,
     // where the game's float precision can classify the point as out of bounds.
     const pos = f.c.map((v, k) => v + (g.c[k] - v) * .1);
-    en.push({ ...make.ENPT(pos), width: Math.max(8, Math.round(f.half / 100)) });
-    it.push({ ...make.ITPT([...pos]), width: Math.max(8, Math.round(f.half / 100)) });
+    en.push({ ...make.ENPT(pos), width: Math.max(8, Math.round(f.half / 100)), _i: i });
+    it.push({ ...make.ITPT([...pos]), width: Math.max(8, Math.round(f.half / 100)), _i: i });
   }
-  const eg = make.group(en); eg.prev = [0]; eg.next = [0];
-  const ig = make.group(it); ig.prev = [0]; ig.next = [0];
-  kmp.ENPT.push(eg);
-  kmp.ITPT.push(ig);
+  if (shortcuts.length) {
+    const branchPoints = (makePoint) => (s) => {
+      const { frames: branch } = shortcuts[s], every = Math.max(1, Math.round(P.enemySpacing / P.step)), out = [];
+      for (let b = Math.max(1, every >> 1); b < branch.length - 1; b += every) out.push({ ...makePoint([...branch[b].c]), width: Math.max(8, Math.round(branch[b].half / 100)) });
+      return out;
+    };
+    for (const [list, section, makePoint] of [[en, kmp.ENPT, make.ENPT], [it, kmp.ITPT, make.ITPT]]) {
+      for (const group of linkSections(make.group, list, (p) => p._i, shortcuts, branchPoints(makePoint))) {
+        for (const point of group.points) delete point._i;
+        section.push(group);
+      }
+    }
+  } else {
+    for (const point of [...en, ...it]) delete point._i;
+    const eg = make.group(en); eg.prev = [0]; eg.next = [0];
+    const ig = make.group(it); ig.prev = [0]; ig.next = [0];
+    kmp.ENPT.push(eg);
+    kmp.ITPT.push(ig);
+  }
 
   // Store positions along/across the road, so boxes follow height and width edits.
   const itemPositions = Array.isArray(P.itemBoxPositions) ? P.itemBoxPositions :
@@ -639,6 +748,10 @@ export function generateTrack(points, params = {}) {
     kmp.GOBJ.push(make.GOBJ(0x65, pos)); itemBoxes.push({ t, offset, pos });
   }
 
+  // Scenery beside the road, standing on the ground the model lays out.
+  const scenery = placeScenery(frames, P, groundY);
+  for (const { kind, pos, yaw: turn } of scenery) kmp.GOBJ.push({ ...make.GOBJ(kind.id, pos), rot: [0, turn, 0] });
+
   // Cameras: an opening shot of the start and a goal camera.
   const start = frames[0];
   const opPos = [start.c[0] - start.t[0] * 6000 + start.left[0] * 3000, start.c[1] + 2500, start.c[2] - start.t[1] * 6000 + start.left[1] * 3000];
@@ -653,9 +766,12 @@ export function generateTrack(points, params = {}) {
   kmp.POTI.push(introRoute);
   const goalPos = [start.c[0] + start.t[0] * 3000, start.c[1] + 800, start.c[2] + start.t[1] * 3000];
   const goal = make.CAME(goalPos);
-  goal.type = 0; goal.zoomStart = goal.zoomEnd = 40; goal.viewStart = [...start.c]; goal.viewEnd = [...start.c];
+  // The view of a goal camera is near the kart, not a place on the track: every original track has
+  // these small values. World coordinates aim it far away, and the finishing kart leaves the picture.
+  Object.assign(goal, GOAL_VIEW, { type: 0, viewStart: [...GOAL_VIEW.viewStart], viewEnd: [...GOAL_VIEW.viewEnd] });
   kmp.CAME.push(op, goal);
   kmp.extras.CAME = 0;
+  addReplayCameras(kmp);
 
   return {
     verts: Float32Array.from(verts),
@@ -665,6 +781,9 @@ export function generateTrack(points, params = {}) {
     boosts: [...boost].map((i) => ({ t: i / n, pos: [...frames[i].c], yaw: yaw(...frames[i].t) })),
     itemBoxes,
     length,
+    shortcuts: shortcuts.map(({ i, j, length: size }) => ({ from: i / n, to: j / n, length: size })),
+    shortcutProblems,
+    sceneryFiles: [...new Map(scenery.map(({ kind }) => [kind.file, { file: kind.file, track: kind.track, id: kind.id }])).values()],
   };
 }
 

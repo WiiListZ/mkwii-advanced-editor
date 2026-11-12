@@ -13,10 +13,10 @@ mkdirSync(folder, { recursive: true });
 copyFileSync(join(game, "sound", "strm", "n_Farm_n.brstm"), file);
 const original = new Uint8Array(await Bun.file(file).arrayBuffer());
 const settings = mkdtempSync(join(tmpdir(), "mkwii-audio-loop-settings-"));
-await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true }));
+await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((resolve) => { worker.onmessage = (e) => e.data?.type === "ready" && resolve(e.data.port); worker.postMessage({ type: "start", token: "audio-loop", settingsDir: settings }); });
-const browser = await puppeteer.launch({ executablePath: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", headless: true });
+const browser = await puppeteer.launch({ executablePath: process.env.MKWII_TEST_BROWSER || "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", headless: true });
 try {
   const page = await browser.newPage();
   const errors: string[] = [];

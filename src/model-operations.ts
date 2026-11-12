@@ -1506,7 +1506,7 @@ export async function importOBJModel(data: Uint8Array, objPath: string, target: 
   for (const vertex of vertices) for (let i = 0; i < 3; i++) { min[i] = Math.min(min[i], vertex[i]); max[i] = Math.max(max[i], vertex[i]); }
   const longest = Math.max(...max.map((v, i) => v - min[i]));
   const scale = longest > 0 && longest < 100 ? 500 / longest : 1;
-  const oldNames = new Set(model.objects.map((o: any) => o.name));
+  const oldNames = new Set<string>(model.objects.map((o: any) => o.name));
   const stem = basename(objPath, extname(objPath)).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 24) || "Imported";
   const unique = uniqueName(stem, oldNames);
   const dir = await mkdtemp(join(tmpdir(), "mkwii-obj-import-"));

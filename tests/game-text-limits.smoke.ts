@@ -19,7 +19,7 @@ setFilePath(fixture, "message/Common.bmg", createBMG([[0x2328, "Mario"], [0x238c
 setFilePath(fixture, "message/Menu.bmg", createBMG([[0x7d1, "Back"], [0xbb8, "Grand Prix"], [0xbf4, "A Grand Prix for beginners (karts only)."], [0x157f, "This course is not available yet.\n\nIf you earn enough trophies in\nGrand Prix mode, you can unlock\nnew courses to race on."]]));
 setFilePath(fixture, "message/Race.bmg", createBMG([[0x3eb, "Continue"], [0x401, "Please wait a moment, the other players are still racing..."]]));
 await Bun.write(archive, buildU8(fixture));
-await Bun.write(join(temp, "settings.json"), JSON.stringify({ tourDone: true, workspace: files, keepBackups: false }));
+await Bun.write(join(temp, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false, workspace: files, keepBackups: false }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
 const check = (ok: boolean, text: string) => { if (!ok) throw new Error(text); console.log(`ok  ${text}`); };

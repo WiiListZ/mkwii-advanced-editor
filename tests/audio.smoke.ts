@@ -6,7 +6,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseBRSTM, decodeBRSTM } from "../web/js/formats/brstm.js";
-import { parseBRSAR, listWaves, readWave } from "../web/js/formats/brsar.js";
+import { parseBRSAR, listWaves, readWave, streamSound, streamTrackCount } from "../web/js/formats/brsar.js";
 import { encodeWAV } from "../web/js/editor/audio.js";
 
 const game = process.env.MKWII_GAME_DIR;
@@ -23,16 +23,23 @@ const replacement = join(temp, "tone.wav");
 await Bun.write(replacement, encodeWAV([tone, tone], rate));
 
 const settings = mkdtempSync(join(tmpdir(), "mkwii-audio-settings-"));
-await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true }));
+await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((r) => { worker.onmessage = (e) => e.data?.type === "ready" && r(e.data.port); worker.postMessage({ type: "start", token: "audio", settingsDir: settings }); });
-const browser = await puppeteer.launch({ executablePath: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", headless: true, args: ["--autoplay-policy=no-user-gesture-required"], protocolTimeout: 240000 });
+const browser = await puppeteer.launch({ executablePath: process.env.MKWII_TEST_BROWSER || "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", headless: true, args: ["--autoplay-policy=no-user-gesture-required"], protocolTimeout: 240000 });
 const errors: string[] = [];
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let saveName = "";
 try {
   const page = await browser.newPage();
   page.on("pageerror", (e) => errors.push(e.stack || e.message));
+  // The sources playing now, to know that one stops when it should.
+  await page.evaluateOnNewDocument(() => {
+    const active = (window as any).activeSources = new Set();
+    const start = AudioBufferSourceNode.prototype.start, stop = AudioBufferSourceNode.prototype.stop;
+    AudioBufferSourceNode.prototype.start = function (...args: any[]) { active.add(this); this.addEventListener("ended", () => active.delete(this)); return start.apply(this, args as any); };
+    AudioBufferSourceNode.prototype.stop = function (...args: any[]) { active.delete(this); return stop.apply(this, args as any); };
+  });
   await page.setViewport({ width: 1400, height: 900 });
   await page.setRequestInterception(true);
   let intercept = true;
@@ -98,18 +105,20 @@ try {
   console.log("decoded lengths", seconds);
   await click("Koopa Cape · normal");
   await page.waitForFunction(() => document.body.innerText.includes("4 tracks"));
-  await click("Separate tracks", "button");
+  // Every track is there at once, with when the game plays it: Koopa Cape's third is the underwater music.
   await page.waitForFunction(() => document.body.innerText.includes("Track 4"));
-  if (!(await page.evaluate(() => [...document.querySelectorAll('button')].find((button) => button.textContent?.includes('Separate tracks'))?.getAttribute('aria-expanded') === 'true'))) throw new Error("Separate tracks did not expand");
-  const trackRow = await page.evaluateHandle(() => [...document.querySelectorAll("div")].find((d) => d.className.includes("min-h-10") && d.textContent?.includes("Track 3")) || null);
-  const trackPlay = await (trackRow.asElement() as any).$("button");
+  const plays = await page.$eval('[data-music-track="3"] [data-music-track-plays]', (e) => e.textContent || "");
+  if (!plays.includes("Sound Trigger 3") || !plays.includes("underwater")) throw new Error(`Track 3 does not say when it plays: ${plays}`);
+  if (!(await page.$eval("[data-music-room]", (e) => e.textContent || "")).includes("the game plays 4")) throw new Error("The room the game keeps for Koopa Cape's music is not shown");
+  const trackRow = await page.$('[data-music-track="3"]');
+  const trackPlay = await (trackRow as any).$("button");
   await trackPlay.click(); await wait(400); await trackPlay.click();
   if (await page.$$eval('button[aria-label^="Seek and play track"]', (buttons) => buttons.length) !== 4) throw new Error("Per-track waveforms missing");
   await (await page.$('button[aria-label="Seek and play track 3"]'))!.click();
-  await page.waitForFunction(() => [...document.querySelectorAll("div")].some((d) => d.className.includes("min-h-10") && d.textContent?.includes("Track 3") && d.textContent?.includes("Stop")));
+  await page.waitForFunction(() => document.querySelector('[data-music-track="3"]')?.textContent?.includes("Stop"));
   await trackPlay.click();
   saveName = "koopa_track_3.brstm";
-  const trackExport = await (trackRow.asElement() as any).$("button[title='Export track 3']");
+  const trackExport = await (trackRow as any).$("button[title='Export track 3']");
   await trackExport.click();
   await click("BRSTM", '[role="menuitem"]');
   for (let i = 0; i < 120 && !existsSync(join(exports, saveName)); i++) await wait(250);
@@ -117,17 +126,40 @@ try {
   const isolated = parseBRSTM(new Uint8Array(await Bun.file(join(exports, saveName)).arrayBuffer()));
   if (isolated.channels !== 2 || isolated.tracks.length !== 1) throw new Error("Export was not isolated");
   console.log("isolated track:", isolated.channels, "channels,", isolated.tracks.length, "track");
-  await click("Separate tracks", "button");
-  await page.waitForFunction(() => !document.body.innerText.includes("Track 4"));
-  if (!(await page.evaluate(() => [...document.querySelectorAll('button')].find((button) => button.textContent?.includes('Separate tracks'))?.getAttribute('aria-expanded') === 'false'))) throw new Error("Separate tracks did not collapse");
   await click("Moo Moo Meadows · normal");
   await page.waitForFunction(() => document.body.innerText.includes("Loops from"));
   // Replace the music, then a voice.
-  await click("Replace…");
+  await click("Replace…", '[role="dialog"] button');
   await page.waitForFunction(() => document.body.innerText.includes("Loop start (seconds)"));
   await click("Replace", '[role="dialog"] button', true);
   await page.waitForFunction(() => document.body.innerText.includes("Modified (not saved)"), { timeout: 120000 });
   console.log("music replacement prepared");
+  // A second track for Moo Moo Meadows' music, which the game plays with one: it says so, and makes room.
+  await page.waitForFunction(() => document.querySelector("[data-music-room]")?.textContent?.includes("the game plays 1"), { timeout: 60000 });
+  if (!(await page.$eval('[data-music-track="1"] [data-music-track-plays]', (e) => e.textContent || "")).includes("all the time")) throw new Error("A single-track music does not say it plays all the time");
+  await click("Add a track…");
+  await page.waitForFunction(() => document.body.innerText.includes("revo_kart.brsar is changed to play 2"));
+  await click("Use it", '[role="dialog"] button', true);
+  await page.waitForSelector('[data-music-track="2"]', { timeout: 120000 });
+  console.log("track added");
+  // Its pan changed while the music plays: heard at once, and it goes on playing.
+  await click("Play mix", '[role="dialog"] button');
+  await page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"] button')].some((b) => b.textContent?.trim() === "Stop"));
+  await page.focus('input[aria-label="Track 2 pan"]');
+  for (let i = 0; i < 20; i++) await page.keyboard.press("ArrowLeft");
+  await wait(800);
+  if (!(await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].some((b) => b.textContent?.trim() === "Stop")))) throw new Error("Changing a track's pan stopped the music");
+  if (!(await page.$eval('[data-music-track="2"]', (e) => e.textContent || "")).includes("L 20")) throw new Error("The pan does not show where it is");
+  console.log("pan changed while playing");
+  // Choosing another music stops it, also after the pan change that kept it playing.
+  await click("Koopa Cape · normal");
+  await page.waitForSelector('[data-music-track="4"]', { timeout: 60000 });
+  await wait(500);
+  const still = await page.evaluate(() => (window as any).activeSources.size);
+  if (still) throw new Error(`${still} sources still play after choosing another music`);
+  await click("Moo Moo Meadows · normal");
+  await page.waitForSelector('[data-music-track="2"]', { timeout: 60000 });
+  console.log("choosing another music stops the one playing");
   await click("Sound effects and voices", '[role="tab"]');
   await page.waitForFunction(() => document.body.innerText.includes("VO_MR_ATK"), { timeout: 30000 })
     .catch(async () => { throw new Error("Sound archive did not load: " + (await page.evaluate(() => document.body.innerText.slice(0, 1200))) + " page errors: " + errors.join(" | ")); });
@@ -138,17 +170,17 @@ try {
   await click("VO_MR_ATK");
   await page.waitForFunction(() => /16\D?000 Hz/.test(document.body.innerText), { timeout: 60000 });
   console.log("voice loaded");
-  await click("Replace…");
+  await click("Replace…", '[role="dialog"] button');
   await page.waitForFunction(() => document.body.innerText.includes("Volume (%)"));
   await click("Replace", '[role="dialog"] button', true);
-  await page.waitForFunction(() => /Save 2/.test(document.body.innerText), { timeout: 120000 });
+  await page.waitForFunction(() => /Save 3/.test(document.body.innerText), { timeout: 120000 });
   console.log("voice replacement prepared");
   await page.waitForFunction(() => document.querySelectorAll("[role=dialog]").length === 1);
   // Interception would slow the 100 MB upload of the sound archive to a crawl.
   intercept = false;
   await page.setRequestInterception(false);
-  await click("Save 2");
-  await page.waitForFunction(() => document.body.innerText.includes("2 sounds saved"), { timeout: 240000 })
+  await click("Save 3");
+  await page.waitForFunction(() => document.body.innerText.includes("3 sounds saved"), { timeout: 240000 })
     .catch(async () => { throw new Error("After save: " + (await page.evaluate(() => { const b = [...document.querySelectorAll("button")].find((x) => x.textContent?.trim().startsWith("Save")) as HTMLButtonElement; return `${b?.textContent} disabled=${b?.disabled} toasts=` + [...document.querySelectorAll("[data-sonner-toast]")].map((t) => (t as HTMLElement).innerText).join(" | "); })) + ` bak music=${existsSync(join(workspace, "sound", "strm", "n_Farm_n.brstm.bak"))} brsar=${existsSync(join(workspace, "sound", "revo_kart.brsar.bak"))}`); });
 } finally {
   await browser.close(); worker.terminate(); rmSync(settings, { recursive: true, force: true });
@@ -159,11 +191,17 @@ try {
   const pcm = decodeBRSTM(music);
   console.log("music:", music.channels, "channels,", (music.samples / music.sampleRate).toFixed(2), "s, loop", music.loop, music.loopStart);
   if (Math.abs(music.samples / music.sampleRate - 3) > 0.01 || pcm[0].every((v) => v === 0)) throw new Error("Replaced music is wrong");
+  if (music.tracks.length !== 2 || music.channels !== 4 || pcm[2].every((v) => v === 0)) throw new Error(`The added track is not in the music: ${music.tracks.length} tracks, ${music.channels} channels`);
+  if (music.tracks[1].pan !== 44 || music.tracks[0].pan !== 64) throw new Error(`The pan was not saved: ${JSON.stringify(music.tracks)}`);
   const archive = parseBRSAR(new Uint8Array(await Bun.file(join(workspace, "sound", "revo_kart.brsar")).arrayBuffer()));
   const voice = readWave(archive, listWaves(archive).find((w: any) => w.name === "VO_MR_ATK"));
   console.log("voice:", voice.sampleRate, "Hz,", (voice.channels[0].length / voice.sampleRate).toFixed(2), "s");
   if (Math.abs(voice.channels[0].length / voice.sampleRate - 3) > 0.01) throw new Error("Replaced voice is wrong");
   if (!existsSync(join(workspace, "sound", "revo_kart.brsar.bak"))) throw new Error("No backup of the sound archive");
+  const room = streamSound(archive, "n_Farm_n.brstm");
+  console.log("room for Moo Moo Meadows' music:", room.stream.channels, "channels,", streamTrackCount(room.stream), "tracks");
+  if (room.stream.channels !== 4 || streamTrackCount(room.stream) !== 2) throw new Error("The sound archive does not make room for the added track");
+  if (streamTrackCount(streamSound(archive, "n_Farm_F.brstm").stream) !== 1) throw new Error("The final-lap music's room changed too");
   console.log(errors.length ? "ERRORS:\n" + errors.join("\n") : "No page errors");
   if (errors.length) process.exitCode = 1;
 } finally { rmSync(temp, { recursive: true, force: true }); }

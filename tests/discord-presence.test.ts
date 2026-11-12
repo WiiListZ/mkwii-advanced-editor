@@ -22,7 +22,7 @@ async function discordServer(handshake = true) {
     connections++; sockets.add(socket); socket.on("error", () => {}); socket.on("close", () => sockets.delete(socket));
     let pending = Buffer.alloc(0);
     socket.on("data", (data) => {
-      pending = Buffer.concat([pending, data]);
+      pending = Buffer.concat([pending, typeof data === "string" ? Buffer.from(data) : data]);
       while (pending.length >= 8 && pending.length >= pending.readUInt32LE(4) + 8) {
         const opcode = pending.readUInt32LE(), size = pending.readUInt32LE(4);
         const message = JSON.parse(pending.toString("utf8", 8, 8 + size)); pending = pending.subarray(8 + size);

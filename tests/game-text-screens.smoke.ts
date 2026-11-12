@@ -8,7 +8,7 @@ const out = process.argv[2] || tmpdir();
 const game = process.env.MKWII_GAME_DIR;
 if (!game) throw new Error("Set MKWII_GAME_DIR to the extracted game's files folder");
 const settings = mkdtempSync(join(tmpdir(), "mkwii-gt-"));
-await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true }));
+await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((r) => { worker.onmessage = (e) => e.data?.type === "ready" && r(e.data.port); worker.postMessage({ type: "start", token: "gt", settingsDir: settings }); });
 const browser = await puppeteer.launch({ executablePath: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { dlopen, FFIType, ptr } from "bun:ffi";
+import { dlopen, FFIType, ptr, type Pointer } from "bun:ffi";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -80,7 +80,7 @@ if (process.platform === "win32") {
     const hwnd = user32.symbols.CreateWindowExW(0, ptr(cls), ptr(initialTitle), 0x00cf0000 /* WS_OVERLAPPEDWINDOW */, 100, 100, 800, 600, null, null, null, null);
     expect(hwnd).toBeTruthy();
     try {
-      const control = makeFrameless(hwnd!);
+      const control = makeFrameless(hwnd as Pointer);
       expect(control).toBeTruthy();
       // Sizing while hidden already gives a full-window frameless client area (sized to fit headless 1024x768 CI displays too).
       user32.symbols.SetWindowPos(hwnd, null, 0, 0, 900, 600, 0x16 /* SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE */);

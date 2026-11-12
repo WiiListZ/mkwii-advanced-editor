@@ -16,7 +16,7 @@ const trackDir = join(temp, "Race", "Course");
 mkdirSync(trackDir, { recursive: true });
 const track = join(trackDir, "beginner_course.szs");
 copyFileSync(join(game, "Race", "Course", "beginner_course.szs"), track);
-await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true }));
+await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((resolve) => { worker.onmessage = (event) => event.data?.type === "ready" && resolve(event.data.port); worker.postMessage({ type: "start", token: "collision", settingsDir: settings }); });
 const browser = await puppeteer.launch({ executablePath: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"], protocolTimeout: 240000 });

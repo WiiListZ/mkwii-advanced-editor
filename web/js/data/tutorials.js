@@ -204,6 +204,28 @@ export const TUTORIALS = [
     ],
   },
   {
+    id: 'music-tracks',
+    title: 'Music with several tracks, and when each plays',
+    summary: "Layers of a course's music that the game turns on and off as a kart drives, such as Koopa Cape's underwater music.",
+    steps: [
+      "Tools › Sounds and music (also on Home), Music tab. Choose a course's music: the normal version ends in _n, the final-lap version in _f. The Tracks section lists its tracks: each is a stereo layer, and the game plays them together.",
+      "Play a track alone with its Play button, or the whole music with Play mix. Volume and Pan set how loud each track is and where it sits, left to right; move them while it plays to hear the change at once. They are written into the file when you let go.",
+      "Replace… on a track changes only that track. Add a track… adds your own audio as a new one: it is fitted to the music's length (cut, or silent at the end) and loops with it. A music holds up to 4 tracks; the bin takes one out.",
+      "Read \"Plays\" under each track: it says when the game plays it. Only six course positions change tracks while a kart drives: Toad's Factory, Wario's Gold Mine, Koopa Cape, Dry Dry Ruins, Moonview Highway and Bowser's Castle. Elsewhere every track plays all the time, mixed together.",
+      "In those six, the change happens when a kart drives over Sound Trigger collision (KCL type 0x18), and what each variant does is fixed by the game for that position: on Koopa Cape, variant 3 plays the underwater music (track 3), 6 the riverside music (track 2), 5 the normal music again.",
+      "To set where a change happens, open the track first (one that goes in that position), then Sounds and music, and click the brush beside the variant under the track that should play: the window closes and the collision brush paints that Sound Trigger. Paint it across the road where the music should change, and the variant that brings the music back where it should end.",
+      "Do the same for the final-lap version (_f): the game switches to it on the last lap, and it has its own tracks.",
+      "Save writes the music and, when a track went beyond the room the game sets aside for that music, sound/revo_kart.brsar too (with a .bak copy of each on the first save).",
+    ],
+    tips: [
+      "The room: sound/revo_kart.brsar says how many tracks the game plays of each music (most have one). The Tracks heading shows it; adding beyond it makes that room larger for that music only, up to Koopa Cape's 4 tracks (8 channels), the most the game is known to play.",
+      "A track that no Sound Trigger plays, in one of the six positions, stays silent there. A Sound Trigger also changes echo and ambience sounds; the Plays notes say so where the tables do.",
+      "Dry Dry Ruins and one variant of Bowser's Castle change music without the tables saying which track: the editor says it is not documented rather than guess.",
+      "Taking a track out moves the ones after it up, so the same Sound Triggers then play other tracks.",
+      "Where each variant leads comes from the Sound Trigger tables of mkwiiki.org. Adding tracks is checked in the files the editor writes, not yet in the game: try it in Dolphin.",
+    ],
+  },
+  {
     id: 'save',
     title: 'Checking, saving and testing',
     summary: 'Before you try the track in the game.',

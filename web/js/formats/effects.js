@@ -161,6 +161,58 @@ export function parseBREFF(data) {
   };
 }
 
+// Rebuilds the file with this list of entries, each { name, bytes }. Layout, from the files: the
+// entry table right after the block's name, then the entries, keeping what is before the table.
+export function rebuildBREFF(data, list) {
+  const v = view(data), table = 0x18 + v.getUint32(0x18);
+  const names = list.map(({ name }) => [...name].map((c) => c.charCodeAt(0)));
+  // Name lengths include their terminating zero, padded as the original table does.
+  const tableSize = 8 + names.reduce((sum, name) => sum + 2 + (name.length + 1) + 8, 0);
+  const pad = (n) => (n + 3) & ~3;
+  const start = pad(tableSize);
+  let at = start;
+  const offsets = list.map(({ bytes }) => { const o = at; at += pad(bytes.length); return o; });
+  const out = new Uint8Array(table + at), w = view(out);
+  out.set(data.subarray(0, table));
+  w.setUint32(table, start);
+  w.setUint16(table + 4, list.length);
+  let p = table + 8;
+  list.forEach(({ bytes }, i) => {
+    w.setUint16(p, names[i].length + 1);
+    out.set(names[i], p + 2);
+    p += 2 + names[i].length + 1;
+    w.setUint32(p, offsets[i]);
+    w.setUint32(p + 4, bytes.length);
+    p += 8;
+    out.set(bytes, table + offsets[i]);
+  });
+  // The sizes at the start of the file and of its block, which counts from after its header.
+  w.setUint32(8, out.length);
+  w.setUint32(0x14, out.length - 0x18);
+  return out;
+}
+
+export const entryList = (data) => entries(data).entries.map((e) => ({ name: e.name, bytes: data.slice(e.offset, e.offset + e.size) }));
+
+// A copy of an emitter under a new name, after the original. How the game picks an effect's
+// emitters is not documented, so a new one may only play if the game asks for its name.
+export function duplicateBREFFEmitter(data, name, copyName) {
+  const list = entryList(data), index = list.findIndex((e) => e.name === name);
+  if (index < 0) throw new Error(`Emitter ${name} not found`);
+  if (list.some((e) => e.name === copyName)) throw new Error(`There is already an emitter ${copyName}`);
+  if (!/^[A-Za-z0-9_.-]{1,48}$/.test(copyName)) throw new Error('Emitter names use letters, digits, _ . and -');
+  list.splice(index + 1, 0, { name: copyName, bytes: list[index].bytes.slice() });
+  return rebuildBREFF(data, list);
+}
+
+export function removeBREFFEmitter(data, name) {
+  const list = entryList(data), index = list.findIndex((e) => e.name === name);
+  if (index < 0) throw new Error(`Emitter ${name} not found`);
+  if (list.length < 2) throw new Error('An effect needs at least one emitter');
+  list.splice(index, 1);
+  return rebuildBREFF(data, list);
+}
+
 // Returns a copy of the BREFF with one emitter or particle value changed.
 export function setBREFFValue(data, emitterName, group, key, value) {
   const fields = group === 'emitter' ? EMITTER_FIELDS : PARTICLE_FIELDS;

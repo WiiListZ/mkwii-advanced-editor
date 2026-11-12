@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ArrowRight, AudioLines, Box, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, Flame, FolderOpen, History, Languages, Mouse, PackagePlus, Pause, Play, Search, Settings, SlidersHorizontal, Sparkles, Trophy, Video, X, Clapperboard } from "lucide-react";
+import { Ghost, ArrowRight, AudioLines, Box, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, Flame, FolderOpen, History, Languages, Mouse, PackagePlus, Pause, Play, Search, Settings, SlidersHorizontal, Sparkles, Trophy, Video, X, Clapperboard } from "lucide-react";
 import { WorkspaceCard } from "./panels/WorkspaceCard";
 import { CommonSzsCard, ObjectDocumentationCard } from "./panels/GameFilesCards";
 import { Button } from "@/components/ui/button";
@@ -14,10 +14,11 @@ import { useEditor } from "./hooks";
 import { editor, hasBackend, PATH_KINDS } from "./editor";
 import { contextActions } from "./context-actions";
 import { Map2DPanel } from "./Map2DPanel";
+import { GhostPlayer } from "./dialogs/GhostDialog";
 import { IntroTimeline } from "./IntroTimeline";
 import { DISCORD_URL, DiscordIcon } from "./updates";
+import { ComparisonBar } from "./dialogs/TrackCompareDialog";
 import { api } from "../../js/api.js";
-import { DiscordActivityControl } from "./discord-activity";
 
 export function ViewportPanel() {
   const host = React.useRef<HTMLDivElement>(null);
@@ -45,7 +46,7 @@ export function ViewportPanel() {
     return () => { stop(); window.removeEventListener("drop", stop); window.removeEventListener("dragend", stop); window.removeEventListener("blur", stop); };
   }, []);
 
-  const timeline = ed.tab === "cameras" && !ed.homeVisible && !ed.isEmpty && !view2D;
+  const timeline = ed.tab === "cameras" && !ed.homeVisible && !ed.isEmpty && !view2D && !ed.ghostView;
   return (
     <div className="flex size-full flex-col">
       <div
@@ -64,11 +65,13 @@ export function ViewportPanel() {
         }}
       >
         <div ref={host} className={`absolute inset-0 [&>canvas]:block [&>canvas]:size-full [&>canvas]:outline-none ${view2D ? "invisible" : ""}`} />
-        {!ed.homeVisible && !view2D && <CameraInsetFrame />}
-        {!ed.homeVisible && !view2D && <IntroPlayer />}
+        {!ed.homeVisible && !view2D && !ed.ghostView && <CameraInsetFrame />}
+        {!ed.homeVisible && !view2D && !ed.ghostView && <IntroPlayer />}
+        {ed.ghostView && <GhostPlayer />}
+        {ed.comparison && !ed.homeVisible && !view2D && <ComparisonBar />}
         {(ed.homeVisible || ed.isEmpty) && <Welcome />}
         {!ed.homeVisible && !ed.isEmpty && view2D && <Map2DPanel />}
-        {!ed.homeVisible && !view2D && <div className="pointer-events-none absolute bottom-2 left-3 flex items-center gap-1.5 text-[11px] text-white/50 [text-shadow:0_1px_3px_#000]">
+        {!ed.homeVisible && !view2D && !ed.ghostView && <div className="pointer-events-none absolute bottom-2 left-3 flex items-center gap-1.5 text-[11px] text-white/50 [text-shadow:0_1px_3px_#000]">
           <Mouse className="size-3.5" /> Right-drag: free look · Middle-drag: pan · Wheel: zoom · Click view + WASD/QE: fly
         </div>}
         {dropping && (
@@ -79,7 +82,7 @@ export function ViewportPanel() {
             </div>
           </div>
         )}
-        <ViewportContextMenu />
+        {!ed.ghostView && <ViewportContextMenu />}
       </div>
       {timeline && <IntroTimeline />}
     </div>
@@ -126,6 +129,7 @@ function Welcome() {
     { icon: Box, title: "Characters and models", text: "Models, textures and animations", cmd: "assets", detail: "Edit game characters, object models, textures and animations" },
     ...(ed.workspace() ? [{ icon: Flame, title: "Effects", text: "Smoke, fire, sparks of every archive", cmd: "workspaceEffects", detail: "Edit the particle effects (smoke, fire, sparks…) of every track and archive in the game folder" }] : []),
     ...(ed.workspaceInfo?.common ? [{ icon: SlidersHorizontal, title: "Game data", text: "Stats, items, objects, cameras, Battle and GP settings", cmd: "gameParams", detail: "The data files of Race/Common.szs, every value explained: vehicle and character stats, item chances, object types and reactions, CPU drivers, vehicle parts and cameras (.bin), the camera before the countdown (.bcp), the physics of each vehicle (.bsp), the Battle settings (.kmg), the Grand Prix time limits (.krt) and the rumble patterns (.krm)" }] : []),
+    { icon: Ghost, title: "Ghost editor", text: "Change and record ghost files (.rkg)", cmd: "ghosts", detail: "Open the game's staff ghosts, those of a Dolphin save, your recorded ghosts and .rkg files, change their details and inputs, and record new ones in Dolphin" },
     { icon: PackagePlus, title: "Riivolution mod", text: "Mod folder for Riivolution or Dolphin", cmd: "riivolution", detail: "Turn your edited files into a mod folder for Riivolution or Dolphin, or edit a Riivolution XML" },
   ];
   return (
@@ -144,7 +148,6 @@ function Welcome() {
               <Button variant="ghost" size="sm" onClick={() => ed.cmd("help")}><CircleHelp /> Help</Button>
               <Button variant="ghost" size="sm" title="Join the editor's Discord server: help, questions and news" onClick={() => api.openUrl(DISCORD_URL)}><DiscordIcon /> Discord</Button>
             </div>
-            <DiscordActivityControl />
           </div>
         </header>
         {!ed.isEmpty && (

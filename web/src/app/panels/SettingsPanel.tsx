@@ -13,6 +13,7 @@ import { dialogs } from "../dialogs-store";
 import { WorkspaceCard } from "./WorkspaceCard";
 import { CommonSzsCard, ObjectDocumentationCard } from "./GameFilesCards";
 import type { Settings } from "../editor";
+import { DiscordActivityControl } from "../discord-activity";
 
 type SettingKey = keyof Settings;
 
@@ -62,6 +63,11 @@ export function SettingsPanel() {
       <SettingRow name="uiFont">{choices("uiFont", [["default", "Default"], ["game", "Mario Kart Wii"]])}</SettingRow>
     </div>
 
+    <h3 className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Discord</h3>
+    <div className="space-y-2">
+      <DiscordActivityControl />
+    </div>
+
     <h3 className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">3D view</h3>
     <div className="space-y-2">
       <SettingRow name="modelMode">{choices("modelMode", [["real", "Game models"], ["simple", "Simple models"], ["markers", "Markers only"]])}</SettingRow>
@@ -89,6 +95,7 @@ export function SettingsPanel() {
     <h3 className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Editing</h3>
     <div className="space-y-2">
       <SettingRow name="keepBackups">{toggle("keepBackups")}</SettingRow>
+      <SettingRow name="keepVersions">{toggle("keepVersions")}</SettingRow>
       <SettingRow name="dragToMove">{toggle("dragToMove")}</SettingRow>
       <SettingRow name="hideMoveArrows">{toggle("hideMoveArrows")}</SettingRow>
       <SettingRow name="textureBrushSize">{number("textureBrushSize", 1, 128)}</SettingRow>

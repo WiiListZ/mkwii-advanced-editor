@@ -1,14 +1,19 @@
 // Local HTTP server (runs in a worker): serves the UI and gives it access to files on disk.
 // Listens on 127.0.0.1 only, and every API call must carry the token generated at startup.
 
-import { appendFile, cp, mkdir, mkdtemp, copyFile, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { appendFile, cp, mkdir, mkdtemp, copyFile, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname, basename, resolve, sep } from "node:path";
 import { assets } from "./embedded.gen.ts";
 import { folderDialog, openDialog, saveDialog, revealInExplorer, openInBrowser, type FileFilter } from "./dialogs.ts";
 import { convert3DToBRRES, deleteBRRESModel, duplicateBRRESModel, exportBRRESModel, import3DModel, importBRRESPart, listModelAnimations, parseTriangleRanges } from "./model-operations.ts";
 import { importResourceAnimation } from "./asset-operations.ts";
-import { buildGeneratedTrackModels } from "./generated-track-models.ts";
+import { buildGeneratedTrackModels, buildMinimapModel } from "./generated-track-models.ts";
+import { findDolphin, findGame, launchDolphin } from "./dolphin.ts";
+import { deleteRecordedGhost, findSaves, readRecordedPath, GhostCapture, listGameGhosts, listRecordedGhosts, listSaveGhosts, saveGhostFile, trackGhostSlots } from "./ghost-capture.ts";
+import { readCurrentKart, readCurrentRacedGhost, readCurrentRaceGhost, readGameState } from "./dolphin-memory.ts";
+import { GhostReplay } from "./ghost-replay.ts";
+import { computeGhostPath, KINOKO_ROW } from "./ghost-path.ts";
 import { generatedTexturePreviews } from "./generated-materials.ts";
 import { indexArchives, readArchiveFile } from "./archive-library.ts";
 import { decodeWiimmArchive } from "./wiimm-archives.ts";
@@ -20,6 +25,7 @@ import packageJson from "../package.json" with { type: "json" };
 import { ReleaseUpdater } from "./updater.ts";
 import { EditorWindows } from "./editor-windows.ts";
 import { DiscordPresence, type EditorActivity } from "./discord-presence.ts";
+import { listVersions, readVersion, restoreVersion, saveVersion } from "./track-versions.ts";
 import { CupTrackDrafts } from "./cup-track-drafts.ts";
 import { createSnapshot, deleteSnapshot, listSnapshots, restoreSnapshot } from "./snapshots.ts";
 // @ts-ignore - plain JS module shared with the UI
@@ -43,6 +49,14 @@ const MIME: Record<string, string> = {
 // Can be overridden by the "start" message (used by tests to keep the real settings untouched).
 let settingsDir = join(process.env.APPDATA || process.env.HOME || ".", "MKWiiAdvancedEditor");
 let settingsFile = join(settingsDir, "settings.json");
+// Tests turn this off with the "start" message, so that a Dolphin open on the same computer is left alone.
+let watchDolphin = true;
+const ghostCapture = new GhostCapture(undefined, () => watchDolphin ? readGameState() : { dolphin: false, game: null, stage: null },
+  () => join(settingsDir, "recorded-ghosts"), () => watchDolphin ? readCurrentRaceGhost() : null,
+  () => watchDolphin ? readCurrentKart() : null);
+// Reads the path of any ghost by having the game race it (ghost-replay.ts).
+const ghostReplay = new GhostReplay(() => join(settingsDir, "ghost-replay.json"), () => join(settingsDir, "recorded-ghosts"),
+  (index) => watchDolphin ? readCurrentKart(index) : null, () => watchDolphin ? readCurrentRacedGhost() : null);
 let updater: ReleaseUpdater;
 let editorWindows = new EditorWindows();
 const discordPresence = new DiscordPresence();
@@ -58,6 +72,12 @@ async function readSettings(): Promise<Record<string, unknown>> {
     return {};
   }
 }
+
+// Set up here because settingsDir, which the recorded ghosts live under, is only known at start.
+const recordedGhostsFolder = () => join(settingsDir, "recorded-ghosts");
+
+// Bytes for a Response: arrays read here are backed by an ordinary ArrayBuffer, which is what its type wants said.
+const binary = (data: Uint8Array) => data as Uint8Array<ArrayBuffer>;
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
@@ -143,10 +163,11 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         setTimeout(() => windowDocuments.delete(pendingId), 300000).unref();
         target.searchParams.set("document", documentId);
       } else {
-        const body = await req.json() as { path?: string; create?: string };
+        const body = await req.json() as { path?: string; create?: string; ghost?: string };
         if (body.path) {
           if (!existsSync(body.path) || !(await stat(body.path)).isFile()) return json({ error: "Track file not found" }, 404);
           target.searchParams.set("open", resolve(body.path));
+          if (body.ghost) { target.searchParams.set("ghost", resolve(body.ghost)); target.searchParams.set("view", "visual"); }
         } else if (body.create === "generator" || body.create === "empty") target.searchParams.set("new", body.create);
         else return json({ error: "Choose a track or create a new one" }, 400);
       }
@@ -181,7 +202,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       const id = url.searchParams.get("id") || "", doc = windowDocuments.get(id);
       if (!doc) return json({ error: "This track transfer is no longer available" }, 404);
       windowDocuments.delete(id);
-      return new Response(doc.data, { headers: { "content-type": "application/octet-stream", "x-file-name": encodeURIComponent(doc.name),
+      return new Response(binary(doc.data), { headers: { "content-type": "application/octet-stream", "x-file-name": encodeURIComponent(doc.name),
         ...(doc.created ? { "x-track-created": encodeURIComponent(JSON.stringify(doc.created)) } : {}) } });
     }
 
@@ -293,7 +314,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       const settings = await readSettings();
       const data = await readArchiveFile(filePath, url.searchParams.get("file") || "", settingsDir,
         [String(settings.commonPath || ""), String(settings.workspace || ""), String(settings.partsFolder || "")]);
-      return new Response(data, { headers: { "content-type": "application/octet-stream" } });
+      return new Response(binary(data), { headers: { "content-type": "application/octet-stream" } });
     }
 
     case "decode-archive": {
@@ -303,7 +324,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         String(settings.workspace || ""), String(settings.partsFolder || "")];
       const bytes = filePath ? null : new Uint8Array(await req.arrayBuffer());
       const data = await decodeWiimmArchive(filePath || null, bytes, settingsDir, sourcePaths);
-      return new Response(data, { headers: { "content-type": "application/octet-stream" } });
+      return new Response(binary(data), { headers: { "content-type": "application/octet-stream" } });
     }
 
     case "read": {
@@ -324,12 +345,29 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         if (!existsSync(backup)) await copyFile(filePath, backup);
         else backup = null;
       }
+      // Each save keeps what it replaces, as one of the track's versions.
+      const history = Number(url.searchParams.get("history") || 0);
+      if (history > 0) {
+        try { saveVersion(settingsDir, filePath, history); } catch { /* the save itself matters more */ }
+      }
       await Bun.write(filePath, data);
       if (url.searchParams.get("edited") === "1") {
         await mkdir(settingsDir, { recursive: true });
         await appendFile(join(settingsDir, "edited-files.log"), JSON.stringify(resolve(filePath)) + "\n");
       }
       return json({ ok: true, size: data.length, backup });
+    }
+
+    case "versions": {
+      if (!filePath) return json({ error: "Missing path" }, 400);
+      return json(listVersions(settingsDir, filePath));
+    }
+
+    case "version": {
+      if (!filePath) return json({ error: "Missing path" }, 400);
+      const id = url.searchParams.get("id") || "";
+      if (req.method === "POST") return json(restoreVersion(settingsDir, filePath, id, Number(url.searchParams.get("kept")) || undefined));
+      return new Response(readVersion(settingsDir, filePath, id), { headers: { "content-type": "application/octet-stream" } });
     }
 
     case "duplicate-model": {
@@ -341,7 +379,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         url.searchParams.get("part") || "",
         triple("center"), triple("delta"), parseTriangleRanges(url.searchParams.get("tris")),
       );
-      return new Response(result, { headers: { "content-type": "application/octet-stream" } });
+      return new Response(binary(result), { headers: { "content-type": "application/octet-stream" } });
     }
 
     case "delete-animation": {
@@ -389,13 +427,13 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       const target = (url.searchParams.get("target") || "").split(",").map(Number);
       const warnings: string[] = [];
       const result = await import3DModel(new Uint8Array(await req.arrayBuffer()), url.searchParams.get("path") || "", target, url.searchParams.get("animation") || "", warnings);
-      return new Response(result, { headers: { "content-type": "application/octet-stream", "x-import-warnings": encodeURIComponent(JSON.stringify(warnings)) } });
+      return new Response(binary(result), { headers: { "content-type": "application/octet-stream", "x-import-warnings": encodeURIComponent(JSON.stringify(warnings)) } });
     }
 
     case "convert-model-brres": {
       if (req.method !== "POST" || !filePath) return json({ error: "POST with a model path required" }, 400);
       const result = await convert3DToBRRES(filePath, url.searchParams.get("animation") || "", url.searchParams.get("name") || undefined);
-      return new Response(result, { headers: { "content-type": "application/octet-stream" } });
+      return new Response(binary(result), { headers: { "content-type": "application/octet-stream" } });
     }
 
     case "generated-track-textures": {
@@ -414,6 +452,11 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       }), { headers: { "content-type": "application/octet-stream" } });
     }
 
+    case "generated-minimap": {
+      if (req.method !== "POST") return json({ error: "POST required" }, 405);
+      return new Response(await buildMinimapModel(await req.json()), { headers: { "content-type": "application/octet-stream" } });
+    }
+
     case "import-part": {
       if (req.method !== "POST") return json({ error: "POST required" }, 405);
       // Body: source BRRES (sourceLength bytes) followed by the course_model.brres to patch.
@@ -428,18 +471,107 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         model: url.searchParams.get("model") || "", part: url.searchParams.get("part") || "",
         pieceCenter: triple("piece"), target: triple("target"), tag: url.searchParams.get("tag") || undefined, triangles: parseTriangleRanges(url.searchParams.get("tris")),
       });
-      return new Response(result.data, { headers: { "content-type": "application/octet-stream", "x-part-name": encodeURIComponent(result.name) } });
+      return new Response(binary(result.data), { headers: { "content-type": "application/octet-stream", "x-part-name": encodeURIComponent(result.name) } });
     }
 
     case "delete-model": {
       if (req.method !== "POST") return json({ error: "POST required" }, 405);
       const center = (url.searchParams.get("center") || "").split(",").map(Number);
       const result = await deleteBRRESModel(new Uint8Array(await req.arrayBuffer()), url.searchParams.get("model") || "", url.searchParams.get("part") || "", center, parseTriangleRanges(url.searchParams.get("tris")));
-      return new Response(result, { headers: { "content-type": "application/octet-stream" } });
+      return new Response(binary(result), { headers: { "content-type": "application/octet-stream" } });
     }
 
     case "exists":
       return json({ exists: existsSync(filePath), size: existsSync(filePath) ? (await stat(filePath)).size : 0 });
+
+    case "write-temp": {
+      // A small file another route is about to read, such as a generated model.
+      if (req.method !== "POST") return json({ error: "POST required" }, 405);
+      const name = (url.searchParams.get("name") || "file.bin").replace(/[^A-Za-z0-9_.-]/g, "_");
+      const dir = await mkdtemp(join(tmpdir(), "mkwii-temp-"));
+      const target = join(dir, name);
+      await writeFile(target, new Uint8Array(await req.arrayBuffer()));
+      return json({ path: target });
+    }
+
+    case "remove-temp": {
+      if (req.method !== "POST") return json({ error: "POST required" }, 405);
+      const dir = dirname(resolve(filePath));
+      if (!dir.startsWith(join(resolve(tmpdir()), "mkwii-temp-"))) return json({ error: "Not a temporary file" }, 400);
+      await rm(dir, { recursive: true, force: true });
+      return json({ ok: true });
+    }
+
+    case "ghost-library": {
+      if (req.method === "GET") return json(listRecordedGhosts(recordedGhostsFolder()));
+      if (req.method !== "POST" || !filePath) return json({ error: "POST with a path required" }, 400);
+      deleteRecordedGhost(recordedGhostsFolder(), filePath);
+      return json({ ok: true });
+    }
+
+    case "ghost-slots": {
+      const settings = await readSettings();
+      return json(trackGhostSlots(String(settings.workspace || ""), Number(url.searchParams.get("track"))));
+    }
+
+    case "ghost-sources": {
+      const settings = await readSettings();
+      return json({
+        recorded: listRecordedGhosts(recordedGhostsFolder()),
+        game: listGameGhosts(String(settings.workspace || "")),
+        saves: findSaves().map((save) => ({ ...save, ghosts: listSaveGhosts(save.path) })),
+      });
+    }
+
+    case "ghost-path": {
+      // The path the ghost sent drives, on the track given (the game folder's own by default): from
+      // Kinoko when it reaches the ghost's own time, as the game does; else the one read from the game
+      // in Dolphin, if there is one; else Kinoko's all the same, saying from which lap it is not the
+      // game's. None when none of these can be had.
+      if (req.method !== "POST") return json({ error: "POST required" }, 405);
+      const ghost = new Uint8Array(await req.arrayBuffer());
+      const settings = await readSettings();
+      const reply = (path: Uint8Array, source: string, extra: Record<string, string> = {}) =>
+        new Response(binary(path), { headers: { "content-type": "application/octet-stream", "x-path-source": source, ...extra } });
+      let computed = null;
+      try { computed = await computeGhostPath(settingsDir, ghost, String(settings.workspace || ""), url.searchParams.get("track") || undefined); }
+      catch { /* not to be worked out here: the other ways remain */ }
+      if (computed?.synced) return reply(computed.path, "kinoko", { "x-path-synced": "1", "x-path-row": String(KINOKO_ROW) });
+      const recorded = readRecordedPath(recordedGhostsFolder(), ghost);
+      if (recorded) return reply(recorded, "game");
+      if (computed) return reply(computed.path, "kinoko", { "x-path-synced": "0", "x-path-from": String(computed.from ?? 0), "x-path-row": String(KINOKO_ROW) });
+      return new Response(null, { status: 204 });
+    }
+
+    case "ghost-replay": {
+      if (req.method === "GET") return json(ghostReplay.status());
+      if (req.method !== "POST") return json({ error: "POST required" }, 405);
+      if (url.searchParams.get("action") === "stop") return json(ghostReplay.stop());
+      const settings = await readSettings();
+      try { return json(ghostReplay.start(new Uint8Array(await req.arrayBuffer()), String(settings.workspace || ""))); }
+      catch (e: any) { return json({ error: e.message }, 400); }
+    }
+
+    case "ghost-save-file": {
+      if (!filePath) return json({ error: "A save path is required" }, 400);
+      return new Response(saveGhostFile(filePath, url.searchParams.get("key") || ""), { headers: { "content-type": "application/octet-stream" } });
+    }
+
+    case "ghost-capture": {
+      if (req.method === "GET") return json(ghostCapture.status());
+      if (req.method !== "POST") return json({ error: "POST required" }, 405);
+      return json(url.searchParams.get("action") === "start" ? ghostCapture.start() : ghostCapture.stop());
+    }
+
+    case "dolphin": {
+      const settings = await readSettings();
+      const exe = findDolphin(String(settings.dolphinPath || "")), game = findGame(String(settings.workspace || ""), String(settings.dolphinGame || ""));
+      if (req.method === "GET") return json({ exe, game });
+      if (!exe) return json({ error: "Dolphin was not found" }, 400);
+      if (!game) return json({ error: "No game to open" }, 400);
+      launchDolphin(exe, game);
+      return json({ ok: true, exe, game });
+    }
 
     case "reveal":
       revealInExplorer(filePath);
@@ -460,7 +592,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         // windows save choices for different objects at the same time.
         if (patch.collisionCopyChoices && typeof patch.collisionCopyChoices === "object" && !Array.isArray(patch.collisionCopyChoices)) {
           const choices = Object.fromEntries(Object.entries(patch.collisionCopyChoices).filter(([, value]) => typeof value === "boolean"));
-          next.collisionCopyChoices = Object.keys(choices).length ? { ...(previous.collisionCopyChoices || {}), ...choices } : {};
+          next.collisionCopyChoices = Object.keys(choices).length ? { ...((previous.collisionCopyChoices as Record<string, boolean>) || {}), ...choices } : {};
         }
         await mkdir(settingsDir, { recursive: true });
         const temporary = `${settingsFile}.${crypto.randomUUID()}.tmp`;
@@ -500,6 +632,9 @@ self.onmessage = async (e: MessageEvent) => {
       settingsDir = e.data.settingsDir;
       settingsFile = join(settingsDir, "settings.json");
     }
+    if (e.data.dolphin === false) watchDolphin = false;
+    // A staff ghost left replaced by an editor closed while reading a ghost's path goes back.
+    ghostReplay.recover();
     cupTracks = new CupTrackDrafts(settingsDir);
     updater = new ReleaseUpdater(packageJson.version, e.data.updateExecutable || null, settingsDir);
     void updater.cleanup();

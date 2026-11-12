@@ -3,7 +3,13 @@
 import { parseBRRES } from '../formats/brres.js';
 import { findFile } from '../formats/u8.js';
 import { cameraRouteIssues } from '../formats/kmp.js';
+import { geometryIssues } from './geometry-check.js';
+import { usageIssues } from './track-limits.js';
 import { fixIntroShots, introShotIssues } from './intro-keys.js';
+import { GOAL_VIEW } from './trackgen.js';
+
+// Original goal cameras stay within 550 units of the kart; a place on the track is much farther.
+const GOAL_VIEW_REACH = 2000;
 
 const segCross = (a, b, c, d) => {
   const o = (p, q, r) => Math.sign((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]));
@@ -141,6 +147,12 @@ export function validate(doc, ops, objectNames) {
     if (c.route !== 0xFF && c.route >= routeCount) add('error', `Camera uses missing route ${c.route}.`, c.uid);
   });
   for (const issue of cameraRouteIssues(k)) add('error', issue.message, k.CAME[issue.index].uid);
+  for (const goal of k.CAME.filter((c) => c.type === 0 && [...c.viewStart, ...c.viewEnd].some((v) => Math.abs(v) > GOAL_VIEW_REACH))) {
+    add('warning', 'The goal camera aims at a place on the track instead of near the kart: the kart can leave the picture when the race ends.', goal.uid, {
+      label: 'Use the view of the original tracks',
+      run: () => doc.change('Goal camera view', () => { Object.assign(goal, GOAL_VIEW, { viewStart: [...GOAL_VIEW.viewStart], viewEnd: [...GOAL_VIEW.viewEnd] }); }),
+    });
+  }
   if (!k.CAME.length) add('warning', 'No cameras: the intro and the replay/goal camera will not work properly.');
   for (const { index, problems } of introShotIssues(k)) {
     add('warning', `Intro camera ${index} plays differently in the game than in the preview: ${problems.join('; ')}.`, k.CAME[index].uid,
@@ -162,7 +174,9 @@ export function validate(doc, ops, objectNames) {
         const y = doc.heights.groundBelow(j.pos[0], j.pos[2], j.pos[1] + 500, 0);
         if (y === null) add('warning', 'Respawn point has no ground below it.', j.uid);
       }
+      for (const issue of geometryIssues(doc)) add(issue.level, issue.msg, issue.key);
     }
   }
+  for (const issue of usageIssues(doc)) add(issue.level, issue.msg);
   return issues;
 }

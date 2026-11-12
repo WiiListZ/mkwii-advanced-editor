@@ -15,7 +15,7 @@ const files = join(temp, "files"), original = join(files, "Race", "Course", "far
 let generated = "";
 mkdirSync(join(files, "Race", "Course"), { recursive: true });
 await Bun.write(original, "Original slot must stay unchanged until Apply");
-await Bun.write(join(temp, "settings.json"), JSON.stringify({ tourDone: true, workspace: files }));
+await Bun.write(join(temp, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false, workspace: files }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
 const check = (ok: boolean, message: string) => { if (!ok) throw new Error(message); console.log(`ok  ${message}`); };

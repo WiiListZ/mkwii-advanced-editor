@@ -20,26 +20,33 @@ export function documentationSource(ed: ReturnType<typeof useEditor>) {
 }
 
 // Sync the default documentation and show the last successful sync (automatic or manual).
-// A chosen JSON replaces the default; it can also be edited, restored or exported here.
+// A chosen JSON replaces the default; it can also be edited or exported here, and the default
+// restored while a JSON of the person's is in use.
+const linkClass = "inline-flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline";
 export function ObjectDocumentationButtons() {
   const ed = useEditor("settings", "doc");
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="secondary" disabled={ed.objectDocumentationSyncing} onClick={() => void ed.updateDefaultObjectDocumentation(undefined, true)} aria-label="Sync object documentation from GitHub" title="Download the latest object documentation from GitHub"><RefreshCw className={cn(ed.objectDocumentationSyncing && "animate-spin")} /> {ed.objectDocumentationSyncing ? "Syncing…" : "Sync"}</Button>
-        <p className="m-0 text-[11px] leading-relaxed text-muted-foreground" data-documentation-sync aria-live="polite" title="Last successful sync from GitHub, automatic or manual">
+    <div className="w-full space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="m-0 min-w-0 text-[11px] leading-relaxed text-muted-foreground" data-documentation-sync aria-live="polite" title="Last successful sync from GitHub, automatic or manual">
           Last sync: {ed.objectDocumentationUpdated
             ? <time dateTime={ed.objectDocumentationUpdated}>{new Date(ed.objectDocumentationUpdated).toLocaleString()}</time>
             : "Never"}
         </p>
+        <Button size="sm" variant="outline" className="shrink-0" disabled={ed.objectDocumentationSyncing} onClick={() => void ed.updateDefaultObjectDocumentation(undefined, true)} aria-label="Sync object documentation from GitHub" title="Download the latest object documentation from GitHub"><RefreshCw className={cn(ed.objectDocumentationSyncing && "animate-spin")} /> {ed.objectDocumentationSyncing ? "Syncing…" : "Sync"}</Button>
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="secondary" onClick={() => void ed.replaceObjectDocumentation()} title="Use a documentation JSON in place of the one in use now"><FolderOpen /> Replace with JSON…</Button>
-        <Button size="sm" variant="secondary" onClick={() => void dialogs.open("objectDocsEditor", {})} title="Edit the documentation JSON in use here, with a check as you type"><FileJson /> Edit JSON…</Button>
-        <Button size="sm" variant="ghost" disabled={!ed.usesCustomObjectDocumentation} onClick={() => void ed.restoreDefaultObjectDocumentation()} title={ed.usesCustomObjectDocumentation ? "Use the editor's own documentation again" : "The default documentation is already in use"}><RotateCcw /> Restore default</Button>
-        <Button size="sm" variant="ghost" onClick={() => void ed.exportObjectDocumentation()} title="Save the documentation in use as a JSON file, to edit it and choose it with Replace with JSON…"><Download /> Export JSON…</Button>
-        <Button size="sm" variant="ghost" onClick={() => void dialogs.open("help", { tab: "objectDocs" })}><CircleHelp /> JSON format</Button>
-        <Button size="sm" variant="ghost" onClick={() => void api.openUrl(OBJECT_INFO_REPO)} title="Help complete the default documentation: propose changes on GitHub (issues and pull requests to data/objects.json)"><GitPullRequest /> Contribute on GitHub</Button>
+      <div className="space-y-1">
+        <div className="text-[11px] text-muted-foreground">Documentation JSON</div>
+        <div className="grid grid-cols-3 gap-1.5">
+          <Button size="sm" variant="secondary" className="w-full" aria-label="Edit JSON…" onClick={() => void dialogs.open("objectDocsEditor", {})} title="Edit the documentation JSON in use here, with a check as you type"><FileJson /> Edit…</Button>
+          <Button size="sm" variant="secondary" className="w-full" aria-label="Replace with JSON…" onClick={() => void ed.replaceObjectDocumentation()} title="Use a documentation JSON in place of the one in use now"><FolderOpen /> Replace…</Button>
+          <Button size="sm" variant="secondary" className="w-full" aria-label="Export JSON…" onClick={() => void ed.exportObjectDocumentation()} title="Save the documentation in use as a JSON file, to edit it and choose it with Replace…"><Download /> Export…</Button>
+        </div>
+        {ed.usesCustomObjectDocumentation && <Button size="sm" variant="ghost" className="w-full justify-start" onClick={() => void ed.restoreDefaultObjectDocumentation()} title="Use the editor's own documentation again"><RotateCcw /> Restore default</Button>}
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <button type="button" className={linkClass} onClick={() => void dialogs.open("help", { tab: "objectDocs" })}><CircleHelp className="size-3" /> JSON format</button>
+        <button type="button" className={linkClass} onClick={() => void api.openUrl(OBJECT_INFO_REPO)} title="Help complete the default documentation: propose changes on GitHub (issues and pull requests to data/objects.json)"><GitPullRequest className="size-3" /> Contribute on GitHub</button>
       </div>
     </div>
   );
@@ -51,7 +58,7 @@ export function ObjectDocumentationCard({ className, brief }: { className?: stri
     <div className={cn("space-y-2 rounded-md border bg-muted/20 p-2.5", className)}>
       <div className="text-xs font-medium">Object documentation</div>
       <p className="m-0 text-[11px] leading-relaxed text-muted-foreground" data-documentation-source>In use: {documentationSource(ed)}.</p>
-      <p className={cn("m-0 text-[11px] leading-relaxed text-muted-foreground", brief && "short:hidden")}>Descriptions and setting names of the game objects. The default documentation is kept up to date from the <button type="button" className="cursor-pointer underline underline-offset-2 hover:text-foreground" onClick={() => api.openUrl(OBJECT_INFO_REPO)}>object-info repository</button>, where anyone can help complete it. A JSON you choose replaces it entirely; Restore default brings it back.</p>
+      <p className={cn("m-0 text-[11px] leading-relaxed text-muted-foreground", brief && "short:hidden")}>Descriptions and setting names of the game objects. The default documentation is kept up to date from the <button type="button" className="cursor-pointer underline underline-offset-2 hover:text-foreground" onClick={() => api.openUrl(OBJECT_INFO_REPO)}>object-info repository</button>, where anyone can help complete it. A JSON you choose replaces it entirely, until you restore the default.</p>
       <ObjectDocumentationButtons />
     </div>
   );

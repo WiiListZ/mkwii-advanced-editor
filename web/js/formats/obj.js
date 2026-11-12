@@ -33,6 +33,7 @@ export function parseOBJ(text) {
 }
 
 // Guesses a KCL flag from a material name (hex flag like "0x000C" / "_000C", or keywords).
+/** @param {string} material @returns {number} */
 export function guessFlag(material) {
   const m = material.match(/0x([0-9a-f]{1,4})/i) || material.match(/(?:^|_)([0-9a-f]{4})$/i);
   if (m) return parseInt(m[1], 16);

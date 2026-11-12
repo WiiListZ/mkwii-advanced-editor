@@ -10,7 +10,7 @@ if (!source) { console.log("Track path missing: skipped"); process.exit(0); }
 const dir = mkdtempSync(join(tmpdir(), "mkwii-texture-test-"));
 const track = join(dir, "paint-test.szs");
 copyFileSync(source, track);
-await Bun.write(join(dir, "settings.json"), JSON.stringify({ tourDone: true }));
+await Bun.write(join(dir, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((resolve) => {
   worker.onmessage = (e) => e.data?.type === "ready" && resolve(e.data.port);

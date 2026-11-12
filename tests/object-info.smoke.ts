@@ -11,7 +11,7 @@ import { DEFAULT_OBJECT_DOCUMENTATION_JSON, OBJECT_INFO_URL } from "../web/js/da
 
 const newer = { version: 1, objects: { itembox: { description: "Downloaded item box text", status: "documented", documented: 100 } } };
 const settings = mkdtempSync(join(tmpdir(), "mkwii-object-info-"));
-await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true }));
+await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((r) => { worker.onmessage = (e) => e.data?.type === "ready" && r(e.data.port); worker.postMessage({ type: "start", token: "objinfo", settingsDir: settings }); });
 const browser = await puppeteer.launch({ executablePath: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", headless: true });
@@ -103,7 +103,7 @@ try {
   const shipped = DEFAULT_OBJECT_DOCUMENTATION_JSON.objects as Record<string, any>;
   const mine = { ...shipped, kuribo: { ...shipped.kuribo, description: "My own Goomba notes" }, myObject: { description: "An object of mine" } };
   const update = { version: 1, objects: { ...shipped, itembox: { ...shipped.itembox, description: "Updated item box text" }, kuribo: { ...shipped.kuribo, description: "Updated Goomba text" } } };
-  await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true, customObjectDocumentation: { name: "my-docs.json", objects: mine, base: shipped } }));
+  await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false, customObjectDocumentation: { name: "my-docs.json", objects: mine, base: shipped } }));
   const page = await browser.newPage();
   await page.setRequestInterception(true);
   page.on("request", (q) => q.url() === OBJECT_INFO_URL

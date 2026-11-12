@@ -1,4 +1,5 @@
 import * as React from "react";
+import { addReplayCameras } from "../../../js/editor/cameras.js";
 import { ArrowDown, ArrowUp, BookOpen, Camera, Clapperboard, Crosshair, Eye, ListPlus, Play, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -75,6 +76,8 @@ export function CamerasPanel() {
 
       <SectionTitle>Other cameras</SectionTitle>
       <p className="mb-2 mt-0 text-[11px] leading-relaxed text-muted-foreground">Replay and goal cameras. Areas of type Camera choose which replay camera is used.</p>
+      {!k.AREA.some((area: any) => area.type === 0) && k.ENPT.length > 0 && <Button size="sm" variant="secondary" className="mb-2 w-full" title="One camera and one area for each stretch along the enemy route, as the original tracks have"
+        onClick={() => ed.doc.change("Add replay cameras", () => { addReplayCameras(k); })}>Add replay cameras</Button>}
       <div className="flex flex-col gap-0.5">
         {others.map(({ c, i }: any) => (
           <div key={c.uid} onClick={() => select(i)} onDoubleClick={() => ed.viewFromCamera(i)}

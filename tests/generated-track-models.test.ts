@@ -70,7 +70,7 @@ test.skipIf(process.platform !== "win32")("generated courses have persistent vis
     const source = out.model.tris[0].v;
     expect(points.some((_, i) => i % 3 === 0 && Math.hypot(points[i] - source[0], points[i + 1] - source[1], points[i + 2] - source[2]) < 2)).toBe(true);
     expect(sky.models[0].name).toBe("vrcorn");
-    const p = sky.models[0].objects[0].positions, a = Array.from(p.slice(0, 3)), b = Array.from(p.slice(3, 6)), c = Array.from(p.slice(6, 9));
+    const p = sky.models[0].objects[0].positions, a: number[] = Array.from(p.slice(0, 3)), b: number[] = Array.from(p.slice(3, 6)), c: number[] = Array.from(p.slice(6, 9));
     const u = b.map((v, i) => v - a[i]), v = c.map((v, i) => v - a[i]);
     const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
     expect(n.reduce((sum, value, i) => sum + value * (a[i] + b[i] + c[i]) / 3, 0)).toBeLessThan(0);

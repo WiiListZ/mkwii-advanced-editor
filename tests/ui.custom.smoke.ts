@@ -8,7 +8,7 @@ import { join } from "node:path";
 const [outDir = ".", folder] = process.argv.slice(2);
 if (!folder) { console.log("folder missing: skipped"); process.exit(0); }
 const testDir = mkdtempSync(join(tmpdir(), "mkwii-test-"));
-await Bun.write(join(testDir, "settings.json"), JSON.stringify({ tourDone: true }));
+await Bun.write(join(testDir, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((res) => {
   worker.onmessage = (e) => e.data?.type === "ready" && res(e.data.port);

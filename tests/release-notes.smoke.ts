@@ -27,7 +27,7 @@ if (shots) mkdirSync(shots, { recursive: true });
 const testDir = mkdtempSync(join(tmpdir(), 'mkwii-release-notes-'));
 mkdirSync(join(testDir, 'updates'));
 const record = join(testDir, 'updates', 'installed-release.json');
-await Bun.write(join(testDir, 'settings.json'), JSON.stringify({ tourDone: true }));
+await Bun.write(join(testDir, 'settings.json'), JSON.stringify({ tourDone: true, discordActivity: false }));
 await Bun.write(record, JSON.stringify({ version: packageJson.version, title: `v${packageJson.version}`, notes: NOTES,
   url: `https://github.com/WiiListZ/mkwii-advanced-editor/releases/tag/v${packageJson.version}`, shown: false }));
 const worker = new Worker(new URL('../src/server.ts', import.meta.url).href);
@@ -57,7 +57,7 @@ try {
   if (rendered.h2 < 1 || rendered.h3 !== 1 || rendered.nested !== 2 || rendered.ol !== 2 || rendered.strong < 4 || rendered.code !== 2 || rendered.raw || rendered.links.length !== 2)
     throw new Error(`Markdown not rendered: ${JSON.stringify(rendered)}`);
   if (shots) await page.screenshot({ path: join(shots, 'after-update.png') });
-  await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent?.trim() === 'Close')?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent?.trim() === 'Close')?.click());
   await page.waitForFunction(() => !document.querySelector('[role="dialog"]'));
   await Bun.sleep(300);
   if (!JSON.parse(readFileSync(record, 'utf8')).shown) throw new Error('Closing the notes did not mark them as read');
@@ -85,7 +85,7 @@ try {
   const offerRendered = await offer.evaluate(() => document.querySelectorAll('[role="alertdialog"] li').length);
   if (offerRendered < 4) throw new Error(`Update offer notes not rendered (${offerRendered} list items)`);
   if (shots) await offer.screenshot({ path: join(shots, 'update-offer.png') });
-  await offer.evaluate(() => [...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent?.trim() === 'Later')?.click());
+  await offer.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find((b) => b.textContent?.trim() === 'Later')?.click());
   await offer.waitForFunction(() => !document.querySelector('[role="alertdialog"]'));
   const clickText = async (selector: string, text: string) => {
     const handle = await offer.waitForFunction((s, t) => [...document.querySelectorAll(s)].find((e) => e.textContent?.trim() === t), {}, selector, text);
@@ -95,7 +95,7 @@ try {
   await clickText('button[role="menuitem"], [role="menubar"] button', 'Help');
   await clickText('[role="menuitem"]', 'About');
   await dialogWith('Updates from GitHub Releases');
-  if (!(await offer.evaluate((v) => [...document.querySelectorAll('[role="dialog"] button')].some((b) => b.textContent?.trim() === `What's new in ${v}`), packageJson.version)))
+  if (!(await offer.evaluate((v) => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].some((b) => b.textContent?.trim() === `What's new in ${v}`), packageJson.version)))
     throw new Error('About does not offer the notes of the installed version');
   await clickText('[role="dialog"] button', 'Release notes');
   await dialogWith("What's new in version 9.9.9");

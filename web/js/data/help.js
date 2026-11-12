@@ -293,6 +293,7 @@ export const TOOL_HELP = {
 };
 
 export const SETTINGS_HELP = {
+  keepVersions: { label: 'Keep earlier versions of tracks', help: 'On by default. Each time a track is saved, what the file held before is kept beside the editor\'s settings, up to the 20 most recent. File › Version history goes back to one, or compares with it.' },
   keepBackups: { label: 'Keep .bak backups', help: 'On by default. The first save of an existing track, game text archive, audio file, model archive or Riivolution XML keeps its original as a .bak file. Turning this off leaves any existing .bak files in place.' },
   modelMode: { label: '3D models', help: 'Real: the game\'s own models and textures (from the track and Common.szs). Simple: lightweight look-alike models. Markers: plain shapes, fastest on slow computers.' },
   displayMode: { label: 'Show', help: 'Model, Collision or both. The Collision tab switches to Both while it is open (and back to Model when it is left); a track without a model shows its collision.' },

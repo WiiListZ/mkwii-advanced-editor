@@ -31,7 +31,7 @@ test("a newer default documentation (downloaded) is used in place of the shipped
   try {
     expect(objectDocumentation(0x65, "itembox").description).toBe("Newer text");
     expect(defaultDocumentation().source).toEqual({ kind: "online", fetched: "2026-10-31T00:00:00Z" });
-    expect(defaultDocumentation().json).toBe(newer);
+    expect(defaultDocumentation().json as unknown).toBe(newer);
     // A JSON chosen by the person still comes first.
     expect(objectDocumentation(0x65, "itembox", { itembox: { description: "Mine" } }).description).toBe("Mine");
     expect(() => useDefaultDocumentation({ version: 2, objects: {} }, { kind: "online", fetched: "" })).toThrow();

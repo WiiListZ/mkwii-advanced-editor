@@ -13,7 +13,7 @@ import { buildU8, isU8, listFiles, parseU8 } from "../../../js/formats/u8.js";
 import { api } from "../../../js/api.js";
 import { TEXTURE_FORMATS } from "../../../js/formats/brres.js";
 import {
-  EMITTER_FIELDS, PARTICLE_FIELDS, breftTextureSupported, decodeBREFTTexture, parseBREFF, parseBREFT, replaceBREFTTexture, setBREFFValue,
+  EMITTER_FIELDS, PARTICLE_FIELDS, breftTextureSupported, decodeBREFTTexture, duplicateBREFFEmitter, parseBREFF, parseBREFT, removeBREFFEmitter, replaceBREFTTexture, setBREFFValue,
 } from "../../../js/formats/effects.js";
 import { editor, winPath } from "../editor";
 import { dialogs } from "../dialogs-store";
@@ -100,7 +100,17 @@ function EffectViewer({ effect, textureFile, breff, breft, only }: { effect: any
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     const fx = new EffectPreview(scene);
-    const resize = () => { const w = el.clientWidth || 1, h = el.clientHeight || 1; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); };
+    let width = 0, height = 0;
+    const resize = () => {
+      const w = el.clientWidth || 1, h = el.clientHeight || 1;
+      if (w === width && h === height) return;
+      width = w; height = h;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h; camera.updateProjectionMatrix();
+      // setSize clears the drawing buffer. ResizeObserver runs after the animation frame,
+      // so repaint now to keep a blank canvas from reaching the screen during a panel drag.
+      renderer.render(scene, camera);
+    };
     const observer = new ResizeObserver(resize); observer.observe(el); resize();
     let frame = 0, last = performance.now();
     const tick = (now: number) => {
@@ -259,6 +269,24 @@ export function EffectsDialog({ tree: archiveTree, archiveName, initialPath, onC
     close(true);
   };
   const write = (file: FileRef, next: Uint8Array, label: string) => history.record(file.path, file.data, next, label);
+  const duplicateEmitter = () => {
+    if (!group?.breff || !emitter) return;
+    const names = new Set(effect.emitters.map((e: any) => e.name));
+    let copy = `${emitter.name}_copy`;
+    for (let n = 2; names.has(copy); n++) copy = `${emitter.name}_copy${n}`;
+    try {
+      write(group.breff, duplicateBREFFEmitter(group.breff.data, emitter.name, copy), `Duplicate emitter ${emitter.name}`);
+      setSelection({ kind: "emitter", name: copy });
+    } catch (e: any) { toast.error("Could not duplicate the emitter", { description: e.message }); }
+  };
+  const removeEmitter = async () => {
+    if (!group?.breff || !emitter) return;
+    if (!await dialogs.confirm({ title: `Remove ${emitter.name}?`, description: "The game can crash if it asks for an emitter that is gone. Undo brings it back; try the result in Dolphin.", confirmLabel: "Remove", destructive: true })) return;
+    try {
+      write(group.breff, removeBREFFEmitter(group.breff.data, emitter.name), `Remove emitter ${emitter.name}`);
+      setSelection(null);
+    } catch (e: any) { toast.error("Could not remove the emitter", { description: e.message }); }
+  };
   const setValue = (groupName: "emitter" | "particle", key: string, value: any) => {
     if (!group?.breff || !emitter) return;
     try { write(group.breff, setBREFFValue(group.breff.data, emitter.name, groupName, key, value), `Edit effect ${emitter.name}`); }
@@ -332,6 +360,10 @@ export function EffectsDialog({ tree: archiveTree, archiveName, initialPath, onC
           <div className="flex min-h-0 max-h-48 flex-col border sm:max-h-none">
             <div className="min-h-0 flex-1 overflow-y-auto p-1">
               <div className="px-1 py-1 text-[11px] text-muted-foreground">{effect ? `${effect.emitters.length} emitters` : "No BREFF"}</div>
+              {emitter && <div className="flex gap-1 px-1 pb-1">
+                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[11px]" title="Add a copy of this emitter. How the game picks an effect's emitters is not documented, so a new one may only play if the game asks for its name." onClick={duplicateEmitter}>Duplicate</Button>
+                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[11px]" disabled={effect.emitters.length < 2} title="Remove this emitter. The game can crash if it asks for an emitter that is gone: try it in Dolphin." onClick={removeEmitter}>Remove</Button>
+              </div>}
               {effect?.emitters.map((e: any) => (
                 <button key={e.name} onClick={() => void choose({ kind: "emitter", name: e.name })} title={e.name}
                   className={cn("flex w-full cursor-pointer items-center gap-1.5 rounded px-2 py-1.5 text-left text-xs hover:bg-accent", selection?.kind === "emitter" && selection.name === e.name && "bg-accent")}>

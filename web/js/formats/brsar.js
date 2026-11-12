@@ -31,11 +31,15 @@ export function parseBRSAR(data) {
   const table = (o) => { const t = ref(o), n = r.u32(t); return Array.from({ length: n }, (_, i) => ref(t + 4 + i * 8)); };
   const sounds = table(ib).map((e, index) => {
     const type = r.u8(e + 0x16);
-    return { index, name: name(r.u32(e)), fileId: r.u32(e + 4), volume: r.u8(e + 0x14), type, waveEntry: type === 3 ? r.u32(ref(e + 0x18)) : -1 };
+    // A stream: how many channels the game sets aside for it, and which of its tracks it plays (bits).
+    const stream = type === 2 ? { at: ref(e + 0x18), channels: r.u16(ref(e + 0x18) + 4), tracks: r.u16(ref(e + 0x18) + 6) } : null;
+    return { index, name: name(r.u32(e)), fileId: r.u32(e + 4), volume: r.u8(e + 0x14), type, waveEntry: type === 3 ? r.u32(ref(e + 0x18)) : -1, stream };
   });
   const banks = table(ib + 8).map((e) => ({ name: name(r.u32(e)), fileId: r.u32(e + 4) }));
   const files = table(ib + 0x18).map((e, index) => ({
     index, entry: e, size: r.u32(e), waveSize: r.u32(e + 4),
+    // A file kept outside the archive (a stream's .brstm), by its path under sound/.
+    external: r.u32(e + 0x10) ? r.str(ib + r.u32(e + 0x10)) : '',
     positions: table(e + 0x14).map((p) => ({ group: r.u32(p), item: r.u32(p + 4) })),
   }));
   const groups = table(ib + 0x20).map((e, index) => ({
@@ -44,6 +48,25 @@ export function parseBRSAR(data) {
   }));
   const archive = { data, r, sounds, banks, files, groups };
   return archive;
+}
+
+// The stream sound that plays a .brstm, by its file name (as in sound/strm), or null.
+export function streamSound(archive, fileName) {
+  const want = String(fileName).split(/[\\/]/).pop().toLowerCase();
+  return archive.sounds.find((s) => s.stream && archive.files[s.fileId]?.external.split('/').pop().toLowerCase() === want) || null;
+}
+
+// The tracks a stream's bits let the game play.
+export const streamTrackCount = (stream) => { let n = 0; for (let bits = stream.tracks; bits; bits >>= 1) n += bits & 1; return n; };
+
+// The archive with a stream's room changed: how many channels the game sets aside for it, and how
+// many of its tracks it plays (the first ones). Only these two numbers change.
+export function setStreamRoom(archive, sound, channels, tracks) {
+  const data = archive.data.slice();
+  const v = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  v.setUint16(sound.stream.at + 4, channels);
+  v.setUint16(sound.stream.at + 6, (1 << tracks) - 1);
+  return parseBRSAR(data);
 }
 
 // Where a file's data and its wave archive are (first copy).

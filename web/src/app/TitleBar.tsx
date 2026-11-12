@@ -3,7 +3,7 @@ import {
   Archive, ArrowDownToDot, ArrowDownToLine, ArrowLeftRight, AudioLines, BookOpen, Box, Boxes, BrickWall, Bug, ChevronDown, ChevronLeft, ChevronRight,
   CircleHelp, Clapperboard, Cloud, Flame, ClipboardPaste, Compass, Copy, CopyPlus, Crosshair, Eye, FileOutput, FilePlus2, FileText, FileX, Flag, FlipHorizontal2,
   FolderCog, FolderOpen, Github, GraduationCap, History, House, Image as ImageIcon, ImageOff, ImagePlus, Import, Info, Keyboard, Languages, Layers,
-  Lightbulb, Link, ListChecks, ListOrdered, MapPin, Maximize, Minus, Mountain, PackageOpen, PackagePlus, Paintbrush, Pencil, Play, Plus, Puzzle, Redo2, Route, Save, SaveAll,
+  Lightbulb, Link, ListChecks, ListOrdered, Map as MapIcon, MapPin, Maximize, Minus, Mountain, PackageOpen, PackagePlus, Paintbrush, Pencil, Play, Plus, Puzzle, Redo2, Route, Save, SaveAll,
   Settings as SettingsIcon, Shapes, SlidersHorizontal, ShieldCheck, Sparkles, Square, SquareX, StretchHorizontal, Trash2, Undo2, Video, X,
   ScrollText, Download, Trophy,
 } from "lucide-react";
@@ -175,11 +175,12 @@ export function TitleBar() {
       <img src="icon.png" className="size-5 select-none" alt="" draggable={false} />
       <span className="mr-2 ml-1 whitespace-nowrap text-[13px] font-semibold tracking-tight">MKWii Advanced Editor</span>
       <span className="-ml-2 mr-2 text-[10px] text-muted-foreground">v{APP_VERSION}</span>
-      {!ed.homeVisible && <button type="button" aria-label="Home" title="Home" onClick={cmd("home")}
+      {ed.ghostView && <span className="text-xs text-muted-foreground">Ghost preview (beta)</span>}
+      {!ed.homeVisible && !ed.ghostView && <button type="button" aria-label="Home" title="Home" onClick={cmd("home")}
         className="flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded px-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">
         <House className="size-3.5" /><span className="hidden lg:inline">Home</span>
       </button>}
-      <Menubar className="h-full">
+      {!ed.ghostView && <Menubar className="h-full">
         {/* On Home only what works without a track is listed; the rest belongs to the 3D editor. */}
         <MenubarMenu>
           <MenubarTrigger>File</MenubarTrigger>
@@ -202,6 +203,7 @@ export function TitleBar() {
               <MenubarSeparator />
               <MenubarItem onSelect={cmd("save")}><Save /> Save <MenubarShortcut>Ctrl+S</MenubarShortcut></MenubarItem>
               <MenubarItem onSelect={cmd("saveAs")}><SaveAll /> Save as… <MenubarShortcut>Ctrl+Shift+S</MenubarShortcut></MenubarItem>
+              <MenubarItem onSelect={cmd("versions")} disabled={!d.filePath}><History /> Version history and compare…</MenubarItem>
               <MenubarSeparator />
               <MenubarItem onSelect={cmd("szsContents")}><Archive /> SZS contents…</MenubarItem>
             </>}
@@ -312,11 +314,21 @@ export function TitleBar() {
             <MenubarItem onSelect={cmd("assets")}><Box /> Characters and models…</MenubarItem>
             {!home && <MenubarItem onSelect={cmd("trackObjects")} disabled={!d.szs}><Boxes /> Track objects of this track…</MenubarItem>}
             {!home && <MenubarItem onSelect={cmd("sky")} disabled={!d.szs}><Cloud /> Sky…</MenubarItem>}
+            {!home && <MenubarItem onSelect={cmd("minimap")} disabled={!d.szs}><MapIcon /> Minimap (beta)…</MenubarItem>}
+            {!home && <MenubarItem onSelect={cmd("materials")} disabled={!d.szs}><Paintbrush /> Materials of this track…</MenubarItem>}
+            {!home && <MenubarItem onSelect={cmd("primitive")} disabled={!d.szs}><Shapes /> Add a primitive model (beta)…</MenubarItem>}
+            {!home && <MenubarItem onSelect={cmd("sculpt")} disabled={!d.szs}><Mountain /> Sculpt the track model (beta)…</MenubarItem>}
+            <MenubarItem onSelect={cmd("mapColour")} disabled={!ed.workspace()}><MapIcon /> Minimap colour of the game…</MenubarItem>
             {!home && <MenubarItem onSelect={cmd("effects")} disabled={!d.szs}><Sparkles /> Effects of this track…</MenubarItem>}
             {!home && <MenubarItem onSelect={cmd("lighting")} disabled={!d.szs}><Lightbulb /> Lighting of this track…</MenubarItem>}
+            {!home && <MenubarItem onSelect={cmd("fog")} disabled={!d.szs}><Cloud /> Fog of this track…</MenubarItem>}
             <MenubarItem onSelect={cmd("workspaceEffects")} disabled={!ed.workspace()}><Flame /> Effects in the game folder…</MenubarItem>
             <MenubarItem onSelect={cmd("gameParams")}><SlidersHorizontal /> Game data…</MenubarItem>
             <MenubarItem onSelect={cmd("riivolution")}><PackagePlus /> Riivolution mod…</MenubarItem>
+            <MenubarItem onSelect={cmd("dolphin")}><Play /> Open game in Dolphin</MenubarItem>
+            <MenubarItem onSelect={cmd("ghosts")}><History /> Ghost editor…</MenubarItem>
+            <MenubarItem onSelect={cmd("ghostRecord")}><Play /> Record a ghost…</MenubarItem>
+            {!home && <MenubarItem onSelect={cmd("trackGhosts")} disabled={!ed.workspace()}><History /> Ghosts of this track…</MenubarItem>}
             {!home && <>
               <MenubarItem onSelect={() => ed.watchIntro(0)} disabled={!d.kmp.CAME.length}><Clapperboard /> Watch intro</MenubarItem>
               <MenubarSeparator />
@@ -381,11 +393,11 @@ export function TitleBar() {
             <MenubarItem onSelect={cmd("about")}><Info /> About</MenubarItem>
           </MenubarContent>
         </MenubarMenu>
-      </Menubar>
+      </Menubar>}
       <div className="flex-1" />
       {/* Centred on the whole window, not on the space between the menus and the window buttons. */}
       <div className="pointer-events-none absolute inset-y-0 left-1/2 flex max-w-[34vw] -translate-x-1/2 items-center">
-        {ed.homeVisible || ed.isEmpty && !ed.trackFiles?.files.length ? null : ed.trackFiles?.files.length ? <TrackSwitcher /> : (
+        {ed.ghostView ? <div className="truncate text-xs text-muted-foreground">{d.fileName}</div> : ed.homeVisible || ed.isEmpty && !ed.trackFiles?.files.length ? null : ed.trackFiles?.files.length ? <TrackSwitcher /> : (
           <div className="truncate text-xs text-muted-foreground" title={d.filePath || "Not saved yet"}>
             {d.dirty && <span className="mr-1.5 inline-block size-1.5 rounded-full bg-primary align-middle" />}
             {d.fileName}

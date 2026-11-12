@@ -15,6 +15,7 @@ import { AREA_TYPE_HELP, KIND_HELP, fieldHelp } from "../../../js/data/help.js";
 import { settingDisplayValue, settingGuidance, settingStoredValue } from "../../../js/data/object-documentation.js";
 import { DocumentationStatus } from "./ObjectDocumentationView";
 import { findFile } from "../../../js/formats/u8.js";
+import { lookSummary, LOOKS } from "../../../js/editor/track-looks.js";
 import { useEditor } from "../hooks";
 import { editor, hex, KIND_LABEL, SECTION_LABEL } from "../editor";
 import { Hint, InfoTip, KIND_COLOR, KIND_ICON } from "../common";
@@ -196,6 +197,7 @@ export function Inspector() {
   }
   const animation = ed.selectedAnimation && !infos.length ? ed.courseAnimations().find((a: any) => a.name === ed.selectedAnimation) : null;
   if (animation) return <AnimationInspector animation={animation} />;
+  if (ed.selectedLook && !infos.length && ed.doc.szs) return <LookInspector id={ed.selectedLook} />;
 
   if (!infos.length) {
     return (
@@ -320,6 +322,32 @@ export function TrackSettingsEditor() {
 }
 
 // CHR0 animation of the track model: playback, frame, loop and delete.
+// Lighting, fog or effects selected in the track list: what the track holds of it.
+function LookInspector({ id }: { id: string }) {
+  const ed = useEditor("ui", "doc");
+  const look = (LOOKS as any)[id], { rows, note } = lookSummary(ed.doc, id);
+  return (
+    <div className="flex flex-col gap-3 p-4" data-look-inspector={id}>
+      <div className="flex items-baseline gap-2">
+        <div className="min-w-0 flex-1 truncate text-sm font-semibold">{look.title}</div>
+        <span className="shrink-0 text-[11px] text-muted-foreground">{look.kind}</span>
+      </div>
+      {ed.settings.showDescriptions && <p className="m-0 text-xs leading-relaxed text-muted-foreground">{look.what}</p>}
+      <Button size="sm" variant="secondary" className="self-start" onClick={() => ed.cmd(id)}>Edit {look.title.toLowerCase()}…</Button>
+      {rows.length > 0 && <div className="flex flex-col border-t">
+        {rows.map((row: any) => (
+          <div key={row.label} className="flex items-baseline gap-2 border-b py-1.5 text-xs" data-look-row={row.label}>
+            <span className="w-1/3 min-w-0 shrink-0 truncate font-medium" title={row.label}>{row.label}</span>
+            {row.colour && <span className="size-3 shrink-0 translate-y-0.5 rounded-sm border" style={{ backgroundColor: row.colour }} title={row.colour} />}
+            <span className="min-w-0 flex-1 text-muted-foreground">{row.value}</span>
+          </div>
+        ))}
+      </div>}
+      {note && <p className="m-0 text-[11px] leading-relaxed text-muted-foreground">{note}</p>}
+    </div>
+  );
+}
+
 function AnimationInspector({ animation }: { animation: any }) {
   const ed = useEditor("doc", "ui", "settings");
   const [frame, setFrame] = React.useState(0);
@@ -430,7 +458,7 @@ function ModelInspector() {
   const textures = ed.selectedModelTextures();
   const [texture, setTexture] = React.useState(textures[0]?.name || "");
   const chosen = textures.find((t: any) => t.name === texture);
-  const supported = chosen && [0, 1, 2, 3, 4, 5, 6, 14].includes(chosen.format);
+  const supported = chosen && [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 14].includes(chosen.format);
   const modelBytes = ed.doc.szs && findFile(ed.doc.szs, "course_model.brres")?.data;
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -458,7 +486,8 @@ function ModelInspector() {
             <SelectTrigger className="w-full text-xs" aria-label="Texture to edit"><SelectValue placeholder="Choose texture" /></SelectTrigger>
             <SelectContent>{textures.map((t: any) => <SelectItem key={t.name} value={t.name}>{t.name} · {t.width}×{t.height}</SelectItem>)}</SelectContent>
           </Select>
-          {!supported && <p className="text-[11px] text-amber-400">This indexed texture format cannot be replaced with PNG yet.</p>}
+          {!supported && <p className="text-[11px] text-amber-400">This texture format cannot be replaced with PNG yet.</p>}
+          {chosen && [8, 9, 10].includes(chosen.format) && <p className="text-[11px] text-muted-foreground">Indexed texture: a PNG is reduced to the colours its palette can hold, or to the palette's own colours if other textures share it.</p>}
           {chosen && <TextureThumbnail texture={chosen} />}
           <Button size="sm" disabled={!supported || !modelBytes} onClick={() => dialogs.open("textureEditor", { name: texture })}><Paintbrush /> Edit texture…</Button>
           <Button size="sm" variant="secondary" disabled={!supported} onClick={() => ed.replaceSelectedTexture(texture)}><ImagePlus /> Replace entire texture with PNG…</Button>

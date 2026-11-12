@@ -111,7 +111,7 @@ export async function createCupTrack(label: string, destination?: string): Promi
   const res: any = await dialogs.open("generator", { hasSzs: false });
   if (!res) return null;
   const generated = await editor.withBusy("Building the cup's track…", async () => {
-    try { return await generateTrackArchive(res.points, res.params, null, (text) => { editor.busy = text; editor.bump("ui"); }); }
+    try { return await generateTrackArchive(res.points, res.params, null, (text) => { editor.busy = text; editor.bump("ui"); }, editor.workspace() ? editor.workspacePath("Race", "Course") : ""); }
     catch (e: any) { void dialogs.alert({ title: "Track generation failed", description: e.message }); return null; }
   });
   if (!generated) return null;

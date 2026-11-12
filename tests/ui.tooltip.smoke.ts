@@ -9,7 +9,7 @@ import { join, resolve, sep } from "node:path";
 const testDir = mkdtempSync(join(tmpdir(), "mkwii-tooltips-"));
 const files = join(testDir, "files");
 mkdirSync(join(files, "Race", "Course"), { recursive: true });
-await Bun.write(join(testDir, "settings.json"), JSON.stringify({ tourDone: true, workspace: files }));
+await Bun.write(join(testDir, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false, workspace: files }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
 const check = (ok: boolean, message: string) => { if (!ok) throw new Error(message); console.log(`ok  ${message}`); };

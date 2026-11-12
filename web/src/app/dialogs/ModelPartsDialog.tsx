@@ -435,13 +435,19 @@ function PartPreview({ brres, model, part, piece, context }: { brres: any; model
     controls.enableDamping = true;
     const grid = new THREE.GridHelper(1, 20, 0x3a4252, 0x252b36);
     scene.add(grid);
+    let width = 0, height = 0;
     const resize = () => {
       const w = el.clientWidth || 1, h = el.clientHeight || 1;
+      if (w === width && h === height) return;
+      width = w; height = h;
       renderer.setSize(w, h, false);
       renderer.domElement.style.width = "100%";
       renderer.domElement.style.height = "100%";
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+      // setSize clears the drawing buffer. ResizeObserver runs after the animation frame,
+      // so repaint now to keep a blank canvas from reaching the screen during a panel drag.
+      renderer.render(scene, camera);
     };
     const observer = new ResizeObserver(resize);
     observer.observe(el);

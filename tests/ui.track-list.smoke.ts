@@ -11,7 +11,7 @@ const dir = mkdtempSync(join(tmpdir(), "mkwii-track-list-"));
 const folder = join(dir, "files", "Race", "Course");
 await mkdir(folder, { recursive: true });
 for (let i = 0; i < 100; i++) await writeFile(join(folder, `${i}.szs`), new Uint8Array());
-await writeFile(join(dir, "settings.json"), JSON.stringify({ tourDone: true, workspace: join(dir, "files") }));
+await writeFile(join(dir, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false, workspace: join(dir, "files") }));
 let worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((resolve) => {
   worker.onmessage = (event) => event.data?.type === "ready" && resolve(event.data.port);

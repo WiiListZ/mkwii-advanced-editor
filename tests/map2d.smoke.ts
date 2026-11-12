@@ -11,7 +11,7 @@ if (!game || !existsSync(join(game, "Race", "Common.szs"))) {
   process.exit(0);
 }
 const temp = mkdtempSync(join(tmpdir(), "mkwii-map2d-"));
-await Bun.write(join(temp, "settings.json"), JSON.stringify({ tourDone: true }));
+await Bun.write(join(temp, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
 try {

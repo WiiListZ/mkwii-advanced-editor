@@ -8,7 +8,7 @@ import { join } from "node:path";
 const track = process.argv[2];
 if (!track) throw new Error("Pass a track SZS path");
 const settingsDir = mkdtempSync(join(tmpdir(), "mkwii-undo-stress-"));
-await Bun.write(join(settingsDir, "settings.json"), JSON.stringify({ tourDone: true }));
+await Bun.write(join(settingsDir, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((resolve) => {
   worker.onmessage = (e) => e.data?.type === "ready" && resolve(e.data.port);

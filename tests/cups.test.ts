@@ -102,14 +102,14 @@ describe("arrangement", () => {
     expect(isChanged(clean, MOO)).toBe(false);
     expect(planArrangement(clean).music).toEqual([]);
     const copy = planArrangement(setSlotMusic(clean, MALL, { type: "slot", id: MOO }));
-    expect(appliedMusic(copy, saved).n_Shopping32).toEqual({ from: "n_Circuit32", file: null });
+    expect((appliedMusic(copy, saved) as any).n_Shopping32).toEqual({ from: "n_Circuit32", file: null });
     expect(appliedMusic(plan, {}, [])).toEqual({}); // No file written: no new saved label.
   });
 
   test("saved music follows stream swaps and audio choices without reusing a changed source", () => {
     const file = { type: "file", path: "C:\\music\\song.wav", label: "My song" };
     const saved = { n_Farm: { from: null, file }, n_Shopping32: { from: "n_Kinoko", file: null } };
-    const next = appliedMusic(planArrangement(swapSlots(initialArrangement(), MOO, MALL)), saved);
+    const next: any = appliedMusic(planArrangement(swapSlots(initialArrangement(), MOO, MALL)), saved);
     expect(next.n_Farm).toEqual({ from: "n_Kinoko", file: null });
     expect(next.n_Shopping32).toEqual({ from: null, file });
     expect(plannedMusic(planArrangement(initialArrangement()), MALL, next).file).toEqual(file);
@@ -151,10 +151,10 @@ describe("arrangement", () => {
 
   test("replacement archives are checked", () => {
     const full = ["course.kmp", "course.kcl", "course_model.brres", "vrcorn_model.brres", "map_model.brres"];
-    expect(checkTrackArchive({ files: full, checkpoints: 20, starts: 1 }, false)).toEqual({ errors: [], warnings: [] });
+    expect(checkTrackArchive({ files: full, checkpoints: 20, starts: 1, kmp: null }, false)).toEqual({ errors: [], warnings: [] });
     expect(checkTrackArchive({ files: ["course.kmp", "course.kcl"], checkpoints: 20, starts: 1 }, false).errors.length).toBe(2);
-    expect(checkTrackArchive({ files: full, checkpoints: 0, starts: 1 }, false).errors.length).toBe(1);
-    expect(checkTrackArchive({ files: full, checkpoints: 0, starts: 1 }, true).errors.length).toBe(0);
+    expect(checkTrackArchive({ files: full, checkpoints: 0, starts: 1, kmp: null }, false).errors.length).toBe(1);
+    expect(checkTrackArchive({ files: full, checkpoints: 0, starts: 1, kmp: null }, true).errors.length).toBe(0);
   });
 
   test("a route-controlled intro without a valid route cannot be installed in a cup", () => {

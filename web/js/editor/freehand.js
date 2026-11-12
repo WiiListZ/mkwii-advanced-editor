@@ -1,8 +1,51 @@
+// World units, against the 3200 of a default road: bends much shorter than its width are noise.
+const FREEHAND_SMOOTHING = 800;
+
 const distance2 = (p, a, b) => {
   const x = b.x - a.x, z = b.z - a.z;
   const t = Math.max(0, Math.min(1, ((p.x - a.x) * x + (p.z - a.z) * z) / (x * x + z * z || 1)));
   return (p.x - a.x - t * x) ** 2 + (p.z - a.z - t * z) ** 2;
 };
+
+// Three moving averages approximate a Gaussian along the closed line.
+function smoothClosedLine(line, spacing, sigma) {
+  const n = line.length;
+  const half = Math.min(Math.floor((n - 1) / 2), Math.round((Math.sqrt(1 + 4 * (sigma / spacing) ** 2) - 1) / 2));
+  if (half < 1) return line;
+  let current = line;
+  for (let pass = 0; pass < 3; pass++) {
+    let x = 0, z = 0;
+    for (let k = -half; k <= half; k++) { const p = current[(k + n) % n]; x += p.x; z += p.z; }
+    const next = [];
+    for (let i = 0; i < n; i++) {
+      next.push({ x: x / (2 * half + 1), z: z / (2 * half + 1) });
+      const out = current[(i - half + n) % n], enter = current[(i + half + 1) % n];
+      x += enter.x - out.x; z += enter.z - out.z;
+    }
+    current = next;
+  }
+  return current;
+}
+
+// Whole-pixel mouse positions and hand tremor wander by a pixel or two. Kept, they become small
+// opposite bends inside a curve, sharper than any real turn of a road this wide. A departure from
+// the smoothed line within the tolerance is that noise; a larger one is a corner the person drew.
+function removeTremor(line, spacing, sigma, tolerance) {
+  const smooth = smoothClosedLine(line, spacing, sigma);
+  if (smooth === line) return line;
+  const low = tolerance * 1.1, high = tolerance * 2.2, n = line.length;
+  const out = line.map((p, i) => {
+    const s = smooth[i], x = Math.max(0, Math.min(1, (Math.hypot(p.x - s.x, p.z - s.z) - low) / (high - low))), keep = x * x * (3 - 2 * x);
+    return { x: s.x + (p.x - s.x) * keep, z: s.z + (p.z - s.z) * keep };
+  });
+  // The line starts where the person started it: ease the difference away on both sides.
+  const dx = line[0].x - out[0].x, dz = line[0].z - out[0].z, reach = Math.min(Math.floor(n / 2), Math.ceil(sigma * 3 / spacing));
+  for (let k = -reach; k <= reach; k++) {
+    const weight = (1 - (Math.abs(k) / (reach + 1)) ** 2) ** 2, p = out[(k + n) % n];
+    p.x += dx * weight; p.z += dz * weight;
+  }
+  return out;
+}
 
 // Fit to the drawn line within a geometric tolerance, rather than retaining
 // one point every 9000 world units and discarding small bends. Refine against
@@ -21,11 +64,13 @@ export function fitFreehand(stroke, options, sampleSpline) {
   for (let i = 1; i < clean.length; i++) length += Math.hypot(clean[i].x - clean[i - 1].x, clean[i].z - clean[i - 1].z);
   if (length < 6000) return null;
   if (Math.hypot(clean[0].x - clean.at(-1).x, clean[0].z - clean.at(-1).z) < .01) clean.pop();
-  const raw = [], spacing = Math.max(tolerance * 2, length / 4096);
+  let raw = [];
+  const spacing = Math.max(tolerance * 2, length / 4096);
   for (let i = 0; i < clean.length; i++) {
     const a = clean[i], b = clean[(i + 1) % clean.length], count = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / spacing));
     for (let k = 0; k < count; k++) raw.push({ x: a.x + (b.x - a.x) * k / count, z: a.z + (b.z - a.z) * k / count });
   }
+  raw = removeTremor(raw, spacing, Math.max(FREEHAND_SMOOTHING, tolerance * 3), tolerance);
   raw.push(raw[0]);
   let farthest = 1, farDistance = 0;
   for (let i = 1; i < raw.length - 1; i++) {

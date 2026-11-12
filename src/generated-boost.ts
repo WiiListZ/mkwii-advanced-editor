@@ -13,7 +13,7 @@ export async function applyGeneratedBoost(data: Uint8Array, original: any, names
   const child = Bun.spawn([exe, "-f", "boost.txt", "-o"], { cwd: dir, env: process.env, windowsHide: true, stdout: "pipe", stderr: "pipe" });
   const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   if (code) throw new Error(`Could not add the game's animated boost material: ${(out + err).slice(-900)}`);
-  let result = new Uint8Array(await readFile(join(dir, "course.brres")));
+  let result: Uint8Array = new Uint8Array(await readFile(join(dir, "course.brres")));
   result = await preserveExistingBRRESTextures(data, result, join(dir, "preserved"));
   const textures = Object.fromEntries(Object.keys(original.native.textures).map((name) => [name, name]));
   result = await transplantBRRESTextures(original.source, result, textures, join(dir, "native-textures"));

@@ -243,6 +243,7 @@ export function musicFiles(stream, listing) {
 
 // What an archive needs to be loaded in a slot, from the file names it holds and its KMP.
 // Returns { errors: [], warnings: [] }.
+/** @param {{ files: string[], checkpoints: number, starts: number, kmp?: any }} track @param {boolean} battle */
 export function checkTrackArchive({ files, checkpoints, starts, kmp }, battle) {
   const errors = [], warnings = [];
   const has = (name) => files.some((f) => f.toLowerCase().split('/').pop() === name);

@@ -96,7 +96,7 @@ export function makeFrameless(hwnd: Pointer, webviewHandle?: Pointer | null, mod
       const symbolName = Buffer.from("webview_get_native_handle\0", "utf8");
       const fnAddr = kernel32.GetProcAddress(outMod[0], ptr(symbolName));
       if (fnAddr) {
-        const fn = new CFunction({ ptr: fnAddr, args: [FFIType.ptr, FFIType.i32], returns: FFIType.ptr });
+        const fn = CFunction({ ptr: fnAddr, args: [FFIType.ptr, FFIType.i32], returns: FFIType.ptr });
         libraries.push(fn);
         getNativeHandle = (w, kind) => fn(w, kind) as Pointer | null;
       }
@@ -115,7 +115,7 @@ export function makeFrameless(hwnd: Pointer, webviewHandle?: Pointer | null, mod
         if (vtblPtr) {
           const notifyPtr = Number(new BigUint64Array(toArrayBuffer(vtblPtr, CONTROLLER_NOTIFY_PARENT_POS_SLOT * 8, 8))[0]) as Pointer;
           if (notifyPtr) {
-            const fn = new CFunction({ ptr: notifyPtr, args: [FFIType.ptr], returns: FFIType.i32 });
+            const fn = CFunction({ ptr: notifyPtr, args: [FFIType.ptr], returns: FFIType.i32 });
             libraries.push(fn);
             notifyPositionChanged = (ctrl) => fn(ctrl) as number;
           }

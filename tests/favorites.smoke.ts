@@ -11,7 +11,7 @@ if (!game || !existsSync(join(game, "Race/Common.szs"))) {
   process.exit(0);
 }
 const settingsDir = mkdtempSync(join(tmpdir(), "mkwii-favorites-"));
-await Bun.write(join(settingsDir, "settings.json"), JSON.stringify({ tourDone: true, partsFolder: join(game, "Race/Course") }));
+await Bun.write(join(settingsDir, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false, partsFolder: join(game, "Race/Course") }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((resolve) => {
   worker.onmessage = (event) => event.data?.type === "ready" && resolve(event.data.port);

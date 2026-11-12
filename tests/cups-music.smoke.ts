@@ -13,7 +13,7 @@ mkdirSync(join(files, "Race", "Course"), { recursive: true });
 for (const stream of ["n_Farm", "n_Circuit32", "n_Kinoko", "n_Shopping32"]) {
   for (const lap of ["n", "f"]) await Bun.write(join(sound, `${stream}_${lap}.brstm`), `${stream} ${lap}`);
 }
-await Bun.write(join(temp, "settings.json"), JSON.stringify({ tourDone: true, workspace: files, keepBackups: true }));
+await Bun.write(join(temp, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false, workspace: files, keepBackups: true }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
 const check = (ok: boolean, message: string) => { if (!ok) throw new Error(message); console.log(`ok  ${message}`); };

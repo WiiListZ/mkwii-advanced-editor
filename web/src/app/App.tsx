@@ -60,33 +60,35 @@ function AppContent() {
   }, []);
   // Home remains available while a track stays loaded in the mounted 3D editor.
   const empty = ed.homeVisible || ed.isEmpty;
+  // A ghost preview is the 3D view alone, with its own controls: no panels, tools or menus.
+  const bare = empty || !!ed.ghostView;
 
   return (
     <TooltipProvider delayDuration={350} skipDelayDuration={150}>
       <div className="flex h-full flex-col">
         <TitleBar />
         <UpdateNotice />
-        {!empty && ed.cupTrackLink && <div className="shrink-0 border-b bg-muted/30 px-4 py-2 text-xs" data-cup-track-link>
+        {!bare && ed.cupTrackLink && <div className="shrink-0 border-b bg-muted/30 px-4 py-2 text-xs" data-cup-track-link>
           <b>{ed.cupTrackLink.label}</b><span className="ml-2 text-muted-foreground">{ed.cupTrackLink.pending ? "Assigned to this cup position. Save edits here, then Apply in Cups and tracks." : "Applied to this cup position. Save updates its track directly."}</span>
         </div>}
-        {!empty && <Toolbar />}
-        <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1" autoSaveId={empty ? "mkwii-layout-start" : "mkwii-layout"}>
-          {!empty && <ResizablePanel key="left" defaultSize={20} minSize={14} maxSize={34} className="bg-sidebar" id="left" order={1}>
+        {!bare && <Toolbar />}
+        <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1" autoSaveId={bare ? "mkwii-layout-start" : "mkwii-layout"}>
+          {!bare && <ResizablePanel key="left" defaultSize={20} minSize={14} maxSize={34} className="bg-sidebar" id="left" order={1}>
             <Sidebar />
           </ResizablePanel>}
-          {!empty && <ResizableHandle key="left-handle" />}
-          <ResizablePanel key="viewport" defaultSize={empty ? 100 : 57} minSize={30} id="viewport" order={2}>
+          {!bare && <ResizableHandle key="left-handle" />}
+          <ResizablePanel key="viewport" defaultSize={bare ? 100 : 57} minSize={30} id="viewport" order={2}>
             <ViewportPanel />
           </ResizablePanel>
-          {!empty && <ResizableHandle key="right-handle" />}
-          {!empty && <ResizablePanel key="right" defaultSize={23} minSize={16} maxSize={40} className="bg-sidebar" id="right" order={3}>
+          {!bare && <ResizableHandle key="right-handle" />}
+          {!bare && <ResizablePanel key="right" defaultSize={23} minSize={16} maxSize={40} className="bg-sidebar" id="right" order={3}>
             <div className="flex h-full min-h-0 flex-col">
               <div className="flex h-9 shrink-0 items-center border-b px-4 text-xs font-medium text-muted-foreground">Inspector</div>
               <div className="min-h-0 flex-1 overflow-y-auto"><Inspector /></div>
             </div>
           </ResizablePanel>}
         </ResizablePanelGroup>
-        {!empty && <StatusBar />}
+        {!bare && <StatusBar />}
       </div>
       <DialogHost />
       <BusyOverlay />

@@ -130,7 +130,7 @@ export class DiscordPresence {
       });
       socket.on("data", (data) => {
         if (generation !== this.generation || !this.enabled || this.disposed) { socket.destroy(); return; }
-        buffer = Buffer.concat([buffer, data]);
+        buffer = Buffer.concat([buffer, typeof data === "string" ? Buffer.from(data) : data]);
         while (buffer.length >= 8) {
           const opcode = buffer.readUInt32LE(0), size = buffer.readUInt32LE(4);
           if (size > 1024 * 1024) { socket.destroy(); return; }

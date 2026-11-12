@@ -20,6 +20,20 @@ const VEHICLES = {
   se_bike: 'Jet Bubble', me_bike: 'Dolphin Dasher', le_bike: 'Phantom',
 };
 
+// The archive of a vehicle and character by their game IDs, which follow these tables' order. After
+// the 24 characters come the Mii outfits: small, medium and large, each A to C, male then female.
+// The disc has no archives for outfit C, so A stands in for it.
+export function kartArchiveName(vehicleId, characterId) {
+  const vehicle = Object.keys(VEHICLES)[vehicleId];
+  if (!vehicle) return null;
+  let driver = Object.keys(CHARACTERS)[characterId];
+  if (!driver && characterId >= 0x18 && characterId <= 0x29) {
+    const n = characterId - 0x18;
+    driver = `${'sml'[Math.floor(n / 6)]}${'aba'[Math.floor(n / 2) % 3]}_mii_${n % 2 ? 'f' : 'm'}`;
+  }
+  return driver ? `${vehicle}-${driver}.szs` : null;
+}
+
 export function kartArchiveLabel(filename) {
   const match = filename.match(/^([a-z]+)_(kart|bike)(?:_(red|blue))?-([a-z0-9_]+?)(?:_(2|4))?\.szs$/i);
   if (!match) return null;

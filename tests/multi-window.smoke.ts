@@ -9,7 +9,7 @@ const temp = mkdtempSync(join(tmpdir(), "mkwii-windows-"));
 const first = join(temp, "First track.kmp"), second = join(temp, "Second track.kmp");
 const kmp = emptyKMP(); kmp.KTPT.push(make.KTPT());
 await Bun.write(first, buildKMP(kmp)); await Bun.write(second, buildKMP(kmp));
-await Bun.write(join(temp, "settings.json"), JSON.stringify({ tourDone: true, keepBackups: false }));
+await Bun.write(join(temp, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false, keepBackups: false }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
 const check = (ok: boolean, label: string) => { if (!ok) throw new Error(label); console.log(`ok  ${label}`); };

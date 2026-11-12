@@ -34,6 +34,33 @@ test('freehand preserves corners and closes the loop without a duplicate control
   expect(pointsFromStroke(stroke, { tolerance: 1, maxPoints: 4 })).toBeNull();
 });
 
+test('hand tremor does not become small opposite bends inside a curve', () => {
+  // Whole mouse pixels at 100 units each, plus a slow tremor of about a pixel or two.
+  let seed = 12345, driftX = 0, driftZ = 0;
+  const random = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+  const stroke = Array.from({ length: 900 }, (_, i) => {
+    const t = i / 900 * Math.PI * 2;
+    driftX = driftX * .85 + (random() - .5) * 1.2; driftZ = driftZ * .85 + (random() - .5) * 1.2;
+    return { x: Math.round(Math.cos(t) * 260 + driftX) * 100, z: Math.round(Math.sin(t) * 180 + driftZ) * 100 };
+  });
+  const points = pointsFromStroke(stroke, { tolerance: 300 })!;
+  const line = sampleSpline(points, 400).samples, n = line.length;
+  const heading = (i: number) => Math.atan2(line[(i + 1) % n][2] - line[i][2], line[(i + 1) % n][0] - line[i][0]);
+  const turns = line.map((_: any, i: number) => {
+    let d = heading((i + 1) % n) - heading(i);
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    return d * 180 / Math.PI;
+  });
+  expect(Math.max(...turns.map(Math.abs))).toBeLessThan(5);
+  // An oval only turns one way.
+  const sign = Math.sign(turns.reduce((sum: number, turn: number) => sum + turn, 0));
+  expect(turns.filter((turn: number) => turn * sign < -1)).toEqual([]);
+  // The drawing keeps its size and start.
+  expect(Math.max(...points.map((p: any) => p.x))).toBeGreaterThan(25000);
+  expect(points[0]).toMatchObject({ ...stroke[0] });
+});
+
 test('map dimensions resize real geometry around its centre and retain road widths and heights', () => {
   const points = PRESETS.Oval().map((p: any, i: number) => ({ ...p, y: i * 100, w: 1 + i * .02 }));
   const before = layoutBounds(points), changed = resizeLayout(points, 88000, 39000), after = layoutBounds(changed);

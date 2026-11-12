@@ -13,7 +13,7 @@ if (!game || !existsSync(join(game, "Race/Common.szs"))) {
 // Screenshots go to the folder given on the command line, or to a temporary folder (never the project).
 const outDir = process.argv[2] || mkdtempSync(join(tmpdir(), "mkwii-shots-"));
 const testDir = mkdtempSync(join(tmpdir(), "mkwii-test-"));
-await Bun.write(join(testDir, "settings.json"), JSON.stringify({ tourDone: true, partsFolder: join(game, "Race", "Course") }));
+await Bun.write(join(testDir, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false, partsFolder: join(game, "Race", "Course") }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((res) => {
   worker.onmessage = (e) => e.data?.type === "ready" && res(e.data.port);

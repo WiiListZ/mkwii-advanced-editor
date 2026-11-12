@@ -23,7 +23,7 @@ copyFileSync(join(game, "Race", "Course", "old_mario_sfc.szs"), otherTrack);
 const resourceBytes = async (file = track) => findFile(parseU8(yaz0Decompress(new Uint8Array(await Bun.file(file).arrayBuffer()))), "dokan_sfc.brres")!.data as Uint8Array;
 const same = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((v, i) => v === b[i]);
 const before = await resourceBytes();
-await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true, workspace: root }));
+await Bun.write(join(settings, "settings.json"), JSON.stringify({ tourDone: true, discordActivity: false, workspace: root }));
 const worker = new Worker(new URL("../src/server.ts", import.meta.url).href);
 const port: number = await new Promise((r) => { worker.onmessage = (e) => e.data?.type === "ready" && r(e.data.port); worker.postMessage({ type: "start", token: "res", settingsDir: settings }); });
 const browser = await puppeteer.launch({ executablePath: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"], protocolTimeout: 240000 });
