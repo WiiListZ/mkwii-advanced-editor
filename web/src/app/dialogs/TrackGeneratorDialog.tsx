@@ -1,6 +1,7 @@
 import { NumberField } from "../number-field";
 import * as React from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, Box, CircleAlert, CircleCheck, Flag, Info, FlipHorizontal2, Map as MapIcon, Maximize, Minus, MousePointer2, Package, PenLine, Plus, Redo2, Sparkles, TriangleAlert, Undo2, ZoomIn, ZoomOut, Zap } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Box, CircleAlert, CircleCheck, Crosshair, Flag, Info, FlipHorizontal2, Map as MapIcon, Maximize, Minus, MousePointer2, Package, PenLine, Plus, Redo2, Route, Sparkles, Trash2, TriangleAlert, Undo2, ZoomIn, ZoomOut, Zap } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -11,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { smoothLayout } from "../../../js/editor/layout-points.js";
 import { PRESETS, TEMPLATES, DEFAULT_PARAMS, generateTrack, generatedTrackIssues, trackSamples, layoutIssues, pointsFromStroke, reverseLayout, roadFrames, scaleLayout } from "../../../js/editor/trackgen.js";
-import { layoutBounds, resizeLayout, nearestLayoutSegment, startLayoutAt } from "../../../js/editor/layout-points.js";
+import { layoutBounds, moveStartToFit, resizeLayout, nearestLayoutSegment, startLayoutAt } from "../../../js/editor/layout-points.js";
 import { curveCorner, cornerArc } from "../../../js/editor/curve-radius.js";
 import { useTrackTextures, textureTriangle } from "../track-texture-preview";
 import { TrackLayoutPreview } from "../track-layout-preview";
@@ -57,7 +58,7 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
   const [drawError, setDrawError] = React.useState("");
   const [showAdjustments, setShowAdjustments] = React.useState(false);
   const fit3D = React.useRef<(() => void) | null>(null);
-  const chooseTool = (next: Mode) => { setMode(next); setPreview3D(false); };
+  const chooseTool = (next: Mode) => { shortcutDraft.current = null; setMode(next); setPreview3D(false); if (next === "shortcut") setTab("race"); };
   const [keepSzs, setKeepSzs] = React.useState(false);
   const [tab, setTab] = React.useState("layout");
   const [textureBusy, setTextureBusy] = React.useState(false);
@@ -76,6 +77,7 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     const h = history.current, to = from === "undo" ? "redo" : "undo";
     const prev = h[from].pop();
     if (!prev) return;
+    shortcutDraft.current = null;
     h[to].push(snapshot());
     pts.current = prev.points;
     setParams((p: any) => ({ ...p, roadWidth: prev.roadWidth, autoBridges: prev.autoBridges, boostPositions: prev.boostPositions, boostPads: prev.boostPads, boostLength: prev.boostLength, itemBoxPositions: prev.itemBoxPositions, itemRows: prev.itemRows, shortcuts: prev.shortcuts }));
@@ -163,6 +165,17 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
         ctx.strokeStyle = "#ffcf40"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2); ctx.stroke();
         ctx.fillStyle = "#ffcf40"; ctx.fillText(`⚡ ${index + 1}`, x + 12, y - 10);
       }
+      // Each shortcut's number, as in its list under Race.
+      if (mode === "shortcut") (params.shortcuts || []).forEach((s: any, k: number) => {
+        const at = shortcutLabel(s);
+        if (!at) return;
+        const [x, y] = toScreen(at[0], at[1]), label = `S${k + 1}`;
+        ctx.font = "600 11px Inter, system-ui";
+        ctx.fillStyle = "#14161be8"; ctx.fillRect(x - 4, y - 13, ctx.measureText(label).width + 8, 17);
+        // Red when it was left out: its reason is under Race and in the check.
+        const left = (previewTrack?.shortcutProblems || []).some((problem: string) => problem.startsWith(`${label} `));
+        ctx.fillStyle = left ? "#ef4444" : "#38bdf8"; ctx.fillText(label, x, y);
+      });
       if (mode === "shortcut" && shortcutDraft.current && spline) {
         const draft = shortcutDraft.current, start = spline.samples[Math.floor(draft.from * spline.samples.length) % spline.samples.length];
         ctx.strokeStyle = "#38bdf8"; ctx.lineWidth = 2; ctx.setLineDash([6, 5]); ctx.beginPath();
@@ -273,6 +286,15 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     return () => { layoutPreview.current?.dispose(); layoutPreview.current = null; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   React.useEffect(() => { draw(); drawProfile(); });
+  // The wheel zooms the drawing and must not also scroll the column it sits in. React listens to
+  // the wheel passively, where the scroll cannot be stopped.
+  React.useEffect(() => {
+    const el = canvas.current;
+    if (!el) return;
+    const keep = (e: WheelEvent) => e.preventDefault();
+    el.addEventListener("wheel", keep, { passive: false });
+    return () => el.removeEventListener("wheel", keep);
+  }, [preview3D]);
   React.useEffect(() => {
     if (!Object.values(texturePreview.textures).some((t) => t.native) || mode === "draw") return;
     let frame = 0, last = 0;
@@ -283,6 +305,10 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
   // Keys inside the dialog: Delete removes the selected point, arrows nudge it, Ctrl+Z / Ctrl+Y undo.
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && shortcutDraft.current) {
+        e.preventDefault(); e.stopPropagation();
+        shortcutDraft.current = null; repaint(); return;
+      }
       const target = e.target as HTMLElement;
       if (target.closest("input, textarea, [role=slider]")) return;
       const ctrl = e.ctrlKey || e.metaKey;
@@ -534,6 +560,35 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
     if (width !== params.roadWidth) { remember(); setParams((p: any) => ({ ...p, roadWidth: width })); }
   };
   const setParam = (key: string, value: any) => setParams((p: any) => ({ ...p, [key]: value }));
+  // The start line moved to the nearest place where the grid fits; the shape stays as drawn.
+  const fixStart = () => {
+    const moved = moveStartToFit(pts.current, params);
+    if (!moved) { toast.error("No place found for the start line", { description: "It needs a straight stretch about 6000 units long, outside every shortcut. Make one stretch straighter, or move a shortcut, then try again." }); return; }
+    remember(); pts.current = moved.points; setParams(moved.params); setSelected(0); redraw();
+  };
+  // Centres the 2D drawing on where a problem is.
+  const showIssue = (issue: any) => {
+    if (!issue.at?.length) return;
+    setPreview3D(false);
+    view.current.cx = issue.at[0][0]; view.current.cz = issue.at[0][1];
+    repaint();
+  };
+  // A shortcut's own height, or the height of the road where it leaves while it has none.
+  const shortcutHeight = (s: any) => {
+    if (Number.isFinite(s.height)) return s.height;
+    const samples = spline?.samples || [];
+    return samples.length ? Math.round(samples[Math.floor(s.from * samples.length) % samples.length][1] - (spline?.heightOffset || 0)) : 0;
+  };
+  const changeShortcut = (index: number, change: any) => { remember(); setParams((p: any) => ({ ...p, shortcuts: (p.shortcuts || []).map((s: any, i: number) => i === index ? { ...s, ...change } : s) })); };
+  const removeShortcut = (index: number) => { remember(); setParams((p: any) => ({ ...p, shortcuts: (p.shortcuts || []).filter((_: any, i: number) => i !== index) })); };
+  // Where a shortcut's number is written on the drawing: its middle bend, or halfway between its ends.
+  const shortcutLabel = (s: any) => {
+    if (s.via?.length) { const p = s.via[Math.floor((s.via.length - 1) / 2)]; return [p.x, p.z]; }
+    const samples = spline?.samples || [];
+    if (!samples.length) return null;
+    const a = samples[Math.floor(s.from * samples.length) % samples.length], b = samples[Math.floor(s.to * samples.length) % samples.length];
+    return [(a[0] + b[0]) / 2, (a[2] + b[2]) / 2];
+  };
   const num = (key: string, label: string, min: number, max: number, stepSize: number, help: string, unit?: (v: number) => string) => (
     <div key={key} className="grid grid-cols-[1fr_110px] items-center gap-x-3 gap-y-0.5">
       <Label className="flex items-center gap-1.5">{label}</Label>
@@ -545,7 +600,7 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
   const errors = issues.filter((i: any) => i.level === "error");
   const length = spline?.length || 0;
 
-  const modeHelp = mode === "shortcut" ? "Shortcuts: click the road where it leaves · click off the road to add bends · click the road again where it rejoins · right-click near a shortcut's end to remove it · Ctrl+Z undoes it"
+  const modeHelp = mode === "shortcut" ? "Click the road to start a shortcut · click off the road for bends · click the road to finish, then start another · Esc cancels the current drawing · right-click an end to remove · Ctrl+Z undoes"
     : mode === "items" ? "Item boxes: click the road to place a box · drag a blue box to move it along or across the road · right-click to remove it · Ctrl+Z / Ctrl+Y undo and redo."
     : mode === "height" ? "Drag a point up to raise the road or down to lower it. Hold Shift before dragging for finer control. ↑ / ↓ adjust the selected point; Ctrl+Z / Ctrl+Y undo and redo."
     : mode === "boost" ? "Boost panels: click the road to add one · drag a yellow marker to move it · right-click its marker to remove it · Ctrl+Z undoes the placement."
@@ -567,6 +622,7 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
             <Hint title="Draw by hand" text="Trace the whole track with the mouse in one stroke; it replaces the current layout (Undo brings it back)."><Button size="sm" variant={mode === "draw" && !preview3D ? "secondary" : "ghost"} aria-pressed={mode === "draw" && !preview3D} onClick={() => chooseTool("draw")}><PenLine /> Draw by hand</Button></Hint>
             <Hint title="Place boost panels" text="Click the road to add an animated boost panel. Drag its marker to move it; right-click to remove it."><Button size="sm" variant={mode === "boost" && !preview3D ? "secondary" : "ghost"} aria-pressed={mode === "boost" && !preview3D} aria-label="Place boost panels" onClick={() => chooseTool("boost")}><Zap /> Boost panels</Button></Hint>
             <Hint title="Place item boxes" text="Click the road to add an item box. Drag a box along or across the road; right-click removes it."><Button size="sm" variant={mode === "items" && !preview3D ? "secondary" : "ghost"} aria-pressed={mode === "items" && !preview3D} aria-label="Place item boxes" onClick={() => chooseTool("items")}><Package /> Item boxes</Button></Hint>
+            <Hint title="Draw a shortcut" text="Click the road where the shortcut leaves, click beside it for bends, then click the road where it rejoins. Its height and removal are under Race."><Button size="sm" variant={mode === "shortcut" && !preview3D ? "secondary" : "ghost"} aria-pressed={mode === "shortcut" && !preview3D} aria-label="Draw a shortcut" onClick={() => chooseTool("shortcut")}><Route /> Shortcut</Button></Hint>
             <div className="flex w-full flex-wrap items-center gap-1">
             <div role="group" aria-label="Generator view" className="mr-1 flex shrink-0 items-center rounded-md border bg-muted/30 p-0.5">
               <Button size="sm" variant={!preview3D ? "secondary" : "ghost"} aria-label="Show 2D layout" aria-pressed={!preview3D} onClick={() => setPreview3D(false)}><MapIcon /> 2D</Button>
@@ -649,7 +705,8 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
             <div className="min-h-0 flex-1 overflow-y-auto pr-1 pt-3">
               <TabsContent value="layout" className="mt-0 flex flex-col gap-3">
                 <div className="flex flex-col gap-1.5" data-track-templates>
-                  <div className="text-xs font-medium">Complete templates</div>
+                  <div className="text-xs font-medium">Start from a complete track</div>
+                  <p className="m-0 text-[11px] leading-snug text-muted-foreground">Shape, look, road and scenery together. Everything can be changed afterwards.</p>
                   <div className="grid grid-cols-2 gap-1.5">
                     {Object.entries(TEMPLATES).map(([name, template]: [string, any]) => (
                       <button key={name} type="button" className="cursor-pointer rounded-md border px-2.5 py-2 text-left hover:bg-accent"
@@ -661,7 +718,8 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
                   </div>
                 </div>
                 <TrackStylePicker params={params} change={setParam} textures={texturePreview.textures} />
-                <p className="m-0 text-xs leading-relaxed text-muted-foreground">Start from a ready shape or draw your own, then drag the points. The red point is the finish line; the arrows show the driving direction. The layout stays as drawn. Select a point and use Set start here to move the starting grid to a straighter section.</p>
+                <div className="text-xs font-medium">Or only a shape</div>
+                <p className="m-0 text-xs leading-relaxed text-muted-foreground">Keeps the style and settings you chose. Then drag the points on the drawing. The red point is the finish line and the arrows show the driving direction. Keep the start on a straight part: the twelve karts line up straight behind it.</p>
                 <div className="grid grid-cols-2 gap-1.5">
                   {Object.keys(PRESETS).map((name) => (
                     <button key={name} type="button" className="cursor-pointer rounded-md border px-2.5 py-2 text-left hover:bg-accent"
@@ -724,8 +782,22 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
               <TabsContent value="race" className="mt-0 flex flex-col gap-3">
                 {num("laps", "Laps", 1, 9, 1, "Laps of a race (the game normally uses 3).")}
                 <div className="flex flex-col gap-1.5">
-                  <div className="flex flex-wrap items-center gap-1.5"><Button size="sm" variant="outline" onClick={() => { shortcutDraft.current = null; chooseTool("shortcut"); }}>Draw a shortcut (beta)</Button><span className="text-xs text-muted-foreground" aria-live="polite">{previewTrack?.shortcuts?.length || 0} on this track</span></div>
+                  <div className="flex flex-wrap items-center gap-1.5"><Button size="sm" variant="outline" onClick={() => chooseTool("shortcut")}><Route /> {params.shortcuts?.length ? "Add another shortcut (beta)" : "Draw a shortcut (beta)"}</Button><span className="text-xs text-muted-foreground" aria-live="polite">{params.shortcuts?.length || 0} drawn · {previewTrack?.shortcuts?.length || 0} on this track</span></div>
+                  <p className="m-0 text-[11px] text-muted-foreground">Keep drawing to add more shortcuts, including overlapping ones or ones sharing an end. Each finished shortcut is added to the list below.</p>
+                  {(params.shortcuts || []).map((s: any, k: number) => (
+                    <div key={k} className="flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs" data-shortcut={k}>
+                      <span className="w-8 shrink-0 font-medium text-sky-400">S{k + 1}</span>
+                      <Label htmlFor={`generator-shortcut-height-${k}`} className="text-[11px] text-muted-foreground">Height</Label>
+                      <NumberField key={`${k}-${Number.isFinite(s.height)}`} id={`generator-shortcut-height-${k}`} aria-label={`Shortcut ${k + 1} height`} className="h-7 w-20 text-xs" min={MIN_HEIGHT} max={MAX_HEIGHT} step={100} integer commit value={shortcutHeight(s)} onValue={(v) => changeShortcut(k, { height: v })} />
+                      {Number.isFinite(s.height)
+                        ? <Button size="sm" variant="ghost" className="h-7 px-1.5 text-[11px]" title="Follow the height of the road at its two ends" onClick={() => changeShortcut(k, { height: undefined })}>Follow road</Button>
+                        : <span className="text-[11px] text-muted-foreground">follows the road</span>}
+                      <Button size="icon-sm" variant="ghost" className="ml-auto" aria-label={`Remove shortcut ${k + 1}`} title="Remove this shortcut" onClick={() => removeShortcut(k)}><Trash2 /></Button>
+                    </div>
+                  ))}
+                  {!!params.shortcuts?.length && <p className="m-0 text-[11px] text-muted-foreground">Height raises or lowers the middle of a shortcut, with ramps at both ends karts can climb: over the main road, or down into a dip.</p>}
                   {previewTrack?.shortcutProblems?.map((problem: string, i: number) => <p key={i} className="m-0 text-xs text-amber-400">{problem}</p>)}
+                  {previewTrack?.shortcutCrossesStart && <div><Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={fixStart}><Flag /> Move the start out of the shortcut</Button></div>}
                   <p className="m-0 text-[11px] text-muted-foreground">Checkpoints and routes split there by themselves. Try the result in the game: CPU drivers may take a shortcut differently from what you expect.</p>
                 </div>
                 <label className="flex items-center gap-2 text-xs"><span className="flex-1">Scenery beside the road</span>
@@ -750,7 +822,13 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
             <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-xs font-medium"><span>Check</span><label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-normal text-muted-foreground"><Checkbox aria-label="Show adjustment markers" checked={showAdjustments} onCheckedChange={(v) => setShowAdjustments(v === true)} />Show adjustment markers</label></div>
             {issues.length ? (
               <ul className="m-0 flex list-none flex-col gap-1 p-0 text-[11px] leading-snug">
-                {issues.map((i: any) => <li key={i.message} className={cn("flex items-start gap-1.5", i.level === "error" ? "text-destructive" : i.level === "warning" ? "text-warning" : "text-muted-foreground")}>{i.level === "error" ? <CircleAlert className="mt-px size-3 shrink-0" /> : i.level === "warning" ? <TriangleAlert className="mt-px size-3 shrink-0" /> : <Info className="mt-px size-3 shrink-0 text-sky-400" />} {i.message}</li>)}
+                {issues.map((i: any) => <li key={i.message} className={cn("flex items-start gap-1.5", i.level === "error" ? "text-destructive" : i.level === "warning" ? "text-warning" : "text-muted-foreground")}>{i.level === "error" ? <CircleAlert className="mt-px size-3 shrink-0" /> : i.level === "warning" ? <TriangleAlert className="mt-px size-3 shrink-0" /> : <Info className="mt-px size-3 shrink-0 text-sky-400" />}
+                  <span className="flex-1">{i.message}
+                    {(i.fix === "start" || (i.at?.length && i.level !== "info")) && <span className="mt-1 flex flex-wrap gap-1.5">
+                      {i.fix === "start" && <Button size="sm" variant="outline" className="h-6 px-2 text-[11px] text-foreground" onClick={fixStart}><Flag className="size-3" /> {i.level === "error" ? "Move start to a straight part" : "Move the start out of the shortcut"}</Button>}
+                      {!!i.at?.length && i.level !== "info" && <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px] text-foreground" onClick={() => showIssue(i)}><Crosshair className="size-3" /> Show</Button>}
+                    </span>}
+                  </span></li>)}
               </ul>
             ) : <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground"><CircleCheck className="size-3 text-success" /> No problems found in the layout.</div>}
           </div>
@@ -758,7 +836,11 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
       </div>
       <DialogFooter className="items-center sm:justify-between">
         <span className="text-xs text-muted-foreground">{texturePreview.loading ? "Loading texture previews… · " : texturePreview.error ? "Texture preview unavailable · " : ""}Length ≈ {(length / 1000).toFixed(1)}k units · {pts.current.length} points</span>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          {errors.length > 0 && <span className="flex items-center gap-1.5 text-xs text-destructive" data-generate-blocked>
+            <CircleAlert className="size-3.5" /> {errors.length === 1 ? "1 problem to fix before generating" : `${errors.length} problems to fix before generating`}
+            {errors.some((i: any) => i.fix === "start") && <Button size="sm" variant="outline" className="h-7 px-2 text-xs text-foreground" onClick={fixStart}><Flag /> Move start</Button>}
+          </span>}
           <Button variant="outline" onClick={() => close(null)}>Cancel</Button>
           {tab !== "race" && <Button variant="secondary" onClick={() => setTab(tab === "layout" ? "road" : tab === "road" ? "textures" : "race")}>Next step</Button>}
           <Hint title="Generate track" text={errors.length ? "Fix the problems in red first." : "Build the track with these settings. Everything can still be edited afterwards."}>

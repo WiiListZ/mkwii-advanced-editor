@@ -352,11 +352,44 @@ test("two shortcuts chain, and ones that cannot work are left out with a reason"
   expect(close.shortcutProblems.length).toBe(1);
   expect(close.kmp.CKPT.length).toBe(1);
   const overlapping = generateTrack(base, { ...DEFAULT_PARAMS, shortcuts: [{ from: .1, to: .4 }, { from: .3, to: .6 }] });
-  expect(overlapping.shortcuts.length).toBe(1);
+  expect(overlapping.shortcuts.length).toBe(2);
   // Bends can be added, and reversed ends mean the same stretch.
   const bent = generateTrack(base, { ...DEFAULT_PARAMS, shortcuts: [{ from: .2, to: .45, via: [{ x: 0, z: 0 }] }] });
   expect(bent.shortcuts[0].length).toBeGreaterThan(0);
   expect(generateTrack(base, { ...DEFAULT_PARAMS, shortcuts: [{ from: .45, to: .2 }] }).shortcuts.length).toBe(1);
+});
+
+test("any number of shortcuts: overlapping, nested, sharing ends, all linked and valid", () => {
+  const base = PRESETS.Oval();
+  const shortcuts = [
+    { from: .1, to: .3 }, { from: .2, to: .45 }, { from: .1, to: .25, via: [{ x: 15000, z: -6000 }] }, // overlapping, one shares S1's start
+    { from: .3, to: .5 }, // leaves where S1 rejoins
+    { from: .55, to: .9 }, { from: .6, to: .7 }, { from: .65, to: .85 }, { from: .7, to: .8, height: 1200 }, // nested
+  ];
+  const track = generateTrack(base, { ...DEFAULT_PARAMS, shortcuts });
+  expect(track.shortcutProblems).toEqual([]);
+  expect(track.shortcuts.length).toBe(shortcuts.length);
+  for (const name of ["CKPT", "ENPT", "ITPT"]) {
+    const groups = track.kmp[name];
+    expect(groups[0].points.length).toBeGreaterThan(0);
+    groups.forEach((group: any, g: number) => {
+      expect(group.points.length).toBeGreaterThan(0);
+      expect(group.next.length).toBeGreaterThan(0);
+      expect(group.next.length).toBeLessThanOrEqual(6);
+      expect(group.prev.length).toBeLessThanOrEqual(6);
+      for (const next of group.next) expect(groups[next].prev).toContain(g);
+      for (const prev of group.prev) expect(groups[prev].next).toContain(g);
+    });
+    // Every group can be reached from the start, and leads back to it.
+    const reach = (from: number, key: "next" | "prev") => { const seen = new Set([from]), list = [from]; while (list.length) for (const k of groups[list.pop()!][key]) if (!seen.has(k)) { seen.add(k); list.push(k); } return seen; };
+    expect(reach(0, "next").size).toBe(groups.length);
+    expect(reach(0, "prev").size).toBe(groups.length);
+  }
+  expect(track.kmp.CKPT[0].points[0].type).toBe(0);
+  const doc: any = { kmp: track.kmp, kcl: null, szs: null, change: (_: string, run: () => void) => run() };
+  expect(validate(doc, { nearestEnemyDir: () => null }, {}).filter((issue: any) => issue.level === "error")).toEqual([]);
+  const reparsed = parseKMP(buildKMP(track.kmp));
+  expect(reparsed.CKPT.map((g: any) => g.next)).toEqual(track.kmp.CKPT.map((g: any) => g.next));
 });
 
 test("scenery stands off the road, in the style's objects, only when asked for", () => {
@@ -402,4 +435,19 @@ test("generated hills keep their real road heights and have a solid deck, ground
   expect(ground).toHaveLength(2);
   expect(ground[0].v[1]).toBeLessThan(Math.min(...samples.map((s: number[]) => s[1])));
   expect(ground.every((t: any) => t.v[1] === t.v[4] && t.v[4] === t.v[7])).toBe(true);
+});
+
+test("many shortcuts stay within the game's 255 checkpoints and route points", () => {
+  const shortcuts = Array.from({ length: 30 }, (_, k) => ({ from: .05 + k * .026, to: .05 + k * .026 + .12 }));
+  const track = generateTrack(PRESETS.Oval(), { ...DEFAULT_PARAMS, checkpointSpacing: 500, enemySpacing: 400, shortcuts });
+  expect(track.shortcutProblems).toEqual([]);
+  expect(track.shortcuts.length).toBe(shortcuts.length);
+  const count = (name: string) => track.kmp[name].reduce((sum: number, g: any) => sum + g.points.length, 0);
+  for (const name of ["CKPT", "ENPT", "ITPT"]) expect(count(name)).toBeLessThanOrEqual(255);
+  for (const name of ["CKPT", "ENPT", "ITPT"]) for (const g of track.kmp[name]) { expect(g.points.length).toBeGreaterThan(0); expect(g.next.length).toBeLessThanOrEqual(6); }
+  const reparsed = parseKMP(buildKMP(track.kmp));
+  for (const name of ["CKPT", "ENPT", "ITPT"]) {
+    expect(reparsed[name].map((g: any) => g.points.length)).toEqual(track.kmp[name].map((g: any) => g.points.length));
+    expect(reparsed[name].map((g: any) => [g.prev, g.next])).toEqual(track.kmp[name].map((g: any) => [g.prev, g.next]));
+  }
 });

@@ -74,6 +74,26 @@ export function DialogHost() {
   return <>{stack.map((d) => <DialogSwitch key={d.id} entry={d} />)}</>;
 }
 
+// An error while a window draws would otherwise take the whole editor with it, leaving a black
+// screen. Only that window stops, with the reason, and the track stays open.
+class DialogErrorBoundary extends React.Component<{ close: () => void; children: React.ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error, info: React.ErrorInfo) { console.error("A window stopped working:", error, info.componentStack); }
+  render() {
+    const { error } = this.state;
+    if (!error) return this.props.children;
+    return <>
+      <DialogHeader>
+        <DialogTitle>This window stopped working</DialogTitle>
+        <DialogDescription>Its unapplied changes are lost. The track and what was already applied are unchanged.</DialogDescription>
+      </DialogHeader>
+      <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded border bg-muted/40 p-2 font-mono text-[11px]">{error.message || String(error)}</pre>
+      <DialogFooter><Button onClick={this.props.close}>Close</Button></DialogFooter>
+    </>;
+  }
+}
+
 function DialogSwitch({ entry }: { entry: DialogEntry }) {
   const close = (v: any = null) => dialogs.close(entry.id, v);
   const p = entry.props;
@@ -168,7 +188,7 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
   })();
   return (
     <Dialog open={!entry.closing} onOpenChange={(o) => !o && !GUARDED.includes(entry.kind) && close(null)}>
-      <DialogContent className={sizes[entry.kind]} onEscapeKeyDown={GUARDED.includes(entry.kind) ? (e) => e.preventDefault() : undefined} onPointerDownOutside={GUARDED.includes(entry.kind) ? (e) => e.preventDefault() : undefined} hideClose={["thp", "cups", "objectDocsEditor", "objectPicker", "textureEditor", "objectTextureEditor", "archive", "menuResource", "skeletonEditor", "sky", "minimap", "ghosts", "ghostRecord", "ghostReplay", "trackGhosts", "materials", "primitive", "sculpt", "effects", "params", "gameText", "audio", "assetEditor", "assetTextureEditor", "riivolution"].includes(entry.kind)}>{body}</DialogContent>
+      <DialogContent className={sizes[entry.kind]} onEscapeKeyDown={GUARDED.includes(entry.kind) ? (e) => e.preventDefault() : undefined} onPointerDownOutside={GUARDED.includes(entry.kind) ? (e) => e.preventDefault() : undefined} hideClose={["thp", "cups", "objectDocsEditor", "objectPicker", "textureEditor", "objectTextureEditor", "archive", "menuResource", "skeletonEditor", "sky", "minimap", "ghosts", "ghostRecord", "ghostReplay", "trackGhosts", "materials", "primitive", "sculpt", "effects", "params", "gameText", "audio", "assetEditor", "assetTextureEditor", "riivolution"].includes(entry.kind)}><DialogErrorBoundary close={() => close(null)}>{body}</DialogErrorBoundary></DialogContent>
     </Dialog>
   );
 }

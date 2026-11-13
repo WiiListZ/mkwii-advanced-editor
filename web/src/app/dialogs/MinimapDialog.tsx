@@ -113,6 +113,16 @@ export function MinimapDialog({ close }: { close: (value: any) => void }) {
   const recolourFrom = React.useRef<number | null>(null);
   const past = React.useRef<Design[]>([]);
   const future = React.useRef<Design[]>([]);
+  // Another file (Apply, undo in the main window, an import): without unapplied edits, start from it.
+  // Done while rendering, not in an effect: the drawing runs before effects, and the old design's
+  // triangles and colours do not fit the new track.
+  const [basis, setBasis] = React.useState({ track, map });
+  if (basis.track !== track || basis.map !== map) {
+    const edited = design.shape && !!map?.tris?.length;
+    setBasis({ track, map });
+    if (!(edited && design.assign.length === (track?.count || 0))) setDesign(seed(track, map));
+    past.current = []; future.current = [];
+  }
   const pendingStep = React.useRef<Design | null>(null);
   const host = React.useRef<HTMLDivElement>(null);
   const canvas = React.useRef<HTMLCanvasElement>(null);
@@ -133,15 +143,6 @@ export function MinimapDialog({ close }: { close: (value: any) => void }) {
   const isBattle = /battle/i.test(doc.fileName || "");
   const controlAreas = doc.kmp.AREA.filter((area: any) => area.type === 5).length;
   const swatchOf = (tone: Tone) => tone.source ? map?.swatches.find((s: any) => s.key === tone.source) : null;
-
-  // Another file (undo in the main window, an import): without unapplied edits, start from it.
-  React.useEffect(() => {
-    setDesign((current) => {
-      const edited = current.shape && !!map?.tris?.length;
-      return edited && current.assign.length === (track?.count || 0) ? current : seed(track, map);
-    });
-    past.current = []; future.current = [];
-  }, [track, map]);
 
   // ---- History: every stroke, colour and frame change is one step ------------------------------
   const pushStep = (step: Design) => {
@@ -212,7 +213,7 @@ export function MinimapDialog({ close }: { close: (value: any) => void }) {
   }, []);
 
   // What the map will look like, bottom layer first: [points x/z of a triangle, its colour].
-  const toneRgb = (index: number) => hexToRgb(liveHex && index === activeTone ? liveHex : design.tones[index].hex);
+  const toneRgb = (index: number) => hexToRgb(liveHex && index === activeTone ? liveHex : design.tones[index]?.hex ?? "#808080");
   const mapTriangles = () => {
     const out: { p: ArrayLike<number>; rgb: number[]; alpha: number }[] = [];
     if (design.shape && track) {

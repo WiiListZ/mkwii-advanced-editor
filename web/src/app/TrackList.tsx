@@ -91,7 +91,7 @@ export function TrackList({ section, onOpen }: { section: "all" | "other"; onOpe
         </label>
         <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{files.length.toLocaleString()} of {t.files.length.toLocaleString()} files</span>
       </div>
-      <div className="grid min-h-0 flex-1 grid-cols-1 content-start gap-1 overflow-y-auto pr-1 sm:grid-cols-2" data-previews={previews || undefined}>
+      <div className="grid min-h-0 flex-1 auto-rows-max grid-cols-1 content-start gap-1 overflow-y-auto pr-1 sm:grid-cols-2" data-previews={previews || undefined}>
         {shown.map((f) => {
           const label = trackLabel(f), number = f.replace(/\.(szs|wlz|wbz|wu8)$/i, ""), place = placeOfFile(f);
           const preview = previews ? previewOfPlace(place) : null;

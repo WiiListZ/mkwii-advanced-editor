@@ -1,4 +1,6 @@
-import { sampleSpline } from './trackgen.js';
+import { roadFrames, sampleSpline, trackSamples } from './trackgen.js';
+import { uncoveredStartGrid } from './start-grid.js';
+import { shortcutSpan } from './track-branches.js';
 
 // Rounds the curves of a layout already drawn, in plan only: heights, widths and curve radii stay
 // on their points. Taubin's two steps do not shrink the track as it smooths. Level 1 to 10.
@@ -71,6 +73,43 @@ export function startLayoutAt(points, params, index) {
     params: { ...params,
       ...(params.boostPositions ? { boostPositions: params.boostPositions.map(shift) } : {}),
       ...(params.itemBoxPositions ? { itemBoxPositions: params.itemBoxPositions.map((p) => ({ ...p, t: shift(p.t) })) } : {}),
+      // Kept even where the new start line cuts across one: the check says so, and nothing is lost.
+      ...(params.shortcuts?.length ? { shortcuts: params.shortcuts.map((s) => ({ ...s, from: shift(s.from), to: shift(s.to) })) } : {}),
     },
   };
+}
+
+// The twelve karts line up straight behind the start line, so a start on a bend leaves some of
+// them off the road; and a shortcut must not skip the start line. This finds the place nearest the
+// current start, along the lap either way, where the grid fits outside every shortcut: a road
+// point, or else a new point halfway between two. Null if none does.
+export function moveStartToFit(points, params) {
+  const n = points.length;
+  if (n < 3) return null;
+  const fits = (candidate) => {
+    const { samples, sampleStep } = trackSamples(candidate.points, candidate.params);
+    if ((candidate.params.shortcuts || []).some((s) => shortcutSpan(s).crossesStart)) return false;
+    return samples.length > 0 && !uncoveredStartGrid(roadFrames(samples, { ...candidate.params, step: sampleStep })).length;
+  };
+  const curve = sampleSpline(points, 200);
+  const placeAt = (parameter) => {
+    let best = 0;
+    curve.parameters.forEach((t, i) => { if (Math.abs(t - parameter) < Math.abs(curve.parameters[best] - parameter)) best = i; });
+    const [x, y, z, w] = curve.samples[best];
+    return { x: Math.round(x / 50) * 50, y: Math.round(y), z: Math.round(z / 50) * 50, w: Math.max(.5, Math.min(2.5, w)) };
+  };
+  const candidates = [];
+  for (let i = 1; i < n; i++) candidates.push({ parameter: i, index: i });
+  for (let k = 0; k < n; k++) candidates.push({ parameter: k + .5, insertAfter: k });
+  candidates.sort((a, b) => Math.min(a.parameter, n - a.parameter) - Math.min(b.parameter, n - b.parameter) || (a.index ? -1 : 1));
+  for (const candidate of candidates) {
+    let layout = points, index = candidate.index;
+    if (candidate.insertAfter !== undefined) {
+      layout = [...points.slice(0, candidate.insertAfter + 1), placeAt(candidate.parameter), ...points.slice(candidate.insertAfter + 1)];
+      index = candidate.insertAfter + 1;
+    }
+    const moved = startLayoutAt(layout, params, index);
+    if (fits(moved)) return moved;
+  }
+  return null;
 }

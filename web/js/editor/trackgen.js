@@ -11,7 +11,7 @@ import { curveCorner, roundedSegmentXZ } from './curve-radius.js';
 import { limitRoadClearance } from './road-clearance.js';
 import { smoothRoadWidths } from './road-widths.js';
 import { addReplayCameras } from './cameras.js';
-import { buildShortcuts, linkSections, placeScenery, shortcutWallGaps } from './track-branches.js';
+import { buildShortcuts, linkSections, placeScenery, shortcutWallGaps, shortcutWalls } from './track-branches.js';
 
 // MKW forces a respawn whenever the kart's world Y is below zero, regardless
 // of KCL. Generator heights are relative to this safe world-space baseline.
@@ -353,7 +353,7 @@ export function layoutIssues(points, params = {}) {
   if (tight.length) issues.push({ level: 'info', message: 'Some turns are tighter than the road is wide (blue marks): the inside of the turn is made narrower there so the road does not fold over. Spread the points of the turn for a wider road.', at: thin(tight, P.roadWidth) });
   if (flattened.length) issues.push({ level: 'info', message: 'Some slopes are too steep to climb (blue marks): the height change is spread over a longer stretch.', at: flattened });
   const missingGrid = uncoveredStartGrid(roadFrames(samples, P));
-  if (missingGrid.length) issues.push({ level: 'error', message: 'The starting grid does not fit this bend. Select a point on a straighter section and choose Set start here.', at: thin(missingGrid.map((p) => [p[0], p[2]]), P.roadWidth) });
+  if (missingGrid.length) issues.push({ level: 'error', fix: 'start', message: 'The start line is on a bend: the starting grid of twelve karts lines up straight behind it, and some would be off the road (red marks). Move the start to a straighter part; the shape stays as drawn.', at: thin(missingGrid.map((p) => [p[0], p[2]]), P.roadWidth) });
   if (length < 20000) issues.push({ level: 'error', message: 'The layout is too short for the twelve-kart starting straight. Make it larger (at least 20000 units long).', at: [] });
   return issues;
 }
@@ -362,7 +362,10 @@ export function layoutIssues(points, params = {}) {
 // unsupported extreme layouts editable instead of exporting wrapped indices.
 export function generatedTrackIssues(track) {
   const checkpoints = track?.kmp.CKPT.reduce((count, group) => count + group.points.length, 0) || 0;
-  return checkpoints > 255 ? [{ level: 'error', message: `This layout needs ${checkpoints} checkpoints, beyond the game's 255-checkpoint limit. Simplify the tight bends before generating the track.`, at: [] }] : [];
+  // Shortcuts left out: with the rest, so a missing one is not missed. One skipping the start line
+  // is fixed by moving the start.
+  const shortcuts = (track?.shortcutProblems || []).map((message) => ({ level: 'warning', message, at: [], ...(/skips the start line/.test(message) ? { fix: 'start' } : {}) }));
+  return [...shortcuts, ...(checkpoints > 255 ? [{ level: 'error', message: `This layout needs ${checkpoints} checkpoints, beyond the game's 255-checkpoint limit. Simplify the tight bends before generating the track.`, at: [] }] : [])];
 }
 
 // One mark per area, so a long overlap is not drawn as dozens of circles.
@@ -437,10 +440,10 @@ export const GOAL_VIEW = { zoomStart: 85, zoomEnd: 40, zoomSpeed: 30, viewStart:
 
 export function generateTrack(points, params = {}) {
   const P = { ...DEFAULT_PARAMS, ...params };
-  const { samples, length, sampleStep } = trackSamples(points, P);
+  const { samples, length, sampleStep, heightOffset } = trackSamples(points, P);
   P.step = sampleStep;
   const n = samples.length, frames = roadFrames(samples, P);
-  const { shortcuts, problems: shortcutProblems } = buildShortcuts(frames, P);
+  const { shortcuts, problems: shortcutProblems, crossesStart: shortcutCrossesStart } = buildShortcuts(frames, { ...P, heightOffset });
   const wallGaps = shortcutWallGaps(frames, shortcuts, P);
   const yaw = (dx, dz) => Math.round((Math.atan2(dx, dz) * 180) / Math.PI * 100) / 100;
 
@@ -449,6 +452,11 @@ export function generateTrack(points, params = {}) {
   if (Array.isArray(P.boostPositions)) {
     for (const t of P.boostPositions.slice(0, 32).filter(Number.isFinite)) boost.add(Math.max(1, Math.min(n - 1, Math.round((((t % 1) + 1) % 1) * n))));
   } else if (P.boostPads > 0) {
+    // Not into a tight turn: a boost there throws karts into the wall. Where no place is clear of
+    // one, the straightest parts are used as before.
+    const bends = turns(samples, P), ahead = Math.max(1, Math.round(5000 / P.step));
+    const intoTurn = (i) => { for (let k = 0; k <= ahead; k++) if (bends[(i + k) % n].radius < P.roadWidth * 2.5) return true; return false; };
+    const clear = frames.some((_, i) => !intoTurn(i));
     const straight = frames.map((f, i) => {
       let s = 0;
       for (let k = -3; k <= 3; k++) { const g = frames[(i + k + n) % n]; s += g.t[0] * f.t[0] + g.t[1] * f.t[1]; }
@@ -457,7 +465,7 @@ export function generateTrack(points, params = {}) {
     const used = [];
     for (const { i } of straight) {
       if (used.length >= P.boostPads) break;
-      if (i < n * 0.1 || used.some((u) => Math.min(Math.abs(u - i), n - Math.abs(u - i)) < n / (P.boostPads + 1) / 2)) continue;
+      if (i < n * 0.1 || (clear && intoTurn(i)) || used.some((u) => Math.min(Math.abs(u - i), n - Math.abs(u - i)) < n / (P.boostPads + 1) / 2)) continue;
       used.push(i);
       boost.add(i);
     }
@@ -480,7 +488,7 @@ export function generateTrack(points, params = {}) {
   };
   const face = (a, b, c, mat, uv) => model.push({ mat, v: [...a, ...b, ...c], uv });
   const depth = Math.max(300, Math.min(600, P.roadWidth * .16));
-  const groundY = frames.reduce((lowest, f) => Math.min(lowest, f.c[1]), Infinity) - depth - 40;
+  const groundY = [...frames, ...shortcuts.flatMap((s) => s.frames)].reduce((lowest, f) => Math.min(lowest, f.c[1]), Infinity) - depth - 40;
   const lower = (p) => [p[0], p[1] - depth, p[2]];
   const raised = (p) => [p[0], p[1] + 6, p[2]];
   const support = (center, top) => {
@@ -580,10 +588,14 @@ export function generateTrack(points, params = {}) {
   for (const { frames: branch } of shortcuts) {
     const flag = P.trickable ? 0x2000 : 0;
     let along = 0;
-    const open = Math.max(3, Math.ceil(P.roadWidth * 1.5 / P.step));
+    const walls = shortcutWalls(frames, branch, P, shortcuts.filter((other) => other.frames !== branch).map((other) => other.frames));
     for (let i = 0; i + 1 < branch.length; i++) {
       const f = branch[i], g = branch[i + 1], step = Math.hypot(g.c[0] - f.c[0], g.c[2] - f.c[2]);
       const v0 = along / P.roadWidth, v1 = (along + step) / P.roadWidth, u0 = along / 900, u1 = (along + step) / 900;
+      // A shortcut raised above the ground stands on pillars, like the main road. Not where it
+      // passes over the main road.
+      if (Math.floor((along + step) / 6000) !== Math.floor(along / 6000) && f.c[1] - depth - groundY > 700
+        && !frames.some((other) => other.c[1] < f.c[1] - depth && Math.hypot(other.c[0] - f.c[0], other.c[2] - f.c[2]) < other.half + Math.max(other.ol, other.or) + 350)) support(f.c, f.c[1] - depth);
       along += step;
       tri(f.L, f.R, g.R, flag, 'road', [0, v0, 1, v0, 1, v1]);
       tri(f.L, g.R, g.L, flag, 'road', [0, v0, 1, v1, 0, v1]);
@@ -594,12 +606,16 @@ export function generateTrack(points, params = {}) {
       face(f.R, rf, rg, 'foundation', [u0, 0, u0, 1, u1, 1]);
       face(lf, lg, rg, 'foundation', [0, u0, 0, u1, 1, u1]);
       face(lf, rg, rf, 'foundation', [0, u0, 1, u1, 1, u0]);
-      if (P.walls && P.wallHeight > 0 && i >= open && i + 1 < branch.length - open) {
+      if (P.walls && P.wallHeight > 0) {
         const up = (p) => [p[0], p[1] + P.wallHeight, p[2]];
-        tri(f.L, g.L, up(g.L), 0x000C, 'wall', [v0, 0, v1, 0, v1, 1]);
-        tri(f.L, up(g.L), up(f.L), 0x000C, 'wall', [v0, 0, v1, 1, v0, 1]);
-        tri(f.R, up(g.R), g.R, 0x000C, 'wall', [v0, 0, v1, 1, v1, 0]);
-        tri(f.R, up(f.R), up(g.R), 0x000C, 'wall', [v0, 0, v0, 1, v1, 1]);
+        if (walls[i][0]) {
+          tri(f.L, g.L, up(g.L), 0x000C, 'wall', [v0, 0, v1, 0, v1, 1]);
+          tri(f.L, up(g.L), up(f.L), 0x000C, 'wall', [v0, 0, v1, 1, v0, 1]);
+        }
+        if (walls[i][1]) {
+          tri(f.R, up(g.R), g.R, 0x000C, 'wall', [v0, 0, v1, 1, v1, 0]);
+          tri(f.R, up(f.R), up(g.R), 0x000C, 'wall', [v0, 0, v0, 1, v1, 1]);
+        }
       }
     }
   }
@@ -634,8 +650,14 @@ export function generateTrack(points, params = {}) {
   // above the road lets it find the floor and apply the vehicle's own offset.
   kmp.KTPT.push(make.KTPT([s0.c[0] - s0.t[0] * 200, s0.c[1] + 10, s0.c[2] - s0.t[1] * 200], [0, yaw(s0.t[0], s0.t[1]), 0]));
 
+  // Points of one kind on each shortcut, `every` samples apart, and the most a stretch between two
+  // shortcut ends can add when it is too short for one of its own.
+  const branchCount = (branch, every) => Math.max(1, Math.ceil((branch.length - 1 - Math.max(1, every >> 1)) / every));
+  const ends = new Set([0, ...shortcuts.flatMap((s) => [s.i, s.j])]).size;
+  const onShortcuts = (every) => shortcuts.reduce((sum, s) => sum + branchCount(s.frames, every), 0) + ends;
+
   // Checkpoints (first one is the finish line).
-  const cpStep = Math.max(1, Math.ceil(n / 200), Math.round(P.checkpointSpacing / P.step));
+  let cpStep = Math.max(1, Math.ceil(n / 200), Math.round(P.checkpointSpacing / P.step));
   const cps = [];
   const cpAt = (i) => {
     const f = frames[i];
@@ -660,8 +682,15 @@ export function generateTrack(points, params = {}) {
       appendGates(a, middle); appendGates(middle, b);
     } else if (b < n) cps.push(gates[b]);
   };
-  cps.push(gates[0]);
-  for (let i = 0; i < n; i += cpStep) appendGates(i, Math.min(n, i + cpStep));
+  // The game takes at most 255 checkpoints, shortcuts included: with many shortcuts they are
+  // spaced further apart.
+  for (;;) {
+    cps.length = 0;
+    cps.push(gates[0]);
+    for (let i = 0; i < n; i += cpStep) appendGates(i, Math.min(n, i + cpStep));
+    if (!shortcuts.length || cps.length + onShortcuts(cpStep) <= 255 || cpStep >= n) break;
+    cpStep++;
+  }
   cps[0].type = 0;
   // Key checkpoints only where every driver passes: a shortcut must not skip one.
   const shared = shortcuts.length ? cps.filter((cp) => !shortcuts.some((s) => cp._i >= s.i && cp._i < s.j)) : cps;
@@ -679,13 +708,17 @@ export function generateTrack(points, params = {}) {
   if (shortcuts.length) {
     // Each shortcut has its own gates and respawn point.
     const branchGates = shortcuts.map((shortcut) => {
-      const { frames: branch } = shortcut, every = Math.max(1, Math.round(P.checkpointSpacing / P.step));
+      const { frames: branch } = shortcut, every = cpStep;
       const middle = branch[branch.length >> 1];
       const respawn = make.JGPT([middle.c[0], middle.c[1] + 10, middle.c[2]], [0, yaw(middle.t[0], middle.t[1]), 0]);
       respawn.id = kmp.JGPT.length;
       kmp.JGPT.push(respawn);
       const gates = [];
-      for (let b = Math.max(1, every >> 1); b < branch.length - 1; b += every) {
+      // At least one, however short the shortcut: a group cannot be empty.
+      const places = [];
+      for (let b = Math.max(1, every >> 1); b < branch.length - 1; b += every) places.push(b);
+      if (!places.length) places.push(branch.length >> 1);
+      for (const b of places) {
         const f = branch[b], wide = f.half + 300;
         const gate = make.CKPT([f.c[0] + f.left[0] * wide, f.c[2] + f.left[1] * wide], [f.c[0] - f.left[0] * wide, f.c[2] - f.left[1] * wide]);
         gate.respawn = respawn.id;
@@ -693,7 +726,13 @@ export function generateTrack(points, params = {}) {
       }
       return gates;
     });
-    const linked = linkSections(make.group, cps, (cp) => cp._i, shortcuts, (s) => branchGates[s]);
+    // A stretch between two shortcut ends too short for a gate of its own gets one where it begins.
+    const fillGate = (low) => {
+      const gate = cpAt(low), before = cps.filter((cp) => cp._i <= low).at(-1);
+      gate.respawn = before ? before.respawn : 0;
+      return gate;
+    };
+    const linked = linkSections(make.group, cps, (cp) => cp._i, shortcuts, (s) => branchGates[s], fillGate);
     for (const group of linked) { for (const point of group.points) delete point._i; kmp.CKPT.push(group); }
   } else {
     cps.forEach((cp) => { delete cp._i; });
@@ -703,7 +742,11 @@ export function generateTrack(points, params = {}) {
   }
 
   // Enemy and item routes along the centerline.
-  const enStep = Math.max(1, Math.ceil(n / 255), Math.round(P.enemySpacing / P.step));
+  // The game takes at most 255 points per route kind, shortcuts included: with many shortcuts the
+  // points are spaced further apart, on the main road and on the shortcuts alike.
+  const routePoints = (step) => Math.ceil(n / step) + onShortcuts(step);
+  let enStep = Math.max(1, Math.ceil(n / 255), Math.round(P.enemySpacing / P.step));
+  while (routePoints(enStep) > 255 && enStep < n) enStep++;
   const en = [], it = [];
   for (let i = 0; i < n; i += enStep) {
     const f = frames[i], g = frames[(i + 1) % n];
@@ -715,12 +758,17 @@ export function generateTrack(points, params = {}) {
   }
   if (shortcuts.length) {
     const branchPoints = (makePoint) => (s) => {
-      const { frames: branch } = shortcuts[s], every = Math.max(1, Math.round(P.enemySpacing / P.step)), out = [];
+      const { frames: branch } = shortcuts[s], every = enStep, out = [];
       for (let b = Math.max(1, every >> 1); b < branch.length - 1; b += every) out.push({ ...makePoint([...branch[b].c]), width: Math.max(8, Math.round(branch[b].half / 100)) });
+      if (!out.length) { const middle = branch[branch.length >> 1]; out.push({ ...makePoint([...middle.c]), width: Math.max(8, Math.round(middle.half / 100)) }); }
       return out;
     };
     for (const [list, section, makePoint] of [[en, kmp.ENPT, make.ENPT], [it, kmp.ITPT, make.ITPT]]) {
-      for (const group of linkSections(make.group, list, (p) => p._i, shortcuts, branchPoints(makePoint))) {
+      const fillPoint = (low) => {
+        const f = frames[low], g = frames[(low + 1) % n], pos = f.c.map((v, k) => v + (g.c[k] - v) * .1);
+        return { ...makePoint(pos), width: Math.max(8, Math.round(f.half / 100)), _i: low };
+      };
+      for (const group of linkSections(make.group, list, (p) => p._i, shortcuts, branchPoints(makePoint), fillPoint)) {
         for (const point of group.points) delete point._i;
         section.push(group);
       }
@@ -783,6 +831,7 @@ export function generateTrack(points, params = {}) {
     length,
     shortcuts: shortcuts.map(({ i, j, length: size }) => ({ from: i / n, to: j / n, length: size })),
     shortcutProblems,
+    shortcutCrossesStart,
     sceneryFiles: [...new Map(scenery.map(({ kind }) => [kind.file, { file: kind.file, track: kind.track, id: kind.id }])).values()],
   };
 }
