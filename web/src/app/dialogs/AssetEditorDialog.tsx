@@ -464,6 +464,7 @@ export function AssetEditorDialog({ close, initialCategory, initialArchive, init
                     const values = await dialogs.form({ title: "Move model part", fields: ["X", "Y", "Z"].map((axis) => ({ key: axis, label: axis, type: "number" as const, value: 0, step: 1 })) });
                     if (values) run("Moving model part…", async () => translateBRRESPart(bytes, model.name, partIndex, [Number(values.X), Number(values.Y), Number(values.Z)]));
                   }}>Move part…</Button></span>
+                  <span title={partIndex < 0 ? "Select a polygon above" : "Positions and texture coordinates of the selected polygon, value by value"}><Button size="sm" variant="secondary" disabled={!!busy || partIndex < 0} onClick={() => run("Editing vertices…", async () => await dialogs.open("vertexEditor", { brres: bytes, modelName: model.name, partName: model.objects[partIndex]?.name }) as Uint8Array | null)}>Vertices and UVs…</Button></span>
                 </div></>}
             </div>}
             {view === "textures" && <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">{textures.map((name) => {
@@ -478,6 +479,8 @@ export function AssetEditorDialog({ close, initialCategory, initialArchive, init
               </button>;
             })}</div>}
             {view === "animations" && <div className="space-y-2 text-xs">
+              <Button size="sm" variant="secondary" disabled={!!busy || !bytes} title="Bones, texture movement, colours, texture swaps and visibility, keyframe by keyframe" onClick={() => run("Editing animations…", async () => await dialogs.open("animationEditor", { brres: bytes }) as Uint8Array | null)}>Edit all animations…</Button>
+              <Button size="sm" variant="ghost" className="ml-2" disabled={!!busy || !bytes} title="Lights, fog and cameras stored in this file (SCN0)" onClick={() => run("Editing scenes…", async () => await dialogs.open("scene", { brres: bytes }) as Uint8Array | null)}>Scene (SCN0)…</Button>
               {/* Same list as Models. The arrow (or the name) only opens an animation; the play button
                   plays it in the preview and stops it again, back to the rest pose. */}
               <div className="max-h-72 overflow-y-auto border">
@@ -496,7 +499,8 @@ export function AssetEditorDialog({ close, initialCategory, initialArchive, init
                       <div className="flex flex-wrap items-center gap-3 border-b py-1 pl-16 pr-2">
                         <span className="text-muted-foreground">{anim.frames} frames</span>
                         <label className="flex cursor-pointer items-center gap-1"><input type="checkbox" className="accent-primary" checked={!!anim.loop} onChange={(event) => run("Changing animation loop…", async () => setCHR0Loop(bytes, anim.name, event.target.checked))} /> Loop</label>
-                        <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-[11px]" disabled={!!busy} onClick={() => run("Removing animation…", async () => (await dialogs.confirm({ title: "Delete animation", description: `Remove ${anim.name} from this BRRES?`, confirmLabel: "Delete", destructive: true })) ? api.deleteAnimation(bytes, anim.name) : null)}><Trash2 /> Delete</Button>
+                        <Button size="sm" variant="secondary" className="ml-auto h-6 px-2 text-[11px]" disabled={!!busy} title="Edit this file's animations keyframe by keyframe" onClick={() => run("Editing animations…", async () => await dialogs.open("animationEditor", { brres: bytes, initial: { kind: "chr", name: anim.name } }) as Uint8Array | null)}>Keyframes…</Button>
+                        <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]" disabled={!!busy} onClick={() => run("Removing animation…", async () => (await dialogs.confirm({ title: "Delete animation", description: `Remove ${anim.name} from this BRRES?`, confirmLabel: "Delete", destructive: true })) ? api.deleteAnimation(bytes, anim.name) : null)}><Trash2 /> Delete</Button>
                       </div>
                       {bones.map((bone) => <div key={bone} className="flex items-center gap-2 border-b py-1.5 pl-16 pr-2 text-muted-foreground" title={`${anim.name} / ${bone}`}><Bone className="size-3 shrink-0" /><span className="min-w-0 flex-1 truncate">{bone}</span></div>)}
                     </>}

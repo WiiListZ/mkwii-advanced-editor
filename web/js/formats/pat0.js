@@ -1,4 +1,5 @@
 // NW4R texture/palette pattern animations, including all eight texture slots.
+import { dictionary } from './nw4r.js';
 const bytes = (s) => new TextEncoder().encode(s);
 const aligned = (n) => Math.ceil(n / 4) * 4;
 
@@ -40,34 +41,6 @@ export function readPAT0(data, offset = 0, name = '') {
   return { name: name || string(offset + v.getInt32(base)), frames: v.getUint16(base + 8), loop: !!v.getUint32(base + 16), materials };
 }
 
-// Construct a descending-bit Patricia dictionary. The branch number is the
-// highest differing bit of the names, counting bytes from the start of a name.
-function dictionary(names) {
-  const nodes = [{ bit: 65535, left: 0, right: 0, text: new Uint8Array() }];
-  const bitAt = (text, bit) => ((text[bit >>> 3] || 0) >>> (bit & 7)) & 1;
-  for (const name of names) {
-    const text = bytes(name); let parent = 0, leaf = nodes[0].left;
-    while (nodes[parent].bit > nodes[leaf].bit) {
-      parent = leaf; leaf = bitAt(text, nodes[leaf].bit) ? nodes[leaf].right : nodes[leaf].left;
-    }
-    let bit = -1;
-    for (let i = Math.max(text.length, nodes[leaf].text.length) - 1; i >= 0; i--) {
-      const diff = (text[i] || 0) ^ (nodes[leaf].text[i] || 0);
-      if (diff) { bit = i * 8 + 31 - Math.clz32(diff); break; }
-    }
-    if (bit < 0 || bit >= 65535) throw new Error('Invalid or duplicate PAT0 material name');
-    parent = 0; let child = nodes[0].left;
-    while (nodes[parent].bit > nodes[child].bit && nodes[child].bit > bit) {
-      parent = child; child = bitAt(text, nodes[child].bit) ? nodes[child].right : nodes[child].left;
-    }
-    const index = nodes.length, right = bitAt(text, bit);
-    nodes.push({ bit, left: right ? child : index, right: right ? index : child, text });
-    if (parent && bitAt(text, nodes[parent].bit)) nodes[parent].right = index;
-    else nodes[parent].left = index;
-  }
-  return nodes;
-}
-
 export function writePAT0(animation) {
   const materials = [...animation.materials].map(([name, slots]) => [name, [...slots].sort((a, b) => a.index - b.index)]), textures = [], palettes = [];
   const add = (list, name) => { if (name !== undefined && !list.includes(name)) list.push(name); };
@@ -75,7 +48,8 @@ export function writePAT0(animation) {
     if (slot.index < 0 || slot.index > 7 || !slot.keys.length || slot.keys.length > 65535) throw new Error('Invalid PAT0 slot');
     if (i && slots[i - 1].index === slot.index) throw new Error('Duplicate PAT0 slot');
     for (const [k, key] of slot.keys.entries()) {
-      if (!Number.isFinite(key.frame) || key.frame < 0 || key.frame > animation.frames || (k && key.frame <= slot.keys[k - 1].frame)) throw new Error('Invalid PAT0 frame time');
+      // The game's own patterns repeat frames and start before frame 0 (old_koopa_gba).
+      if (!Number.isFinite(key.frame) || (k && key.frame < slot.keys[k - 1].frame)) throw new Error('Invalid PAT0 frame time');
       add(textures, key.texture); add(palettes, key.palette);
     }
   }

@@ -2101,6 +2101,40 @@ export class Editor {
     } catch (e: any) { toast.error("Could not change the animation", { description: e.message }); }
   }
 
+  // The keyframes of the track model's animations (bones, texture movement, colours, swaps, visibility).
+  async editTrackAnimations(initial?: { kind: string; name: string }) {
+    const node = this.doc.szs && findFile(this.doc.szs, "course_model.brres");
+    if (!node) return toast.warning("Open a track with course_model.brres to edit its animations.");
+    const next = await dialogs.open("animationEditor", { brres: node.data, title: "course_model.brres", initial }) as Uint8Array | null;
+    if (!next) return;
+    this.doc.change("Edit animations", () => { node.data = next; }, { structural: true });
+    this.doc.emit("model");
+    await this.assets?.setTrack(this.doc.szs);
+    toast.success("Animations changed", { description: "Save the SZS to keep the change." });
+  }
+
+  // The vertices (positions and texture coordinates) of a track model part, value by value.
+  async editTrackVertices(modelName: string, partIndex: number) {
+    const node = this.doc.szs && findFile(this.doc.szs, "course_model.brres");
+    const part = node && parseBRRES(node.data).models.find((m: any) => m.name === modelName)?.objects[partIndex];
+    if (!node || !part) return toast.warning("Select a part of the track model first.");
+    const next = await dialogs.open("vertexEditor", { brres: node.data, modelName, partName: part.name }) as Uint8Array | null;
+    if (!next) return;
+    this.doc.change(`Edit vertices of ${part.name}`, () => { node.data = next; }, { structural: true });
+    this.doc.emit("model");
+    await this.assets?.setTrack(this.doc.szs);
+  }
+
+  // The SCN0 scenes (lights, fog, cameras) stored in the track model.
+  async editTrackScene() {
+    const node = this.doc.szs && findFile(this.doc.szs, "course_model.brres");
+    if (!node) return toast.warning("Open a track with course_model.brres to edit its scenes.");
+    const next = await dialogs.open("scene", { brres: node.data, title: "course_model.brres" }) as Uint8Array | null;
+    if (!next) return;
+    this.doc.change("Edit scene lights and cameras", () => { node.data = next; }, { structural: false });
+    this.doc.emit("model");
+  }
+
   async deleteAnimation(name: string) {
     const node = this.doc.szs && findFile(this.doc.szs, "course_model.brres");
     if (!node) return;
@@ -2764,6 +2798,8 @@ export class Editor {
       case "ghostRecord": return dialogs.open("ghostRecord", {});
       case "trackGhosts": return this.workspace() ? dialogs.open("trackGhosts", {}) : toast.warning("Choose the game folder first", { description: "A track's ghosts are in Race/TimeAttack, in the game folder." });
       case "materials": return this.doc.szs ? dialogs.open("materials", {}) : toast.warning("Open a track archive (.szs) to edit its materials.");
+      case "trackAnimations": return this.editTrackAnimations();
+      case "trackScene": return this.editTrackScene();
       case "sculpt": return this.doc.szs ? dialogs.open("sculpt", {}) : toast.warning("Open a track archive (.szs) to sculpt its model.");
       case "primitive": return this.doc.szs ? dialogs.open("primitive", {}) : toast.warning("Open a track archive (.szs) to add a primitive model.");
       case "versions": return this.doc.filePath && hasBackend ? dialogs.open("versions", {}) : toast.warning("Save the track first", { description: "Versions are kept each time a track file is saved." });

@@ -382,6 +382,7 @@ function AnimationInspector({ animation }: { animation: any }) {
       <FieldRow label={`Bones (${bones.length})`}>
         <div className="max-h-40 overflow-y-auto rounded-md border bg-muted/20 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground">{bones.map((b) => <div key={b} className="truncate">{b}</div>)}</div>
       </FieldRow>
+      <Button size="sm" variant="secondary" className="self-start" onClick={() => void ed.editTrackAnimations({ kind: "chr", name: animation.name })}>Edit keyframes…</Button>
       <Button size="sm" variant="ghost" className="self-start text-destructive hover:text-destructive" onClick={() => ed.deleteAnimation(animation.name)}><Trash2 /> Delete animation</Button>
     </div>
   );
@@ -476,6 +477,7 @@ function ModelInspector() {
         <Button size="sm" variant="secondary" onClick={() => ed.cmd("duplicate")}><Plus /> Duplicate</Button>
         <Button size="sm" variant="secondary" disabled={!ed.doc.szs} onClick={() => ed.generateCollisionForSelection()} title="Generate course KCL from this selected model part"><BrickWall /> Generate collision…</Button>
         <RemoveSelectionCollision />
+        <Button size="sm" variant="secondary" title="Positions and texture coordinates of this part, value by value" onClick={() => void ed.editTrackVertices(selected.modelName, selected.partIndex)}>Vertices and UVs…</Button>
         <Button size="sm" variant="ghost" className="text-destructive" onClick={() => ed.cmd("delete")}><Trash2 /> Delete</Button>
       </div>
       <Separator />

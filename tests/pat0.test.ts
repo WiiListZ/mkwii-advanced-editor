@@ -37,7 +37,9 @@ test("PAT0 resource dictionary supports native name lookup for prefix and case-s
 test("PAT0 rejects duplicate slots and invalid frame times", () => {
   const base = { name: "Invalid", frames: 2, loop: true };
   expect(() => writePAT0({ ...base, materials: new Map([["Road", [{ index: 0, keys: [{ frame: 0, texture: "image" }] }, { index: 0, keys: [{ frame: 1, texture: "image" }] }]]]) })).toThrow("Duplicate PAT0 slot");
-  expect(() => writePAT0({ ...base, materials: new Map([["Road", [{ index: 0, keys: [{ frame: 3, texture: "image" }] }]]]) })).toThrow("Invalid PAT0 frame time");
+  // Frames out of order are refused; a repeated frame or one before 0 is not (the game's own patterns have both).
+  expect(() => writePAT0({ ...base, materials: new Map([["Road", [{ index: 0, keys: [{ frame: 1, texture: "image" }, { frame: 0, texture: "image" }] }]]]) })).toThrow("Invalid PAT0 frame time");
+  expect(() => writePAT0({ ...base, materials: new Map([["Road", [{ index: 0, keys: [{ frame: -1, texture: "image" }, { frame: 0, texture: "image" }, { frame: 0, texture: "other" }] }]]]) })).not.toThrow();
 });
 
 test("decoding and previewing the same indexed texture with different palettes preserves every frame's colours", () => {

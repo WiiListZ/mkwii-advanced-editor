@@ -28,6 +28,7 @@ import { DiscordPresence, type EditorActivity } from "./discord-presence.ts";
 import { listVersions, readVersion, restoreVersion, saveVersion } from "./track-versions.ts";
 import { CupTrackDrafts } from "./cup-track-drafts.ts";
 import { createSnapshot, deleteSnapshot, listSnapshots, restoreSnapshot } from "./snapshots.ts";
+import { changeBRRESResources } from "./brres-resources.ts";
 // @ts-ignore - plain JS module shared with the UI
 import { yaz0Compress } from "../web/js/formats/yaz0.js";
 
@@ -428,6 +429,14 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       const warnings: string[] = [];
       const result = await import3DModel(new Uint8Array(await req.arrayBuffer()), url.searchParams.get("path") || "", target, url.searchParams.get("animation") || "", warnings);
       return new Response(binary(result), { headers: { "content-type": "application/octet-stream", "x-import-warnings": encodeURIComponent(JSON.stringify(warnings)) } });
+    }
+
+    case "brres-resources": {
+      if (req.method !== "POST") return json({ error: "POST required" }, 405);
+      const body = await req.json();
+      const decode = (text: string) => new Uint8Array(Buffer.from(String(text), "base64"));
+      const changes = (Array.isArray(body.changes) ? body.changes : []).map((c: any) => ({ folder: String(c.folder), name: String(c.name), data: c.data == null ? null : decode(c.data) }));
+      return new Response(binary(await changeBRRESResources(decode(body.brres), changes)), { headers: { "content-type": "application/octet-stream" } });
     }
 
     case "convert-model-brres": {

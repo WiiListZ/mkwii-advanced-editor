@@ -71,7 +71,8 @@ export function needsBRRESPaletteConversion(data: Uint8Array) {
     if (v.getUint16(header + 14)) return true;
   }
   const folder = folders.find((f) => f.name === "Textures(NW4R)");
-  return !!folder && group(data, folder.offset).some((t) => indexed(v.getUint32(t.offset + 32)));
+  // TEX0 version 2 has one more section offset before the format.
+  return !!folder && group(data, folder.offset).some((t) => indexed(v.getUint32(t.offset + ([1, 2].includes(v.getUint32(t.offset + 8)) ? 36 : 32))));
 }
 
 function directTexture(tex: any, palette: any, resourceName = tex.name) {

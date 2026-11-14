@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { api, FILTERS } from "../../../js/api.js";
 import { parseBRRES, TEXTURE_FORMATS, textureRGBA } from "../../../js/formats/brres.js";
+import { dialogs } from "../dialogs-store";
 import { editor } from "../editor";
 import { useEditHistory, useHistoryKeys } from "../edit-history";
 
@@ -405,6 +406,8 @@ export function TexturePainter({ name, bytes: savedBytes, tall = false, original
         {overlay && <Button size="sm" variant={moving ? "default" : "secondary"} aria-pressed={moving} title="Select the overlay PNG to move or resize it" onClick={() => { setMoving(true); setEraser(false); setPicking(false); }}><Move /> Move overlay</Button>}
         {overlay && <Button size="sm" variant="secondary" title="Delete the PNG overlay and restore the texture underneath" onClick={removeOverlay}><Trash2 /> Delete overlay</Button>}
         <Button size="sm" variant="secondary" onClick={() => loadPNG("replace")}><ImagePlus /> Replace PNG…</Button>
+        {staged && !decode && <Button size="sm" variant="secondary" disabled={dirty} title={dirty ? "Save or discard the strokes first" : "Change the format, the size or the mipmaps, or use an image of any size"}
+          onClick={async () => { const next = await dialogs.open("textureFormat", { brres: savedBytes, name }) as Uint8Array | null; if (next) staged.save(next); }}>Format and size…</Button>}
         <Button size="sm" variant="secondary" onClick={() => loadPNG("overlay")}><ImagePlus /> Overlay PNG…</Button>
       </div>
       <label className="flex items-center gap-2 text-[11px] text-muted-foreground">Color

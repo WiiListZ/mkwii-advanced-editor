@@ -343,6 +343,12 @@ export const api = {
   },
 
   // name: the model's name inside the BRRES ('converted' when empty).
+  // Replaces, adds (data) or removes (data null) resources of a BRRES: changes [{ folder, name, data }].
+  async changeBRRESResources(brres, changes) {
+    if (!hasBackend) throw new Error('Changing the resources of a model requires the desktop app');
+    const base64 = (bytes) => { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(s); };
+    return call('brres-resources', { method: 'POST', raw: true, body: { brres: base64(brres), changes: changes.map((c) => ({ folder: c.folder, name: c.name, data: c.data ? base64(c.data) : null })) } });
+  },
   async convertModelBRRES(path, animation = '', name = '') {
     if (!hasBackend || !path) throw new Error('BRRES conversion requires the desktop app and a model file on disk');
     return call('convert-model-brres', { method: 'POST', query: { path, animation, ...(name ? { name } : {}) }, raw: true });

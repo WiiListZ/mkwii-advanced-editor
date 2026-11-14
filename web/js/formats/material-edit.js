@@ -102,3 +102,61 @@ export function setBRRESMaterial(data, modelName, materialName, patch) {
   }
   return out;
 }
+
+// ---- TEV stages ------------------------------------------------------------------------------
+// An MDL0 shader is 0x200 bytes: a 0x20 header (stage count at 0x0C), the swap tables and the
+// indirect order, then eight blocks of 0x30 bytes from 0x80, one per pair of stages, with a slot
+// for every register write (unused slots are zero, which the GPU skips). So stages can be changed,
+// added (up to 16) or removed in place. Checked on every material of the game's tracks.
+const SLOT = { mask: 0x00, ksel: 0x05, order: 0x0A, colorEven: 0x0F, colorOdd: 0x14, alphaEven: 0x19, alphaOdd: 0x1E, indEven: 0x23, indOdd: 0x28 };
+const put = (out, at, reg, value) => { out[at] = 0x61; out[at + 1] = reg; out[at + 2] = (value >> 16) & 255; out[at + 3] = (value >> 8) & 255; out[at + 4] = value & 255; };
+const clear = (out, at) => out.fill(0, at, at + 5);
+const field = (value, max) => { if (!Number.isInteger(value) || value < 0 || value > max) throw new Error('Invalid TEV stage value'); return value; };
+export const encodeTevColor = (c) => (field(c.d, 15) | field(c.c, 15) << 4 | field(c.b, 15) << 8 | field(c.a, 15) << 12 | field(c.bias, 3) << 16 | field(c.sub, 1) << 18 | field(c.clamp, 1) << 19 | field(c.scale, 3) << 20 | field(c.dest, 3) << 22) >>> 0;
+export const encodeTevAlpha = (a) => (field(a.rswap, 3) | field(a.tswap, 3) << 2 | field(a.d, 7) << 4 | field(a.c, 7) << 7 | field(a.b, 7) << 10 | field(a.a, 7) << 13 | field(a.bias, 3) << 16 | field(a.sub, 1) << 18 | field(a.clamp, 1) << 19 | field(a.scale, 3) << 20 | field(a.dest, 3) << 22) >>> 0;
+const encodeOrder = (s) => field(s.texMap, 7) | field(s.texCoord, 7) << 3 | (s.texEnabled ? 1 : 0) << 6 | field(s.channel, 7) << 7;
+
+// The materials that use a material's shader: they all change with it.
+export function materialsSharingShader(data, modelName, materialName) {
+  const model = parseBRRES(data).models.find((m) => m.name === modelName);
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const shaderOf = (m) => m.offset + view.getInt32(m.offset + 0x28);
+  const material = model?.materials.find((m) => m.name === materialName);
+  if (!material) return [];
+  return model.materials.filter((m) => shaderOf(m) === shaderOf(material)).map((m) => m.name);
+}
+
+// stages: what parseGXMaterial gives (texMap, texCoord, texEnabled, channel, color, alpha, kcsel,
+// kasel, indirect), 1 to 16 of them.
+export function setBRRESTevStages(data, modelName, materialName, stages) {
+  if (!Array.isArray(stages) || stages.length < 1 || stages.length > 16) throw new Error('A material needs 1 to 16 TEV stages');
+  const out = data.slice(), view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  const model = parseBRRES(data).models.find((m) => m.name === modelName);
+  const material = model?.materials.find((m) => m.name === materialName);
+  if (!material) throw new Error(`Material ${materialName} not found`);
+  const o = material.offset, shader = o + view.getInt32(o + 0x28);
+  if (shader === o || view.getUint32(shader) !== 0x200) throw new Error('This material has no standard shader block to edit');
+  for (let pair = 0; pair < 8; pair++) {
+    const base = shader + 0x80 + pair * 0x30, even = stages[pair * 2], odd = stages[pair * 2 + 1];
+    if (!even) { out.fill(0, base, base + 0x30); continue; }
+    // The konst selections share their register with the swap tables (the mask keeps those bits).
+    const old = (out[base + SLOT.ksel] === 0x61) ? (out[base + SLOT.ksel + 2] << 16) | (out[base + SLOT.ksel + 3] << 8) | out[base + SLOT.ksel + 4] : 0;
+    const ksel = (old & 0xF) | field(even.kcsel, 31) << 4 | field(even.kasel, 31) << 9 | (odd ? field(odd.kcsel, 31) << 14 | field(odd.kasel, 31) << 19 : 0);
+    put(out, base + SLOT.mask, 0xFE, 0xFFFFF0);
+    put(out, base + SLOT.ksel, 0xF6 + pair, ksel >>> 0);
+    // A pair without its second stage has it as 'none' (texture map and coordinate 7, channel 7), as Nintendo's files do.
+    put(out, base + SLOT.order, 0x28 + pair, (encodeOrder(even) | (odd ? encodeOrder(odd) : 0x3BF) << 12) >>> 0);
+    put(out, base + SLOT.colorEven, 0xC0 + pair * 4, encodeTevColor(even.color));
+    put(out, base + SLOT.alphaEven, 0xC1 + pair * 4, encodeTevAlpha(even.alpha));
+    put(out, base + SLOT.indEven, 0x10 + pair * 2, (even.indirect ?? 0) >>> 0);
+    if (odd) {
+      put(out, base + SLOT.colorOdd, 0xC2 + pair * 4, encodeTevColor(odd.color));
+      put(out, base + SLOT.alphaOdd, 0xC3 + pair * 4, encodeTevAlpha(odd.alpha));
+      put(out, base + SLOT.indOdd, 0x11 + pair * 2, (odd.indirect ?? 0) >>> 0);
+    } else for (const slot of [SLOT.colorOdd, SLOT.alphaOdd, SLOT.indOdd]) clear(out, base + slot);
+  }
+  out[shader + 0x0C] = stages.length;
+  // Every material using this shader draws with its stage count.
+  for (const m of model.materials) if (m.offset + view.getInt32(m.offset + 0x28) === shader) out[m.offset + 0x16] = stages.length;
+  return out;
+}

@@ -11,7 +11,7 @@ import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { api, FILTERS } from "../../../js/api.js";
 import { buildBRSTM, decodeBRSTM, parseBRSTM, setBRSTMLoop, setBRSTMTrackMix } from "../../../js/formats/brstm.js";
-import { listWaves, parseBRSAR, readWave, replaceWave, setStreamRoom, streamSound, streamTrackCount } from "../../../js/formats/brsar.js";
+import { listWaves, parseBRSAR, readWave, replaceWave, setBRSARSoundProperties, setStreamRoom, streamSound, streamTrackCount } from "../../../js/formats/brsar.js";
 import { MAX_CHANNELS, MAX_TRACKS, musicTriggers, SOUND_TRIGGER, trackPlays } from "../../../js/data/music-tracks.js";
 import { replaceTrack, withoutTrack, withTrack } from "../../../js/editor/stream-tracks.js";
 import { encodeFLAC, encodeWAV, isolateTrack, mixTracks, musicLabel, panGains, toFloat32, toInt16 } from "../../../js/editor/audio.js";
@@ -609,6 +609,7 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
           {item.kind === "music" && <TracksSection item={item} clip={clip} archive={archive} busy={busy} setBusy={setBusy} elapsed={elapsed}
             playing={playing} playingTrack={playingTrack} play={play} stop={stop} setElapsed={setElapsed} exportAs={exportAs} liveMix={liveMix}
             musicBytes={musicBytes} onReplaceMusic={onReplaceMusic} onMixOnly={(bytes) => { mixOnly.current = bytes; onReplaceMusic(bytes); }} onArchiveChange={onArchiveChange} onPaintTrigger={onPaintTrigger} />}
+          {item.wave?.kind === "Sound" && archive && <SoundProperties archive={archive} index={Number(item.wave.key.slice(1))} onChange={(next) => onArchiveChange(next, item.key)} />}
           <p className="m-0 text-[11px] leading-relaxed text-muted-foreground">
             {item.kind === "music"
               ? (clip.tracks?.length || 0) > 1
@@ -751,5 +752,32 @@ function TracksSection({ item, clip, archive, busy, setBusy, elapsed, playing, p
       })}
     </div>
     {triggers && !canPaint && <p className="m-0 mt-1.5 text-[11px] text-muted-foreground">Open the track to paint its Sound Triggers from here.</p>}
+  </div>;
+}
+
+// A sound's own settings in revo_kart.brsar (its INFO entry): how loud, how important when many
+// sounds play at once, which player plays it, and how it pans.
+function SoundProperties({ archive, index, onChange }: { archive: any; index: number; onChange: (archive: any) => void }) {
+  const sound = archive.sounds[index];
+  if (!sound) return null;
+  const set = (patch: Record<string, number>) => {
+    try { onChange(parseBRSAR(setBRSARSoundProperties(archive.data, index, patch))); }
+    catch (e: any) { toast.error("Could not change the sound", { description: e.message }); }
+  };
+  const row = (label: string, hint: string, control: React.ReactNode) => <label className="flex items-center gap-2 text-xs" title={hint}><span className="w-32 shrink-0">{label}</span>{control}</label>;
+  return <div className="space-y-1.5 rounded-md border p-2.5" data-sound-properties>
+    <div className="text-xs font-semibold">Sound properties · {sound.name}</div>
+    {row("Volume", "0 to 255; the game's own sounds use 0 to 127", <input type="range" min={0} max={255} defaultValue={sound.volume} key={`v${index}:${sound.volume}`} onPointerUp={(e) => set({ volume: Number(e.currentTarget.value) })} className="min-w-0 flex-1" />)}
+    <p className="m-0 text-right text-[11px] tabular-nums text-muted-foreground">{sound.volume}</p>
+    {row("Priority", "When too many sounds play, those with a lower priority stop first (0 to 127; most use 64)", <input type="range" min={0} max={127} defaultValue={sound.priority} key={`p${index}:${sound.priority}`} onPointerUp={(e) => set({ priority: Number(e.currentTarget.value) })} className="min-w-0 flex-1" />)}
+    <p className="m-0 text-right text-[11px] tabular-nums text-muted-foreground">{sound.priority}</p>
+    {row("Player", "The group of sounds it plays in, each with its own limit of sounds at once", <select aria-label="Player" value={sound.player} onChange={(e) => set({ player: Number(e.target.value) })} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1 text-xs">
+      {archive.players.map((p: any, i: number) => <option key={i} value={i}>{p.name} · up to {p.playableSounds}</option>)}
+    </select>)}
+    {row("Pan", "How the sound is placed between the speakers", <select aria-label="Pan mode" value={sound.panMode} onChange={(e) => set({ panMode: Number(e.target.value) })} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1 text-xs">
+      <option value={0}>Balance</option><option value={1}>Dual</option>
+    </select>)}
+    {row("Wii Remote filter", "Filter of the sound on the Wii Remote speaker (0 to 127)", <input type="number" min={0} max={127} defaultValue={sound.remoteFilter} key={`r${index}:${sound.remoteFilter}`} onBlur={(e) => set({ remoteFilter: Math.max(0, Math.min(127, Math.round(Number(e.currentTarget.value) || 0))) })} className="h-7 w-20 rounded-md border bg-background px-1 text-xs" />)}
+    <p className="m-0 text-[11px] text-muted-foreground">These settings belong to this sound only. Save writes them with the archive.</p>
   </div>;
 }

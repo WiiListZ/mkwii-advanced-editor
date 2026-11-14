@@ -33,7 +33,7 @@ export function parseBRSAR(data) {
     const type = r.u8(e + 0x16);
     // A stream: how many channels the game sets aside for it, and which of its tracks it plays (bits).
     const stream = type === 2 ? { at: ref(e + 0x18), channels: r.u16(ref(e + 0x18) + 4), tracks: r.u16(ref(e + 0x18) + 6) } : null;
-    return { index, name: name(r.u32(e)), fileId: r.u32(e + 4), volume: r.u8(e + 0x14), type, waveEntry: type === 3 ? r.u32(ref(e + 0x18)) : -1, stream };
+    return { index, entry: e, name: name(r.u32(e)), fileId: r.u32(e + 4), player: r.u32(e + 8), volume: r.u8(e + 0x14), priority: r.u8(e + 0x15), remoteFilter: r.u8(e + 0x17), panMode: r.u8(e + 0x28), panCurve: r.u8(e + 0x29), type, waveEntry: type === 3 ? r.u32(ref(e + 0x18)) : -1, stream };
   });
   const banks = table(ib + 8).map((e) => ({ name: name(r.u32(e)), fileId: r.u32(e + 4) }));
   const files = table(ib + 0x18).map((e, index) => ({
@@ -46,7 +46,8 @@ export function parseBRSAR(data) {
     index, entry: e, name: name(r.u32(e)), offset: r.u32(e + 0x10), size: r.u32(e + 0x14), waveOffset: r.u32(e + 0x18), waveSize: r.u32(e + 0x1c),
     items: table(e + 0x20).map((it) => ({ entry: it, fileId: r.u32(it), offset: r.u32(it + 4), size: r.u32(it + 8), waveOffset: r.u32(it + 12), waveSize: r.u32(it + 16) })),
   }));
-  const archive = { data, r, sounds, banks, files, groups };
+  const players = table(ib + 0x10).map((e) => ({ name: name(r.u32(e)), playableSounds: r.u8(e + 4) }));
+  const archive = { data, r, sounds, banks, files, groups, players };
   return archive;
 }
 
@@ -273,5 +274,25 @@ function rebuild(archive, newWaves) {
   v.setUint32(0x08, total);
   v.setUint32(0x24, total - fileSection);
   v.setUint32(fileSection + 4, total - fileSection);
+  return out;
+}
+
+// A sound's properties in its INFO entry, changed in place: volume (0-255, the game's own use 0-127),
+// player priority (0-127), the player that plays it, remote speaker filter, pan mode and curve.
+export const SOUND_PROPERTIES = { volume: [0x14, 255], priority: [0x15, 127], remoteFilter: [0x17, 127], panMode: [0x28, 1], panCurve: [0x29, 255] };
+export function setBRSARSoundProperties(data, index, patch) {
+  const archive = parseBRSAR(data), sound = archive.sounds[index];
+  if (!sound) throw new Error(`Sound ${index} not found`);
+  const out = data.slice(), view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  for (const [key, value] of Object.entries(patch)) {
+    if (key === "player") {
+      if (!Number.isInteger(value) || value < 0 || value >= archive.players.length) throw new Error(`Player must be 0 to ${archive.players.length - 1}`);
+      view.setUint32(sound.entry + 8, value); continue;
+    }
+    const field = SOUND_PROPERTIES[key];
+    if (!field) throw new Error(`Unknown sound property ${key}`);
+    if (!Number.isInteger(value) || value < 0 || value > field[1]) throw new Error(`${key} must be 0 to ${field[1]}`);
+    out[sound.entry + field[0]] = value;
+  }
   return out;
 }

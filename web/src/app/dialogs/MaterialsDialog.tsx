@@ -7,7 +7,22 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { BLEND_FACTORS, CULL_MODES, setBRRESMaterial } from "../../../js/formats/material-edit.js";
+import { BLEND_FACTORS, CULL_MODES, materialsSharingShader, setBRRESMaterial, setBRRESTevStages } from "../../../js/formats/material-edit.js";
+
+// What each TEV stage field means, as the GX documentation names it.
+const COLOR_IN = ["Previous colour", "Previous alpha", "Register 0 colour", "Register 0 alpha", "Register 1 colour", "Register 1 alpha", "Register 2 colour", "Register 2 alpha", "Texture colour", "Texture alpha", "Raster (light) colour", "Raster (light) alpha", "One", "Half", "Konst", "Zero"].map((t, i) => [i, t]);
+const ALPHA_IN = ["Previous alpha", "Register 0 alpha", "Register 1 alpha", "Register 2 alpha", "Texture alpha", "Raster (light) alpha", "Konst", "Zero"].map((t, i) => [i, t]);
+const BIAS = [[0, "None"], [1, "+0.5"], [2, "−0.5"], [3, "Compare mode"]];
+const OP = [[0, "Add: D + ((1−C)·A + C·B)"], [1, "Subtract: D − ((1−C)·A + C·B)"]];
+const SCALE = [[0, "×1"], [1, "×2"], [2, "×4"], [3, "×0.5"]];
+const DEST = [[0, "Previous"], [1, "Register 0"], [2, "Register 1"], [3, "Register 2"]];
+const CHANNEL = [[0, "Light channel 0"], [1, "Light channel 1"], [5, "Bump alpha"], [6, "Bump alpha (normalised)"], [7, "None"]];
+const KONST_FRACTIONS = [[0, "1"], [1, "7/8"], [2, "3/4"], [3, "5/8"], [4, "1/2"], [5, "3/8"], [6, "1/4"], [7, "1/8"]];
+const KONST_PARTS = [16, 20, 24, 28].flatMap((base, c) => [0, 1, 2, 3].map((k) => [base + k, `Konst ${k} ${"RGBA"[c]}`]));
+const KCSEL = [...KONST_FRACTIONS, ...[0, 1, 2, 3].map((k) => [12 + k, `Konst ${k} RGB`]), ...KONST_PARTS];
+const KASEL = [...KONST_FRACTIONS, ...KONST_PARTS];
+const EIGHT = (name: string) => Array.from({ length: 8 }, (_, i) => [i, `${name} ${i}`]);
+const SWAP = [0, 1, 2, 3].map((i) => [i, `Swap table ${i}`]);
 import { parseBRRES } from "../../../js/formats/brres.js";
 import { listFiles } from "../../../js/formats/u8.js";
 import { editor } from "../editor";
@@ -96,6 +111,8 @@ export function MaterialsDialog({ close }: { close: (value: any) => void }) {
           <Row label="Hidden behind others"><input type="checkbox" aria-label="Depth test" checked={!!gx.zmode?.test} onChange={(e) => apply("Depth test", { depthTest: e.target.checked })} /></Row>
           <Row label="Hides what is behind"><input type="checkbox" aria-label="Depth write" checked={!!gx.zmode?.write} onChange={(e) => apply("Depth write", { depthWrite: e.target.checked })} /></Row>
         </section>
+        <TevStages key={material.name} gx={gx} shared={materialsSharingShader(node.data, current.model, material.name)} select={select}
+          onChange={(stages: any[]) => { try { editor.doc.changeArchiveFile(`TEV stages: ${material.name}`, path, setBRRESTevStages(node.data, current.model, material.name, stages)); } catch (e: any) { toast.error("Could not change the TEV stages", { description: e.message }); } }} />
         <section className="flex flex-col gap-1.5">
           <div className="text-xs font-semibold">Colours</div>
           {gx.chans.map((chan: any, i: number) => <Colour key={`c${i}`} label={`Material colour ${i + 1}`} value={chan.matColor} onCommit={(hex) => apply("Material colour", { channel: [{ index: i, rgba: fromHex(hex, chan.matColor[3]) }] })} />)}
@@ -107,4 +124,56 @@ export function MaterialsDialog({ close }: { close: (value: any) => void }) {
     </div>
     <div className="flex shrink-0 justify-end"><Button onClick={() => close(true)}>Done</Button></div>
   </div>;
+}
+
+// The material's TEV stages: each one combines four inputs into a colour and an alpha, in order.
+function TevStages({ gx, shared, select, onChange }: { gx: any; shared: string[]; select: any; onChange: (stages: any[]) => void }) {
+  const [open, setOpen] = React.useState(0);
+  const stages = gx.stages;
+  const set = (i: number, fn: (s: any) => void) => { const next = structuredClone(stages); fn(next[i]); onChange(next); };
+  const others = shared.length - 1;
+  return <section className="flex flex-col gap-1.5" data-tev-stages>
+    <div className="text-xs font-semibold">TEV stages ({stages.length})</div>
+    <p className="text-[11px] text-muted-foreground">Each stage computes D ± ((1 − C)·A + C·B), with bias and scale, into an output register; the last stage's colour and alpha are the pixel's.{others > 0 ? ` This shader is shared with ${others} other material${others === 1 ? "" : "s"} (${shared.join(", ")}): they change too.` : ""}</p>
+    {stages.map((stage: any, i: number) => <div key={i} className="rounded-md border">
+      <button type="button" className="flex w-full cursor-pointer items-center px-2 py-1 text-left text-xs hover:bg-accent/60" onClick={() => setOpen(open === i ? -1 : i)} aria-expanded={open === i}>
+        <span className="flex-1 font-medium">Stage {i}</span><span className="text-muted-foreground">{stage.texEnabled ? `texture map ${stage.texMap}` : "no texture"}</span>
+      </button>
+      {open === i && <div className="flex flex-col gap-1.5 border-t p-2">
+        <div className="text-[11px] font-medium text-muted-foreground">Inputs</div>
+        <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!stage.texEnabled} onChange={(e) => set(i, (s) => { s.texEnabled = e.target.checked; })} /> Uses a texture</label>
+        {stage.texEnabled && select(stage.texMap, EIGHT("Texture map"), "Texture", (v: number) => set(i, (s) => { s.texMap = v; }))}
+        {stage.texEnabled && select(stage.texCoord, EIGHT("Coordinates"), "Coordinates", (v: number) => set(i, (s) => { s.texCoord = v; }))}
+        {select(stage.channel, CHANNEL, "Raster", (v: number) => set(i, (s) => { s.channel = v; }))}
+        {select(stage.kcsel, KCSEL, "Konst colour", (v: number) => set(i, (s) => { s.kcsel = v; }))}
+        {select(stage.kasel, KASEL, "Konst alpha", (v: number) => set(i, (s) => { s.kasel = v; }))}
+        <div className="text-[11px] font-medium text-muted-foreground">Colour</div>
+        {(["a", "b", "c", "d"] as const).map((k) => <React.Fragment key={k}>{select(stage.color[k], COLOR_IN, k.toUpperCase(), (v: number) => set(i, (s) => { s.color[k] = v; }))}</React.Fragment>)}
+        {select(stage.color.sub, OP, "Operation", (v: number) => set(i, (s) => { s.color.sub = v; }))}
+        {select(stage.color.bias, BIAS, "Bias", (v: number) => set(i, (s) => { s.color.bias = v; }))}
+        {select(stage.color.scale, SCALE, "Scale", (v: number) => set(i, (s) => { s.color.scale = v; }))}
+        <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!stage.color.clamp} onChange={(e) => set(i, (s) => { s.color.clamp = e.target.checked ? 1 : 0; })} /> Clamp colour to 0–1</label>
+        {select(stage.color.dest, DEST, "Output", (v: number) => set(i, (s) => { s.color.dest = v; }))}
+        <div className="text-[11px] font-medium text-muted-foreground">Alpha</div>
+        {(["a", "b", "c", "d"] as const).map((k) => <React.Fragment key={k}>{select(stage.alpha[k], ALPHA_IN, k.toUpperCase(), (v: number) => set(i, (s) => { s.alpha[k] = v; }))}</React.Fragment>)}
+        {select(stage.alpha.sub, OP, "Operation", (v: number) => set(i, (s) => { s.alpha.sub = v; }))}
+        {select(stage.alpha.bias, BIAS, "Bias", (v: number) => set(i, (s) => { s.alpha.bias = v; }))}
+        {select(stage.alpha.scale, SCALE, "Scale", (v: number) => set(i, (s) => { s.alpha.scale = v; }))}
+        <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!stage.alpha.clamp} onChange={(e) => set(i, (s) => { s.alpha.clamp = e.target.checked ? 1 : 0; })} /> Clamp alpha to 0–1</label>
+        {select(stage.alpha.dest, DEST, "Output", (v: number) => set(i, (s) => { s.alpha.dest = v; }))}
+        {select(stage.alpha.rswap, SWAP, "Raster swap", (v: number) => set(i, (s) => { s.alpha.rswap = v; }))}
+        {select(stage.alpha.tswap, SWAP, "Texture swap", (v: number) => set(i, (s) => { s.alpha.tswap = v; }))}
+      </div>}
+    </div>)}
+    <div className="flex gap-2">
+      <Button size="sm" variant="secondary" disabled={stages.length >= 16} onClick={() => {
+        // A new stage passes the previous result on: D = previous, A = B = C = zero.
+        const last = structuredClone(stages.at(-1));
+        const next = [...structuredClone(stages), { ...last, texEnabled: false, color: { a: 15, b: 15, c: 15, d: 0, bias: 0, sub: 0, clamp: 1, scale: 0, dest: 0 }, alpha: { ...last.alpha, a: 7, b: 7, c: 7, d: 0, bias: 0, sub: 0, clamp: 1, scale: 0, dest: 0 } }];
+        onChange(next); setOpen(next.length - 1);
+      }}>Add stage</Button>
+      <Button size="sm" variant="ghost" disabled={stages.length <= 1} onClick={() => onChange(structuredClone(stages).slice(0, -1))}>Remove last stage</Button>
+    </div>
+    <p className="text-[11px] text-muted-foreground">A new stage passes the previous result on unchanged. Check unusual combinations in Dolphin.</p>
+  </section>;
 }

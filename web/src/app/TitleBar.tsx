@@ -6,6 +6,7 @@ import {
   Lightbulb, Link, ListChecks, ListOrdered, Map as MapIcon, MapPin, Maximize, Minus, Mountain, PackageOpen, PackagePlus, Paintbrush, Pencil, Play, Plus, Puzzle, Redo2, Route, Save, SaveAll,
   Settings as SettingsIcon, Shapes, SlidersHorizontal, ShieldCheck, Sparkles, Square, SquareX, StretchHorizontal, Trash2, Undo2, Video, X,
   ScrollText, Download, Trophy,
+  Film,
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -316,6 +317,8 @@ export function TitleBar() {
             {!home && <MenubarItem onSelect={cmd("sky")} disabled={!d.szs}><Cloud /> Sky…</MenubarItem>}
             {!home && <MenubarItem onSelect={cmd("minimap")} disabled={!d.szs}><MapIcon /> Minimap (beta)…</MenubarItem>}
             {!home && <MenubarItem onSelect={cmd("materials")} disabled={!d.szs}><Paintbrush /> Materials of this track…</MenubarItem>}
+            {!home && <MenubarItem onSelect={cmd("trackAnimations")} disabled={!d.szs}><Film /> Animations of this track…</MenubarItem>}
+            {!home && <MenubarItem onSelect={cmd("trackScene")} disabled={!d.szs}><Lightbulb /> Scene lights and cameras (SCN0)…</MenubarItem>}
             {!home && <MenubarItem onSelect={cmd("primitive")} disabled={!d.szs}><Shapes /> Add a primitive model (beta)…</MenubarItem>}
             {!home && <MenubarItem onSelect={cmd("sculpt")} disabled={!d.szs}><Mountain /> Sculpt the track model (beta)…</MenubarItem>}
             <MenubarItem onSelect={cmd("mapColour")} disabled={!ed.workspace()}><MapIcon /> Minimap colour of the game…</MenubarItem>

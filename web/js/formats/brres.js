@@ -3,6 +3,7 @@
 
 import { parseGXMaterial } from './gx.js';
 import { readPAT0 } from './pat0.js';
+import { readVIS0 } from './anim-write.js';
 
 class View {
   constructor(data) {
@@ -42,7 +43,7 @@ export function parseBRRES(data) {
   if (!isBRRES(data)) throw new Error('Not a BRRES file');
   const r = new View(data);
   const root = r.u16(0x0C) + 8;
-  const out = { models: [], textures: new Map(), palettes: new Map(), chr: new Map(), srt: new Map(), pat: new Map(), clr: new Map() };
+  const out = { models: [], textures: new Map(), palettes: new Map(), chr: new Map(), srt: new Map(), pat: new Map(), clr: new Map(), vis: new Map() };
   for (const folder of r.group(root)) {
     const items = r.group(folder.offset);
     for (const it of items) {
@@ -55,6 +56,7 @@ export function parseBRRES(data) {
         else if (magic === 'SRT0') out.srt.set(it.name, parseSRT0(r, it.offset, it.name));
         else if (magic === 'PAT0') out.pat.set(it.name, readPAT0(data, it.offset, it.name));
         else if (magic === 'CLR0') out.clr.set(it.name, parseCLR0(r, it.offset, it.name));
+        else if (magic === 'VIS0') out.vis.set(it.name, readVIS0(data, it.offset, it.name));
       } catch (e) {
         console.warn(`BRRES: could not read ${folder.name}/${it.name}: ${e.message}`);
       }
@@ -369,6 +371,8 @@ function parsePolygon(r, o, name, model) {
   const colors = clrArr ? new Float32Array(n * 4) : null;
   const usedUV = uvArrs.map((a, i) => (a && attrs.some((x) => x.kind === 'uv' && x.set === i) ? i : -1)).filter((i) => i >= 0);
   const uvs = Object.fromEntries(usedUV.map((i) => [i, new Float32Array(n * 2)]));
+  // Which entry of each UV array every triangle corner uses (for the UV editor).
+  const uvIds = Object.fromEntries(usedUV.map((i) => [i, new Int32Array(n).fill(-1)]));
   const mtx = new Int32Array(n);
   for (let k = 0; k < n; k++) {
     const v = verts[tris[k]];
@@ -381,11 +385,11 @@ function parsePolygon(r, o, name, model) {
     }
     for (const i of usedUV) {
       const a = uvArrs[i], id = v.uv[i];
-      if (id >= 0 && id < a.count) uvs[i].set(a.data.subarray(id * 2, id * 2 + 2), k * 2);
+      if (id >= 0 && id < a.count) { uvs[i].set(a.data.subarray(id * 2, id * 2 + 2), k * 2); uvIds[i][k] = id; }
     }
     mtx[k] = v.mtx;
   }
-  return { name, matrixId, displayList: { offset: primStart, size: primSize }, positions, positionIds, normals, colors, uvs, mtx, triangles: n / 3,
+  return { name, matrixId, displayList: { offset: primStart, size: primSize }, positions, positionIds, normals, colors, uvs, uvIds, uvArrayIds: ids.uv, mtx, triangles: n / 3,
     positionArrayId: ids.pos, positionIndices: [...new Set(verts.map((v) => v.pos).filter((i) => i >= 0 && i < (posArr?.count ?? 0)))] };
 }
 
@@ -625,15 +629,18 @@ export function transformBRRESPart(data, modelName, partIndex, positionIndices, 
 // Textures
 
 function parseTEX0(r, o, name) {
+  // Version 2 (in some of the game's object models) has two section offsets, version 3 one.
+  const shift = [1, 2].includes(r.u32(o + 8)) ? 4 : 0;
   return {
     name,
     offset: o,
     size: r.u32(o + 4),
-    width: r.u16(o + 0x1C),
-    height: r.u16(o + 0x1E),
-    format: r.u32(o + 0x20),
-    mipmaps: r.u32(o + 0x24),
-    dataOffset: o + r.s32(o + 0x10),
+    version: r.u32(o + 8),
+    width: r.u16(o + 0x1C + shift),
+    height: r.u16(o + 0x1E + shift),
+    format: r.u32(o + 0x20 + shift),
+    mipmaps: r.u32(o + 0x24 + shift),
+    dataOffset: o + r.s32(o + 0x10 + shift),
     reader: r,
     _rgba: null,
   };
@@ -984,7 +991,8 @@ function readKeys(r, at, format, frames) {
         keys.push({ f: e >>> 24, v: base + step * ((e >>> 12) & 0xFFF), t: tan / 32 });
       } else {
         const o = at + 16 + i * 6;
-        keys.push({ f: r.u16(o) / 32, v: base + step * r.u16(o + 2), t: r.s16(o + 4) / 256 });
+        // The frame is signed: the game's own animations start keys before frame 0 (-1 in kinokoT1, cruiser).
+        keys.push({ f: r.s16(o) / 32, v: base + step * r.u16(o + 2), t: r.s16(o + 4) / 256 });
       }
     }
     return { keys };
@@ -1049,9 +1057,9 @@ function parseCHR0(r, o, name) {
     const scale = identity ? null : comp(code & (1 << 22), code & (1 << 4), 13, (code >>> 25) & 3);
     const rot = identity ? null : comp(code & (1 << 23), code & (1 << 5), 16, (code >>> 27) & 7);
     const trans = identity ? null : comp(code & (1 << 24), code & (1 << 6), 19, (code >>> 30) & 3);
-    bones.set(e.name, { scale, rot, trans });
+    bones.set(e.name, { scale, rot, trans, code });
   }
-  return { offset: o, headerSize: header, name, frames, loop, bones };
+  return { offset: o, headerSize: header, name, frames, loop, bones, version, scalingRule: r.u32(o + header + 8) };
 }
 
 // CLR0: colour animation of material registers (0-1 material colour, 2-3 ambient, 4-6 TEV colour, 7-10 konst).
@@ -1075,12 +1083,12 @@ function parseCLR0(r, o, name) {
         const table = p + 4 + r.s32(p + 4);
         colors = Array.from({ length: frames + 1 }, (_, k) => rgba(r.u32(table + k * 4)));
       }
-      targets.push({ target: i, keep: [24, 16, 8, 0].map((s) => ((mask >>> s) & 255) !== 0), colors });
+      targets.push({ target: i, keep: [24, 16, 8, 0].map((s) => ((mask >>> s) & 255) !== 0), mask, colors });
       p += 8;
     }
     materials.set(e.name, targets);
   }
-  return { name, frames, loop, materials };
+  return { name, frames, loop, materials, version };
 }
 
 function parseSRT0(r, o, name) {
@@ -1092,11 +1100,12 @@ function parseSRT0(r, o, name) {
   const materials = new Map();
   for (const e of r.group(o + r.s32(o + 0x10))) {
     const at = e.offset;
-    const texFlags = r.u32(at + 4);
+    const texFlags = r.u32(at + 4), indFlags = r.u32(at + 8);
     const textures = [];
     let p = at + 12;
-    for (let i = 0; i < 8; i++) {
-      if (!(texFlags & (1 << i))) continue;
+    // Texture matrices 0-7, then indirect matrices 0-2 (index 8-10).
+    for (let i = 0; i < 11; i++) {
+      if (!(i < 8 ? texFlags & (1 << i) : indFlags & (1 << (i - 8)))) continue;
       const te = at + r.s32(p); p += 4;
       const code = r.u32(te);
       let q = te + 4;
@@ -1118,6 +1127,85 @@ function parseSRT0(r, o, name) {
     }
     materials.set(e.name, textures);
   }
-  return { name, frames, loop, texMtxMode, materials };
+  return { name, frames, loop, texMtxMode, materials, version };
 }
 
+
+// A new TEX0 (version 3) from RGBA pixels, in any direct format, with `levels` mipmaps (each half
+// the size of the one before). It has its own name after the data. For a texture of another
+// format or size than the one it replaces (the BRRES is rebuilt around it).
+export const DIRECT_FORMATS = [0, 1, 2, 3, 4, 5, 6, 14];
+export function textureLevelsSize(width, height, format, levels) {
+  const [bw, bh, bits] = BLOCK[format];
+  let size = 0, w = width, h = height;
+  for (let level = 0; level < Math.max(1, levels); level++) {
+    size += Math.ceil(w / bw) * Math.ceil(h / bh) * bw * bh * bits / 8;
+    if (w === 1 && h === 1) break;
+    w = Math.max(1, w >> 1); h = Math.max(1, h >> 1);
+  }
+  return size;
+}
+export function maxTextureLevels(width, height) { let n = 1; for (let w = width, h = height; w > 1 || h > 1; w >>= 1, h >>= 1) n++; return n; }
+export function writeTEX0(name, rgba, width, height, format, levels = 1) {
+  if (!DIRECT_FORMATS.includes(format)) throw new Error(`Textures can be written as ${DIRECT_FORMATS.map((f) => TEXTURE_FORMATS[f]).join(', ')}`);
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width > 1024 || height > 1024) throw new Error('A texture is 1 to 1024 pixels wide and high');
+  if (rgba.length !== width * height * 4) throw new Error('The pixels do not match the texture size');
+  levels = Math.max(1, Math.min(levels | 0, maxTextureLevels(width, height)));
+  const dataSize = textureLevelsSize(width, height, format, levels), text = new TextEncoder().encode(name);
+  const nameAt = 0x40 + dataSize + 4, out = new Uint8Array(Math.ceil((nameAt + text.length + 1) / 32) * 32), v = new DataView(out.buffer);
+  out.set(new TextEncoder().encode('TEX0')); v.setUint32(4, out.length); v.setUint32(8, 3);
+  v.setInt32(0x10, 0x40); v.setInt32(0x14, nameAt); v.setUint32(0x18, 0);
+  v.setUint16(0x1C, width); v.setUint16(0x1E, height); v.setUint32(0x20, format); v.setUint32(0x24, levels);
+  v.setFloat32(0x28, 0); v.setFloat32(0x2C, levels - 1);
+  encodeTextureLevels(out, 0x40, 0x40 + dataSize, rgba, width, height, format, levels);
+  v.setUint32(nameAt - 4, text.length); out.set(text, nameAt);
+  return out;
+}
+
+// Changes entries of a model's vertex arrays in place: kind 'pos' (XYZ), 'nrm' (normals) or 'uv'
+// (texture coordinates); changes is a Map of entry index → values. Entries keep their storage
+// format (an integer format with its fixed point, or float), so a value outside what that format
+// holds is refused. Array bounds (and the model's, for positions) follow the new values.
+const ARRAY_KIND = { pos: 'pos', nrm: 'nrm', uv: 'uv' };
+export function setBRRESVertexValues(data, modelName, kind, arrayId, changes) {
+  if (!ARRAY_KIND[kind]) throw new Error('Unknown vertex array kind');
+  const model = parseBRRES(data).models.find((m) => m.name === modelName);
+  const array = model?.arrays[kind]?.get(arrayId);
+  if (!array) throw new Error(`Vertex array ${arrayId} not found`);
+  const size = kind === 'uv' ? 2 : 3, stored = kind === 'uv' ? (array.comp ? 2 : 1) : kind === 'pos' ? (array.comp ? 3 : 2) : 3;
+  if (kind === 'nrm' && array.comp !== 0) throw new Error('Only plain normal arrays (one normal per entry) can be edited');
+  const out = data.slice(), view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  const csize = COMP_SIZE[array.fmt] ?? 4, scale = 2 ** (array.div || 0);
+  const limits = [[0, 255], [-128, 127], [0, 65535], [-32768, 32767]];
+  for (const [index, value] of changes) {
+    if (!Number.isInteger(index) || index < 0 || index >= array.count) throw new Error(`Vertex ${index} is not in the array`);
+    if (!Array.isArray(value) || value.length !== size || !value.every(Number.isFinite)) throw new Error('Invalid vertex value');
+    for (let c = 0; c < Math.min(size, stored); c++) {
+      const at = array.offset + index * array.stride + c * csize;
+      if (array.fmt === 4) { view.setFloat32(at, value[c]); continue; }
+      const packed = Math.round(value[c] * scale);
+      if (packed < limits[array.fmt][0] || packed > limits[array.fmt][1]) throw new Error(`${value[c]} is outside what this array can store (${limits[array.fmt][0] / scale} to ${limits[array.fmt][1] / scale})`);
+      if (array.fmt === 0) view.setUint8(at, packed); else if (array.fmt === 1) view.setInt8(at, packed);
+      else if (array.fmt === 2) view.setUint16(at, packed); else view.setInt16(at, packed);
+    }
+  }
+  // Bounds stored in the array header: minimum then maximum, for each component.
+  if (kind !== 'nrm') {
+    const reader = new View(out), header = array.headerOffset;
+    for (let c = 0; c < stored; c++) {
+      let min = Infinity, max = -Infinity;
+      for (let i = 0; i < array.count; i++) { const v = readComp(reader, array.offset + i * array.stride + c * csize, array.fmt, 1 / scale); min = Math.min(min, v); max = Math.max(max, v); }
+      view.setFloat32(header + 0x20 + c * 4, min);
+      view.setFloat32(header + 0x20 + stored * 4 + c * 4, max);
+      if (kind === 'pos') { view.setFloat32(model.boundsOffset + c * 4, Math.min(model.min[c], min)); view.setFloat32(model.boundsOffset + 12 + c * 4, Math.max(model.max[c], max)); }
+    }
+  }
+  return out;
+}
+
+// The model parts (other than `partIndex`) that use any of these entries of an array: they change too.
+export function partsSharingVertices(model, kind, arrayId, indices, partIndex) {
+  const wanted = new Set(indices);
+  return model.objects.filter((part, i) => i !== partIndex && (kind === 'pos' ? part.positionArrayId === arrayId && part.positionIndices.some((id) => wanted.has(id))
+    : kind === 'uv' ? Object.entries(part.uvIds || {}).some(([set, ids]) => part.uvArrayIds?.[set] === arrayId && ids.some((id) => wanted.has(id))) : false)).map((p) => p.name);
+}
