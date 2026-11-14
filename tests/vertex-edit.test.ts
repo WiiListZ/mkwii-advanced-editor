@@ -1,11 +1,9 @@
 import { expect, test } from "bun:test";
-import { buildGeneratedTrackModels } from "../src/generated-track-models.ts";
+import { generatedCourseModel } from "./generated-model.ts";
 import { parseBRRES, partsSharingVertices, setBRRESVertexValues } from "../web/js/formats/brres.js";
-import { findFile, parseU8 } from "../web/js/formats/u8.js";
 
-test("vertex positions and texture coordinates are changed in place", async () => {
-  const base = findFile(parseU8(await buildGeneratedTrackModels({ materials: { road: { color: [1, 0, 0] } }, tris: [
-    { mat: "road", v: [0, 0, 0, 1000, 0, 0, 0, 0, 1000], uv: [0, 0, 1, 0, 0, 1] }] })), "course_model.brres")!.data;
+test.skipIf(process.platform !== "win32")("vertex positions and texture coordinates are changed in place", async () => {
+  const base = await generatedCourseModel();
   const model = parseBRRES(base).models[0], part = model.objects[0];
   const set = Number(Object.keys(part.uvIds)[0]), uvArray = part.uvArrayIds[set], uvEntry = part.uvIds[set][0];
   const posEntry = part.positionIndices[0], old = [...model.arrays.pos.get(part.positionArrayId).data.subarray(posEntry * 3, posEntry * 3 + 3)];

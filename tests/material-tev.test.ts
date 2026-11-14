@@ -1,15 +1,14 @@
 import { expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildGeneratedTrackModels } from "../src/generated-track-models.ts";
+import { generatedCourseModel } from "./generated-model.ts";
 import { parseBRRES } from "../web/js/formats/brres.js";
 import { setBRRESTevStages } from "../web/js/formats/material-edit.js";
 import { findFile, listFiles, parseU8 } from "../web/js/formats/u8.js";
 import { isYaz0, yaz0Decompress } from "../web/js/formats/yaz0.js";
 
-test("TEV stages are changed, added and removed in place", async () => {
-  const base = findFile(parseU8(await buildGeneratedTrackModels({ materials: { road: { color: [1, 0, 0] } }, tris: [
-    { mat: "road", v: [0, 0, 0, 1000, 0, 0, 0, 0, 1000], uv: [0, 0, 1, 0, 0, 1] }] })), "course_model.brres")!.data;
+test.skipIf(process.platform !== "win32")("TEV stages are changed, added and removed in place", async () => {
+  const base = await generatedCourseModel();
   const model = parseBRRES(base).models[0], material = model.materials[0], stages = structuredClone(material.gx.stages);
   // Same stages: the same bytes.
   expect(setBRRESTevStages(base, model.name, material.name, stages)).toEqual(base);
