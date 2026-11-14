@@ -48,6 +48,25 @@ const SOURCES: { id: string; label: string; hex: string; on: boolean }[] = [
 const TRACK_FILL = "#2c343b";
 const CANVAS_FILL = "#14181c";
 const PREVIEW_FILL = "#20262c";
+// The finish line as the game shows it on a minimap: two rows of black and white squares across
+// the road, from one side of the lap checkpoint to the other.
+function checkeredLine(ctx: CanvasRenderingContext2D, a: number[], b: number[], dpr: number) {
+  const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  if (length < 1) return;
+  const thick = Math.max(4 * dpr, Math.min(length * 0.3, 9 * dpr)), square = thick / 2, count = Math.max(2, Math.round(length / square));
+  ctx.save();
+  ctx.translate(a[0], a[1]);
+  ctx.rotate(Math.atan2(b[1] - a[1], b[0] - a[0]));
+  ctx.fillStyle = "#101010";
+  ctx.fillRect(-dpr, -thick / 2 - dpr, length + 2 * dpr, thick + 2 * dpr);
+  const step = length / count;
+  for (let i = 0; i < count; i++) for (let row = 0; row < 2; row++) {
+    ctx.fillStyle = (i + row) % 2 ? "#101010" : "#f4f4f4";
+    ctx.fillRect(i * step, -thick / 2 + row * square, step + 0.5, square + 0.5);
+  }
+  ctx.restore();
+}
+
 // The In game panel: the frame at one scale on both axes, centred, 6 pixels in from the edges.
 const previewView = (frame: Bounds, sw: number, sh: number) => {
   const fw = Math.max(1, frame.maxX - frame.minX), fh = Math.max(1, frame.maxZ - frame.minZ), k = Math.min((sw - 12) / fw, (sh - 12) / fh);
@@ -333,6 +352,8 @@ export function MinimapDialog({ close }: { close: (value: any) => void }) {
       sctx.fillStyle = fill; sctx.strokeStyle = fill; sctx.lineWidth = .5;
       sctx.beginPath(); sctx.moveTo(p[0] * k + ox, p[1] * k + oy); sctx.lineTo(p[2] * k + ox, p[3] * k + oy); sctx.lineTo(p[4] * k + ox, p[5] * k + oy); sctx.closePath(); sctx.fill(); sctx.stroke();
     }
+    // The game draws the finish line over the map itself, as a checkered bar across the road.
+    if (lap) checkeredLine(sctx, [lap.left[0] * k + ox, lap.left[1] * k + oy], [lap.right[0] * k + ox, lap.right[1] * k + oy], dpr);
   });
 
   // ---- Painting ----------------------------------------------------------------------------

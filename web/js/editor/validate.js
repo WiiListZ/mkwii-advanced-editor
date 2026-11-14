@@ -3,7 +3,7 @@
 import { parseBRRES } from '../formats/brres.js';
 import { findFile } from '../formats/u8.js';
 import { cameraRouteIssues } from '../formats/kmp.js';
-import { missingRequiredSettings, objectNeedsRoute } from '../data/route-objects.js';
+import { missingRequiredSettings, objectNeedsRoute, routeRequired } from '../data/route-objects.js';
 import { OBJECT_FILES } from '../data/object-files.js';
 import { introIndex, selectionIndex } from './cameras.js';
 import { geometryIssues } from './geometry-check.js';
@@ -33,7 +33,7 @@ function trackModelAnimationIssues(szs) {
     const bones = new Set(model?.bones.map((b) => b.name));
     for (const chr of brres.chr.values()) {
       const missing = [...chr.bones.keys()].filter((name) => !bones.has(name));
-      if (missing.length) out.push(['error', `Track model animation ${chr.name} moves bones the model does not have (${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '…' : ''}): the game may crash. Delete it from the Track model list.`]);
+      if (missing.length) out.push(['error', `Track model animation ${chr.name} moves bones the model does not have (${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '…' : ''}): the game may crash. Delete it from the Track model list.`, true]);
     }
     if (brres.srt.size > 8) out.push(['warning', `course_model.brres has ${brres.srt.size} texture animations (SRT0); Mario Kart Wii plays at most 8.`]);
   } catch { /* unreadable models are reported elsewhere */ }
@@ -44,8 +44,15 @@ function trackModelAnimationIssues(szs) {
 export function validate(doc, ops, objectNames) {
   const k = doc.kmp;
   const issues = [];
-  const add = (level, msg, key = null, fix = null) => issues.push({ level, msg, key: key !== null ? String(key) : null, fix });
-  for (const [level, msg] of trackModelAnimationIssues(doc.szs)) add(level, msg);
+  // crash: the game crashes or freezes with this; other errors break races or the track without crashing.
+  const add = (level, msg, key = null, fix = null, crash = false) => issues.push({ level, msg, key: key !== null ? String(key) : null, fix, crash });
+  const crash = (msg, key = null, fix = null) => add('error', msg, key, fix, true);
+  // Battle arenas (end positions, or start positions per player) and the demo and mission scenes
+  // have no laps: they need no checkpoints, and arenas no item routes. Checked on the game's tracks.
+  const arena = k.MSPT.length > 0 || k.KTPT.some((t) => t.playerIndex >= 0);
+  const scene = /(_demo|_mission)(_d)?\.(szs|kmp|wlz|wbz|wu8)$/i.test(doc.fileName || '');
+  const race = !arena && !scene;
+  for (const [level, msg, crashes] of trackModelAnimationIssues(doc.szs)) add(level, msg, null, null, !!crashes);
 
   // Stage info
   const st = k.STGI[0];
@@ -53,31 +60,35 @@ export function validate(doc, ops, objectNames) {
   else if (st.laps < 1 || st.laps > 9) add('warning', `Lap count ${st.laps} is unusual (1-9 expected).`, st.uid);
 
   // Start positions
-  if (!k.KTPT.length) add('error', 'No start position (KTPT): the game cannot place the karts.', null, { label: 'Add at view center', run: () => ops.add('KTPT', ops.settings.viewCenter()) });
+  if (!k.KTPT.length) crash('No start position (KTPT): the game freezes, it cannot place the karts.', null, { label: 'Add at view center', run: () => ops.add('KTPT', ops.settings.viewCenter()) });
 
   // Grouped routes
   const groupChecks = (kind, label, required, emptyFix = null) => {
     const groups = k[kind];
     if (!groups.length) {
-      if (required) add('error', `${label}: no groups. ${kind === 'CKPT' ? 'Lap counting will not work.' : 'CPUs/items will not know where to go.'}`, null, emptyFix);
+      // A track without item routes still runs (old_mario_gc_b): shells and Bullet Bills just do not follow the road.
+      const message = { CKPT: 'Lap counting will not work.', ENPT: 'CPU karts will not know where to go.', ITPT: 'Homing items and Bullet Bills will not follow the road.' }[kind];
+      if (required) add(kind === 'ITPT' ? 'warning' : 'error', `${label}: no groups. ${message}`, null, emptyFix);
       return;
     }
     const total = groups.reduce((s, g) => s + g.points.length, 0);
-    if (total > 255) add('error', `${label}: ${total} points (maximum 255).`);
+    if (total > 255) crash(`${label}: ${total} points (maximum 255): the game freezes while loading the track.`);
     if (groups.length > 255) add('error', `${label}: too many groups (${groups.length}).`);
     groups.forEach((g, gi) => {
       if (!g.points.length) add('error', `${label}: group ${gi} is empty.`, g.uid);
       if (g.prev.length > 6 || g.next.length > 6) add('error', `${label}: group ${gi} has more than 6 links.`, g.uid);
       for (const v of [...g.prev, ...g.next]) if (v >= groups.length) add('error', `${label}: group ${gi} links to missing group ${v}.`, g.uid);
+      // Arenas link their enemy routes as a free network, one way or both: not a lap to follow.
+      if (arena && kind === 'ENPT') return;
       if (!g.next.length) add('warning', `${label}: group ${gi} has no "next" group (dead end).`, g.uid, { label: 'Link groups in sequence', run: () => ops.autoLinkGroups(kind) });
       if (!g.prev.length) add('warning', `${label}: group ${gi} has no "previous" group.`, g.uid, { label: 'Link groups in sequence', run: () => ops.autoLinkGroups(kind) });
       // Symmetric links
       for (const n of g.next) if (groups[n] && !groups[n].prev.includes(gi)) add('warning', `${label}: group ${gi} → ${n} but group ${n} does not list ${gi} as previous.`, g.uid);
     });
   };
-  groupChecks('ENPT', 'Enemy routes', true);
-  groupChecks('ITPT', 'Item routes', true, k.ENPT.length ? { label: 'Copy from enemy routes', run: () => ops.itemRouteFromEnemy() } : null);
-  groupChecks('CKPT', 'Checkpoints', true, k.ENPT.length ? { label: 'Generate from enemy routes', run: () => ops.checkpointsFromEnemy({ every: 2 }) } : null);
+  groupChecks('ENPT', 'Enemy routes', !scene);
+  groupChecks('ITPT', 'Item routes', race, k.ENPT.length ? { label: 'Copy from enemy routes', run: () => ops.itemRouteFromEnemy() } : null);
+  groupChecks('CKPT', 'Checkpoints', race, k.ENPT.length ? { label: 'Generate from enemy routes', run: () => ops.checkpointsFromEnemy({ every: 2 }) } : null);
 
   // Checkpoints
   const allCk = k.CKPT.flatMap((g) => g.points);
@@ -89,13 +100,14 @@ export function validate(doc, ops, objectNames) {
     else if (k.CKPT[0].points[0]?.type !== 0) add('warning', 'The first checkpoint of the first group is not the lap checkpoint.', k.CKPT[0].points[0]?.uid);
     if (laps.length > 1) add('info', `${laps.length} lap checkpoints (normally only one).`, laps[1].uid);
     const keys = [...new Set(allCk.filter((c) => c.type !== 0 && c.type !== 0xFF).map((c) => c.type))].sort((a, b) => a - b);
-    keys.forEach((t, i) => { if (t !== i + 1) add('warning', `Key checkpoints are not sequential (found ${t}, expected ${i + 1}).`); });
+    // The game's own tracks skip key checkpoint numbers (boardcross, old_mario_64): a note only.
+    keys.forEach((t, i) => { if (t !== i + 1) add('info', `Key checkpoints are not sequential (found ${t}, expected ${i + 1}).`); });
     if (!keys.length && allCk.length > 4) add('info', 'No key checkpoints: players may take shortcuts without penalty.');
-    if (!k.JGPT.length) add('error', 'No respawn points (JGPT): falling off the track will crash or soft-lock.', null, {
+    if (!k.JGPT.length) crash('No respawn points (JGPT): falling off the track crashes the game or soft-locks it.', null, {
       label: 'Create respawns from checkpoints', run: () => ops.respawnsFromCheckpoints(4),
     });
     for (const cp of allCk) {
-      if (k.JGPT.length && cp.respawn >= k.JGPT.length) add('error', `Checkpoint uses missing respawn ${cp.respawn}.`, cp.uid, { label: 'Reassign respawns', run: () => ops.assignRespawns() });
+      if (k.JGPT.length && cp.respawn >= k.JGPT.length) crash(`Checkpoint uses missing respawn ${cp.respawn}: the game can crash when a kart respawns there.`, cp.uid, { label: 'Reassign respawns', run: () => ops.assignRespawns() });
       const w = Math.hypot(cp.right[0] - cp.left[0], cp.right[1] - cp.left[1]);
       if (w < 100) add('warning', 'Checkpoint is extremely narrow.', cp.uid);
     }
@@ -108,7 +120,7 @@ export function validate(doc, ops, objectNames) {
           add('error', `Crossed checkpoints in group ${gi} (${i} → ${i + 1}): the quad between them is twisted.`, nx.uid);
         }
         const d1 = [cp.right[0] - cp.left[0], cp.right[1] - cp.left[1]], d2 = [nx.right[0] - nx.left[0], nx.right[1] - nx.left[1]];
-        if (d1[0] * d2[0] + d1[1] * d2[1] < 0) add('error', `Checkpoint ${i + 1} of group ${gi} faces the opposite way from the previous one.`, nx.uid, {
+        if (d1[0] * d2[0] + d1[1] * d2[1] < 0) add('warning', `Checkpoint ${i + 1} of group ${gi} faces the opposite way from the previous one.`, nx.uid, {
           label: 'Swap left/right of this checkpoint', run: () => { doc.select(nx.uid); ops.swapCheckpointSides(true); },
         });
       });
@@ -137,9 +149,9 @@ export function validate(doc, ops, objectNames) {
   const routeFix = { label: 'Create a route for each', run: () => ops.addMissingObjectRoutes() };
   const objectRoutes = new Set(), cameraRoutes = new Set();
   k.GOBJ.forEach((o) => {
-    if (o.route !== 0xFFFF && o.route >= routeCount) add('error', `Object uses missing route ${o.route}.`, o.uid);
+    if (o.route !== 0xFFFF && o.route >= routeCount) (routeRequired(o.objectId, documentation) ? crash : (m, key) => add('error', m, key))(`Object uses missing route ${o.route}.`, o.uid);
     if (o.route !== 0xFFFF) objectRoutes.add(o.route);
-    if (objectNeedsRoute(o, documentation)) add('error', `${objectName(o)} must follow a route but has none: the game crashes (invalid read from 0x00000000).`, o.uid, routeFix);
+    if (objectNeedsRoute(o, documentation)) crash(`${objectName(o)} must follow a route but has none: the game crashes (invalid read from 0x00000000).`, o.uid, routeFix);
     for (const setting of missingRequiredSettings(o, documentation)) {
       add('warning', `${objectName(o)}: setting ${setting.index} (${setting.label}) is required by its documentation but is 0.`, o.uid);
     }
@@ -151,7 +163,7 @@ export function validate(doc, ops, objectNames) {
     const missing = (OBJECT_FILES[id] || []).filter((path) => !findFile(doc.szs, path));
     if (!missing.length || ops.objectFilesAvailable?.(id)) continue;
     const first = k.GOBJ.find((o) => o.objectId === id), models = missing.filter((path) => /\.(brres|kcl)$/i.test(path));
-    if (models.length) add('error', `${objectName(first)} needs ${models.join(', ')}, which the SZS does not contain: the game can crash when it loads the object. Add the file with File › SZS contents.`, first.uid);
+    if (models.length) crash(`${objectName(first)} needs ${models.join(', ')}, which the SZS does not contain: the game can crash when it loads the object. Add the file with File › SZS contents.`, first.uid);
     const others = missing.filter((path) => !models.includes(path));
     if (others.length) add('warning', `${objectName(first)} needs ${others.join(', ')}, which the SZS does not contain (effects or animations of the object).`, first.uid);
   }
@@ -159,9 +171,10 @@ export function validate(doc, ops, objectNames) {
   if (!k.GOBJ.some((o) => o.objectId === 0x65)) add('info', 'No item boxes on the track.');
 
   k.POTI.forEach((r, i) => {
-    if (r.points.length < 2) add('error', `Route ${i} has fewer than 2 points.`, r.uid);
+    // One-point routes are on the game's own tracks (sound objects): a problem only where it moves something.
+    if (r.points.length < 2) add('warning', `Route ${i} has fewer than 2 points: what follows it does not move.`, r.uid);
     // Cameras report their own smooth routes (cameraRouteIssues).
-    else if (r.smooth && r.points.length < 3 && objectRoutes.has(i)) add('error', `Route ${i} is smooth with only ${r.points.length} points: the game freezes while loading the track. Add a point or turn smoothing off.`, r.uid);
+    else if (r.smooth && r.points.length < 3 && objectRoutes.has(i)) crash(`Route ${i} is smooth with only ${r.points.length} points: the game freezes while loading the track. Add a point or turn smoothing off.`, r.uid);
   });
 
   k.AREA.forEach((a) => {
@@ -172,19 +185,20 @@ export function validate(doc, ops, objectNames) {
   });
   k.CAME.forEach((c) => {
     if (c.next !== 0xFF && c.next >= k.CAME.length) add('error', `Camera links missing next camera ${c.next}.`, c.uid);
-    if (c.route !== 0xFF && c.route >= routeCount) add('error', `Camera uses missing route ${c.route}.`, c.uid);
+    // Only cameras that move along a route read it (old_koopa_gba has a fixed camera linking a missing one).
+    if (c.route !== 0xFF && c.route >= routeCount) add([2, 4, 5, 6].includes(c.type) ? 'error' : 'warning', `Camera uses missing route ${c.route}${[2, 4, 5, 6].includes(c.type) ? '' : ' (this camera type does not use it)'}.`, c.uid);
     if (c.route !== 0xFF) cameraRoutes.add(c.route);
     if (c.type > 9) add('warning', `Camera type ${c.type} is unknown to the game.`, c.uid);
   });
   for (const r of cameraRoutes) if (objectRoutes.has(r) && k.POTI[r]) add('warning', `Route ${r} is used by both a camera and an object: this can freeze the game. Give each its own route.`, k.POTI[r].uid);
   if (k.CAME.length) {
     const intro = introIndex(k), selection = selectionIndex(k);
-    if (intro !== 0xFF && intro >= k.CAME.length) add('error', `The intro starts with camera ${intro}, which does not exist.`);
-    if (selection !== 0xFF && selection >= k.CAME.length) add('error', `The track selection camera ${selection} does not exist.`);
+    if (intro !== 0xFF && intro >= k.CAME.length) add('warning', `The intro starts with camera ${intro}, which does not exist.`);
+    if (selection !== 0xFF && selection >= k.CAME.length) add('warning', `The track selection camera ${selection} does not exist.`);
     const goals = k.CAME.filter((c) => c.type === 0);
     if (goals.length > 1) add('warning', `${goals.length} goal cameras (type 0): the game expects one.`, goals[1].uid);
   }
-  for (const issue of cameraRouteIssues(k)) add('error', issue.message, k.CAME[issue.index].uid);
+  for (const issue of cameraRouteIssues(k)) crash(issue.message, k.CAME[issue.index].uid);
   for (const goal of k.CAME.filter((c) => c.type === 0 && [...c.viewStart, ...c.viewEnd].some((v) => Math.abs(v) > GOAL_VIEW_REACH))) {
     add('warning', 'The goal camera aims at a place on the track instead of near the kart: the kart can leave the picture when the race ends.', goal.uid, {
       label: 'Use the view of the original tracks',
@@ -213,12 +227,12 @@ export function validate(doc, ops, objectNames) {
       if ((flag & 0x1F) === 0x11) cannons = Math.max(cannons, (flag >> 5) + 1);
       else if (flag === 0x70) ice = true;
     }
-    if (cannons > k.CNPT.length) add('error', `The collision has cannon ${cannons - 1}, but the KMP has ${k.CNPT.length} cannon destination${k.CNPT.length === 1 ? '' : 's'} (CNPT): the game crashes when a kart touches it.`);
+    if (cannons > k.CNPT.length) crash(`The collision has cannon ${cannons - 1}, but the KMP has ${k.CNPT.length} cannon destination${k.CNPT.length === 1 ? '' : 's'} (CNPT): the game crashes when a kart touches it.`);
     if (ice && doc.szs && !findFile(doc.szs, 'ice.brres')) add('warning', 'The collision uses a fall boundary that needs ice.brres, which the SZS does not contain: the Wii may freeze when a kart falls.');
     if (doc.heights) {
       for (const s of k.KTPT) {
         const y = doc.heights.groundBelow(s.pos[0], s.pos[2], s.pos[1] + 200, 0);
-        if (y === null) add('warning', 'Start position has no road below it.', s.uid);
+        if (y === null && !scene) add('warning', 'Start position has no road below it.', s.uid);
       }
       for (const j of k.JGPT) {
         const y = doc.heights.groundBelow(j.pos[0], j.pos[2], j.pos[1] + 500, 0);

@@ -185,6 +185,8 @@ export class Editor {
   tool: any = null;
   mode = "translate";
   issues: any[] = [];
+  // "Don't show this again" in the save check window: saving stops no more until the editor is closed.
+  skipSaveCheck = false;
   paint: PaintState = { type: 0, variant: 0, shadow: 0, brush: "single", radius: 600, showAll: false };
   collisionDraft: number[][] = [];
   collisionShape: CollisionShapeState = { kind: "triangle", height: 1000, segments: 16 };
@@ -245,6 +247,8 @@ export class Editor {
     vp.respawnModelProvider = () => this.assets.lakitu();
     this.assets.onLibraryLoaded = () => this.bump("doc");
     vp.objectNameProvider = (id: number) => this.objectNames[id];
+    // The Cameras tab edits shots with the view, zoom included; a ghost preview looks through its camera.
+    vp.keepCameraFov = () => this.tab === "cameras" || !!this.ghostView;
     vp.effectNamesProvider = (id: number) => this.assets?.resourceNames(id) || [];
     vp.on("hover", (g: any) => {
       this.hover = g;
@@ -658,6 +662,8 @@ export class Editor {
     else if (this.tool?.type === "paint" || this.tool?.type === "collision-create" || (this.tool?.type === "geometry" && this.tool.target === "collision")) this.stopTool();
   }
   setTab(tab: string, keepCollisionTool = false) {
+    // A camera's field of view stays in the Cameras tab only.
+    if (this.tab === "cameras" && tab !== "cameras") this.viewport?.restoreEditorFov();
     this.tab = tab;
     const s = this.settings;
     if (tab === "collision" && s.displayMode === "visual") {
@@ -974,7 +980,7 @@ export class Editor {
     // The track check runs first: errors (and warnings, unless turned off) are shown before saving,
     // with their fixes and "Save anyway".
     this.runValidate();
-    if (check && this.issues.some((issue) => issue.level === "error" || (issue.level === "warning" && this.settings.saveCheckWarnings))) {
+    if (check && !this.skipSaveCheck && this.issues.some((issue) => issue.level === "error" || (issue.level === "warning" && this.settings.saveCheckWarnings))) {
       if (!(await dialogs.open("saveCheck", {}))) return false;
     }
     if (hasBackend && this.diskVersion && path.replace(/\\/g, "/").toLowerCase() === this.diskVersion.path.replace(/\\/g, "/").toLowerCase()) {
@@ -1514,8 +1520,7 @@ export class Editor {
     vp.camera.position.set(...camera.position);
     vp.controls.target.set(...camera.target);
     vp.camera.lookAt(...camera.target);
-    vp.camera.fov = camera.fov;
-    vp.camera.updateProjectionMatrix();
+    vp.setCameraFov(camera.fov);
     vp.needsRender = true;
   }
 
@@ -3226,8 +3231,7 @@ export class Editor {
     const vp = this.viewport;
     if (!vp || !pose) return;
     vp.camAnim = null;
-    vp.camera.fov = Math.max(1, Math.min(170, pose.fov || 45));
-    vp.camera.updateProjectionMatrix();
+    vp.setCameraFov(pose.fov || 45);
     vp.camera.position.set(...(pose.position as [number, number, number]));
     vp.controls.target.set(...(pose.target as [number, number, number]));
     vp.controls.update();
@@ -3260,8 +3264,7 @@ export class Editor {
     const pose = this.cameraPoses(index)[Math.min(frame, this.cameraPoses(index).length - 1)];
     if (!pose) return;
     const vp = this.viewport;
-    vp.camera.fov = pose.fov;
-    vp.camera.updateProjectionMatrix();
+    vp.setCameraFov(pose.fov);
     vp.animateCamera(new THREE.Vector3(...pose.target), new THREE.Vector3(...pose.position));
   }
   moveIntroShot(index: number, direction: number) {
@@ -3395,8 +3398,7 @@ export class Editor {
   viewFromPose(pose: { position: number[]; target: number[]; fov: number } | null) {
     if (!pose) return;
     const vp = this.viewport;
-    vp.camera.fov = pose.fov;
-    vp.camera.updateProjectionMatrix();
+    vp.setCameraFov(pose.fov);
     vp.animateCamera(new THREE.Vector3(...pose.target), new THREE.Vector3(...pose.position));
   }
 

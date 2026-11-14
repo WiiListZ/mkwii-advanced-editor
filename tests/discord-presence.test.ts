@@ -108,3 +108,17 @@ test("a missing or unresponsive Discord never blocks startup and can be disabled
     expect(server.connections).toBe(count); expect(presence.status.status).toBe("disabled");
   } finally { presence.dispose(); await server.close(); }
 });
+
+test("Discord activity shows what a window is doing, also from the home screen", () => {
+  const presence = new DiscordPresence({ clientId: "1566538603386110184", paths: [] });
+  try {
+    const activity = () => (presence as any).activity();
+    presence.update({ id: "a", mode: "home", detail: "Listening to Mario Circuit", focused: true });
+    expect(activity().details).toBe("Listening to Mario Circuit");
+    expect(activity().state).toBe("Mario Kart Wii track editor");
+    presence.update({ id: "a", mode: "editing", file: "rMC.szs", detail: "Editing effects", focused: true });
+    expect([activity().details, activity().state]).toEqual(["Editing effects", "rMC.szs"]);
+    presence.update({ id: "a", mode: "home", focused: true });
+    expect(activity().details).toBe("On the home screen");
+  } finally { presence.dispose(); }
+});

@@ -1,9 +1,24 @@
 import * as React from "react";
-import { CircleAlert, CircleCheck, Info, TriangleAlert, Wrench } from "lucide-react";
+import { CircleAlert, CircleCheck, Info, OctagonX, TriangleAlert, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEditor } from "../hooks";
 import { trackUsage, usageState, usageText } from "../../../js/editor/track-limits.js";
 import { cn } from "@/lib/utils";
+
+// The check's problems by what they do: crashes and freezes first, then what breaks races, then the rest.
+export const ISSUE_SECTIONS = [
+  { id: "crash", title: "Crashes or freezes the game", test: (i: any) => i.level === "error" && i.crash },
+  { id: "error", title: "Errors: break races or the track", test: (i: any) => i.level === "error" && !i.crash },
+  { id: "warning", title: "Warnings: may cause problems", test: (i: any) => i.level === "warning" },
+  { id: "info", title: "Notes", test: (i: any) => i.level === "info" },
+] as const;
+export const issueSummary = (issues: any[]) => {
+  const crashes = issues.filter((i) => i.level === "error" && i.crash).length, errors = issues.filter((i) => i.level === "error" && !i.crash).length;
+  const warnings = issues.filter((i) => i.level === "warning").length;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const parts = [crashes && `${plural(crashes, "problem")} that crash${crashes === 1 ? "es" : ""} the game`, errors && plural(errors, "error"), warnings && plural(warnings, "warning")].filter(Boolean);
+  return parts.length ? parts.join(", ") : "No problems found";
+};
 
 const ICON = { error: CircleAlert, warning: TriangleAlert, info: Info } as const;
 const TONE = { error: "text-destructive", warning: "text-warning", info: "text-sky-400" } as const;
@@ -44,7 +59,7 @@ export function CheckPanel() {
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 overflow-y-auto p-3">
       <p className="text-xs leading-relaxed text-muted-foreground">
-        Automatic check of the track. Errors crash the game or break races, warnings may cause problems, notes are suggestions.
+        Automatic check of the track, tried on all the game's own tracks so they show no errors. Problems that crash or freeze the game come first; errors break races, warnings may cause problems, notes are suggestions.
         Click a problem to jump to it; the wrench fixes it for you.
       </p>
       <div className={cn(
@@ -52,12 +67,14 @@ export function CheckPanel() {
         errors ? "border-destructive/40 bg-destructive/10 text-destructive" : warnings ? "border-warning/40 bg-warning/10 text-warning" : "border-success/40 bg-success/10 text-success",
       )}>
         {errors ? <CircleAlert className="size-4" /> : warnings ? <TriangleAlert className="size-4" /> : <CircleCheck className="size-4" />}
-        {errors ? `${errors} error${errors > 1 ? "s" : ""}, ${warnings} warning${warnings !== 1 ? "s" : ""}` : warnings ? `No errors, ${warnings} warning${warnings > 1 ? "s" : ""}` : "No problems found"}
+        {issueSummary(issues)}
       </div>
       <TrackUsage doc={ed.doc} />
       <div className="flex flex-col gap-1">
-        {issues.map((it, i) => {
-          const Icon = ICON[it.level as keyof typeof ICON];
+        {ISSUE_SECTIONS.map((section) => ({ section, list: issues.filter(section.test) })).filter(({ list }) => list.length).map(({ section, list }) => <React.Fragment key={section.id}>
+          <h3 className="mb-0 mt-2 text-xs font-medium text-muted-foreground first:mt-0" data-issue-section={section.id}>{section.title} ({list.length})</h3>
+        {list.map((it, i) => {
+          const Icon = it.crash ? OctagonX : ICON[it.level as keyof typeof ICON];
           return (
             <div
               key={i}
@@ -76,6 +93,7 @@ export function CheckPanel() {
             </div>
           );
         })}
+        </React.Fragment>)}
       </div>
     </div>
   );

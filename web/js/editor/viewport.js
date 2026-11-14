@@ -16,6 +16,9 @@ import { ModelLibrary, modelKeyForObject } from './models.js';
 import { EffectPreview } from './effect-preview.js';
 import { cloneModel, bindCHR, applyCHRFrame, applySRTFrame, applyBillboards, collectBillboards } from './brresmodel.js';
 
+// The editor's own field of view, in degrees (vertical).
+export const EDITOR_FOV = 55;
+
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
@@ -93,7 +96,12 @@ export class Viewport extends EventTarget {
     this.canvas.tabIndex = 0;
 
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(55, 1, 5, 4e6);
+    this.camera = new THREE.PerspectiveCamera(EDITOR_FOV, 1, 5, 4e6);
+    // A game camera's field of view, taken by Go to camera or the Cameras tab, stays only while the
+    // view is that camera's: moving the view yourself brings the editor's own back (keepCameraFov
+    // says when not to, as in the Cameras tab, where the view's zoom becomes a shot's).
+    this.cameraFov = false;
+    this.keepCameraFov = null;
     this.camera.position.set(0, 25000, 30000);
 
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x445066, 1.6));
@@ -128,6 +136,7 @@ export class Viewport extends EventTarget {
     this.controls.dampingFactor = 0.14;
     this.controls.zoomSpeed = 1.4;
     this.controls.addEventListener('change', () => (this.needsRender = true));
+    this.controls.addEventListener('start', () => this.navigated());
 
     this.pivot = new THREE.Object3D();
     this.scene.add(this.pivot);
@@ -251,6 +260,21 @@ export class Viewport extends EventTarget {
   scheduleRebuild() { this.rebuildPending = true; this.needsRender = true; }
 
   // ---- KMP camera previews ----------------------------------------------------------
+  // The editor view through a game camera's lens, until restoreEditorFov.
+  setCameraFov(fov) {
+    this.camera.fov = Math.max(1, Math.min(170, fov || EDITOR_FOV));
+    this.camera.updateProjectionMatrix();
+    this.cameraFov = Math.abs(this.camera.fov - EDITOR_FOV) > 0.01;
+    this.needsRender = true;
+  }
+  restoreEditorFov() {
+    if (!this.cameraFov) return;
+    this.cameraFov = false;
+    this.camera.fov = EDITOR_FOV;
+    this.camera.updateProjectionMatrix();
+    this.needsRender = true;
+  }
+  navigated() { if (this.cameraFov && !this.keepCameraFov?.()) this.restoreEditorFov(); }
   setCameraShot(pose) { this.cameraShot = pose; this.needsRender = true; }
   setCameraInset(pose) { this.cameraInset = pose; this.needsRender = true; }
   // Bottom-right corner, 16:9, in CSS pixels (matches the frame drawn by the UI).
@@ -1738,6 +1762,7 @@ export class Viewport extends EventTarget {
       if (e.button === 2) {
         e.preventDefault();
         this.rmbDown = true;
+        this.navigated();
         const native = this.hideCursorWhileLooking && typeof window.__winctl === 'function';
         // The hidden cursor is put back at the centre of the 3D view (not where the button was
         // pressed, which can be near the screen edge: the cursor would stop there before moving far
@@ -1926,7 +1951,7 @@ export class Viewport extends EventTarget {
     c.addEventListener('keydown', (e) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       this.keys.add(e.code);
-      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE'].includes(e.code)) this.camAnim = null;
+      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE'].includes(e.code)) { this.camAnim = null; this.navigated(); }
     });
     c.addEventListener('keyup', (e) => { this.keys.delete(e.code); });
     // The lock is granted asynchronously: after a quick right click it can arrive once the button

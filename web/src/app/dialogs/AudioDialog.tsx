@@ -23,8 +23,32 @@ import { dialogs } from "../dialogs-store";
 import { WorkspaceCard } from "../panels/WorkspaceCard";
 import { useEditor } from "../hooks";
 import { cn } from "@/lib/utils";
+import { useActivityNote } from "../discord-activity";
 
-const LIST_LIMIT = 400;
+// Every sound is listed (the game has thousands): rows have one height, and only those in sight
+// and a few around them are drawn while the list scrolls.
+const ROW = 44, OVERSCAN = 8;
+function VirtualRows<T>({ items, row }: { items: T[]; row: (item: T) => React.ReactNode }) {
+  const box = React.useRef<HTMLDivElement>(null);
+  const [view, setView] = React.useState({ top: 0, height: 600 });
+  React.useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const measure = () => setView({ top: el.scrollTop, height: el.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  // A new search starts at the top of its results.
+  React.useEffect(() => { if (box.current) { box.current.scrollTop = 0; setView((v) => ({ ...v, top: 0 })); } }, [items]);
+  const first = Math.max(0, Math.floor(view.top / ROW) - OVERSCAN), last = Math.min(items.length, Math.ceil((view.top + view.height) / ROW) + OVERSCAN);
+  return <div ref={box} className="min-h-0 flex-1 overflow-y-auto p-1" onScroll={(e) => setView({ top: e.currentTarget.scrollTop, height: e.currentTarget.clientHeight })}>
+    <div className="relative" style={{ height: items.length * ROW }}>
+      <div className="absolute inset-x-0" style={{ top: first * ROW }}>{items.slice(first, last).map(row)}</div>
+    </div>
+  </div>;
+}
 type Tab = "music" | "sounds";
 interface Item { key: string; label: string; detail: string; kind: "music" | "wave"; path?: string; wave?: any }
 // Decoded audio: Int16 channels, rate, loop and (music) the stereo tracks.
@@ -155,7 +179,7 @@ export function AudioDialog({ file, loose, close }: { file?: string; loose?: { n
     : (waves || []).map((w) => ({ key: w.key, label: w.name, detail: `${w.kind} · ${w.group || "no group"}`, kind: "wave" as const, wave: w })),
   [tab, music, waves, strm]);
   const q = query.trim().toLowerCase();
-  const filtered = q ? items.filter((i) => i.label.toLowerCase().includes(q) || i.detail.toLowerCase().includes(q)) : items;
+  const filtered = React.useMemo(() => q ? items.filter((i) => i.label.toLowerCase().includes(q) || i.detail.toLowerCase().includes(q)) : items, [items, q]);
   const current = items.find((i) => i.key === selected) || null;
   const pendingCount = Object.keys(pendingMusic).length + changedWaves.size;
 
@@ -213,19 +237,17 @@ export function AudioDialog({ file, loose, close }: { file?: string; loose?: { n
           <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,260px)_minmax(0,1fr)] lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
             <div className="flex min-h-0 max-h-48 flex-col rounded-md border sm:max-h-none">
               <div className="shrink-0 border-b px-2.5 py-1.5 text-[11px] text-muted-foreground">
-                {loading || `${filtered.length.toLocaleString()} ${tab === "music" ? "streams" : "sounds"}${filtered.length > LIST_LIMIT ? ` · first ${LIST_LIMIT} shown, refine the search` : ""}`}
+                {loading || `${filtered.length.toLocaleString()} ${tab === "music" ? "streams" : "sounds"}`}
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto p-1">
-                {filtered.slice(0, LIST_LIMIT).map((i) => (
-                  <button key={i.key} onClick={() => setSelected(i.key)} className={cn("flex w-full cursor-pointer flex-col items-start rounded px-2 py-1.5 text-left hover:bg-accent/60", i.key === selected && "bg-accent")}>
+              <VirtualRows items={filtered} row={(i) => (
+                  <button key={i.key} onClick={() => setSelected(i.key)} style={{ height: ROW }} className={cn("flex w-full cursor-pointer flex-col items-start justify-center rounded px-2 text-left hover:bg-accent/60", i.key === selected && "bg-accent")}>
                     <span className="flex w-full items-center gap-1.5 text-[12.5px]">
                       <span className="min-w-0 flex-1 truncate">{i.label}</span>
                       {(pendingMusic[i.path || ""] || changedWaves.has(i.key)) && <span className="size-1.5 shrink-0 rounded-full bg-primary" title="Unsaved changes" />}
                     </span>
                     <span className="w-full truncate text-[10.5px] text-muted-foreground">{i.detail}</span>
                   </button>
-                ))}
-              </div>
+                )} />
             </div>
             <div className="min-h-0 overflow-y-auto">
               {current ? (
@@ -262,6 +284,7 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
   const [error, setError] = React.useState("");
   const [playing, setPlaying] = React.useState(false);
   const [playingTrack, setPlayingTrack] = React.useState<number | null>(null);
+  useActivityNote(playing ? `Listening to ${item.label}` : null);
   const [elapsed, setElapsed] = React.useState(0);
   const [loopPreview, setLoopPreview] = React.useState(true);
   const [loopEnabled, setLoopEnabled] = React.useState(false);

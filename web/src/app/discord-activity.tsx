@@ -6,6 +6,34 @@ import { editor } from "./editor";
 import { useEditor } from "./hooks";
 import { Hint } from "./common";
 import { DiscordIcon } from "./updates";
+import { useDialogStack } from "./dialogs-store";
+
+// What a window is busy with, for the Discord activity. A part of the interface that knows more
+// than the open window (music playing, for example) says it with useActivityNote; the newest wins.
+const notes = new Map<number, string>(), noteListeners = new Set<() => void>();
+let nextNote = 0, noteVersion = 0;
+const subscribeNotes = (fn: () => void) => { noteListeners.add(fn); return () => { noteListeners.delete(fn); }; };
+const latestNote = () => [...notes.values()].at(-1) || "";
+export function useActivityNote(text: string | null) {
+  React.useEffect(() => {
+    if (!text) return;
+    const id = nextNote++;
+    notes.set(id, text); noteVersion++; noteListeners.forEach((fn) => fn());
+    return () => { notes.delete(id); noteVersion++; noteListeners.forEach((fn) => fn()); };
+  }, [text]);
+}
+const DIALOG_ACTIVITY: Record<string, string> = {
+  audio: "Editing music and sounds", effects: "Editing effects", params: "Editing game parameters", minimap: "Editing the minimap",
+  gameText: "Editing the game's text", cups: "Arranging cups and tracks", cupsApply: "Arranging cups and tracks", thp: "Editing preview videos",
+  generator: "Creating a new track", sky: "Editing the sky", fog: "Editing the fog", materials: "Editing materials",
+  textureEditor: "Editing textures", objectTextureEditor: "Editing textures", assetTextureEditor: "Editing textures", objectAppearance: "Editing an object's look",
+  skeletonEditor: "Editing a skeleton", sculpt: "Sculpting the track", primitive: "Adding shapes", ghosts: "Working with ghosts",
+  ghostRecord: "Recording a ghost", ghostReplay: "Watching a ghost replay", trackGhosts: "Working with ghosts", assetEditor: "Editing characters and models",
+  riivolution: "Setting up a Riivolution mod", objectDocsEditor: "Documenting game objects", modelParts: "Adding model parts", gameObjects: "Browsing game objects",
+  archive: "Browsing an archive", menuResource: "Editing menus", szs: "Editing SZS contents", importObj: "Importing a model", versions: "Comparing versions",
+  trackCompare: "Comparing versions", copyCollision: "Copying collision", saveCheck: "Saving a track",
+};
+const TAB_ACTIVITY: Record<string, string> = { collision: "Editing collision", objects: "Placing objects", cameras: "Editing cameras", routes: "Editing routes", validate: "Checking the track" };
 
 type Status = "disabled" | "unconfigured" | "connecting" | "waiting" | "connected" | "error" | "unavailable";
 const ActivityContext = React.createContext<Status>("connecting");
@@ -16,11 +44,17 @@ const labels: Record<Status, string> = {
 };
 
 export function DiscordActivityProvider({ children }: { children: React.ReactNode }) {
-  const ed = useEditor("settings", "doc", "ui");
+  const ed = useEditor("settings", "doc", "ui", "intro");
+  const stack = useDialogStack();
+  React.useSyncExternalStore(subscribeNotes, () => noteVersion);
   const [status, setStatus] = React.useState<Status>(hasBackend ? "connecting" : "unavailable");
   const current = React.useRef({ mode: "home" as "home" | "editing", file: "", detail: "" });
   const home = ed.homeVisible || ed.isEmpty;
-  const detail = ({ collision: "Editing collision", objects: "Placing objects", cameras: "Editing cameras", routes: "Editing routes" } as Record<string, string>)[ed.tab] || "Editing a track";
+  const dialog = [...stack].reverse().find((entry) => !entry.closing && DIALOG_ACTIVITY[entry.kind]);
+  const tool = ed.tool?.type;
+  const detail = latestNote() || (dialog && DIALOG_ACTIVITY[dialog.kind])
+    || (ed.ghostView ? "Watching a ghost replay" : home ? "" : ed.intro ? "Watching the intro"
+      : tool === "paint" ? "Painting collision" : ed.map2D ? "Editing in the 2D map" : TAB_ACTIVITY[ed.tab] || "Editing a track");
   current.current = { mode: home ? "home" : "editing", file: home ? "" : trackLabel(ed.doc.fileName || "New track"), detail };
   const report = React.useRef<() => void>(() => {});
   React.useEffect(() => {
@@ -48,7 +82,7 @@ export function DiscordActivityProvider({ children }: { children: React.ReactNod
     report.current();
     return () => { disposed = true; clearInterval(timer); window.removeEventListener("focus", onFocus); window.removeEventListener("pagehide", onClose); onClose(); report.current = () => {}; };
   }, []);
-  React.useEffect(() => { report.current(); }, [home, ed.doc.fileName, ed.tab, ed.settings.discordActivity]);
+  React.useEffect(() => { report.current(); }, [home, ed.doc.fileName, detail, ed.settings.discordActivity]);
   return <ActivityContext.Provider value={status}>{children}</ActivityContext.Provider>;
 }
 

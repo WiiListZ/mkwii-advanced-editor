@@ -104,14 +104,33 @@ test('Track check finds cannons without destinations, missing object files and b
   doc.kmp.POTI.push(make.route([make.routePoint([0, 0, 0]), make.routePoint([10, 0, 0])]));
   doc.kmp.extras = { ...(doc.kmp.extras || {}), CAME: (200 << 8) | 0xff };
   doc.invalidate();
-  const messages = validate(doc, ops, null).map((i) => `${i.level}: ${i.msg}`);
+  const issues = validate(doc, ops, null), messages = issues.map((i) => `${i.level}: ${i.msg}`);
   expect(messages.some((m) => m.startsWith('error') && m.includes('cannon 1') && m.includes('0 cannon destinations'))).toBe(true);
+  // What crashes the game is told apart from the other errors.
+  expect(issues.find((i) => i.msg.includes('cannon 1')).crash).toBe(true);
+  expect(issues.find((i) => i.msg.includes('woodbox.brres')).crash).toBe(true);
   expect(messages.some((m) => m.startsWith('error') && m.includes('woodbox.brres'))).toBe(true);
   expect(messages.some((m) => m.startsWith('warning') && m.includes('rk_woodbox.breff'))).toBe(true);
-  expect(messages.some((m) => m.startsWith('error') && m.includes('camera 200'))).toBe(true);
+  expect(messages.some((m) => m.startsWith('warning') && m.includes('camera 200'))).toBe(true);
   // Files that saving copies from the tracks folder are not reported.
   ops.objectFilesAvailable = (id) => id === 0xd3;
   expect(validate(doc, ops, null).some((i) => i.msg.includes('woodbox.brres'))).toBe(false);
+});
+
+test("What the game's own tracks have is not an error: arenas, scenes, route-searching cameras", () => {
+  const { doc } = docFromPreset('Oval');
+  const ops = new Ops(doc, settings);
+  // A route-searching camera (type 2) without a route, and a fixed camera (type 3) linking a missing
+  // route, as in boardcross_course and old_koopa_gba; a one-point route as in shopping_course.
+  doc.kmp.CAME.push({ ...make.CAME([0, 0, 0]), type: 2 }, { ...make.CAME([0, 0, 0]), type: 3, route: 251 });
+  doc.kmp.POTI.push(make.route([make.routePoint([0, 0, 0])]));
+  doc.invalidate();
+  expect(validate(doc, ops, null).filter((i) => i.level === 'error').map((i) => i.msg)).toEqual([]);
+  // An arena has no checkpoints or item routes; a race track without them is told.
+  doc.kmp.CKPT = []; doc.kmp.ITPT = [];
+  expect(validate(doc, ops, null).some((i) => i.level === 'error' && i.msg.startsWith('Checkpoints: no groups'))).toBe(true);
+  doc.kmp.MSPT.push(make.MSPT([0, 0, 0]));
+  expect(validate(doc, ops, null).filter((i) => i.msg.includes('no groups'))).toEqual([]);
 });
 
 test('Checkpoints face the driving direction (left/right convention)', () => {

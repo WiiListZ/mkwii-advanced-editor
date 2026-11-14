@@ -67,7 +67,9 @@ export class DiscordPresence {
     const now = Date.now();
     for (const [id, window] of this.windows) if (now - window.seen > (this.options.leaseMs ?? 45000)) this.windows.delete(id);
     const current = [...this.windows.values()].sort((a, b) => b.focusOrder - a.focusOrder || b.seen - a.seen)[0];
-    return { type: 0, details: current?.mode === "editing" ? (current.detail && current.detail.length >= 2 ? current.detail : "Editing a track") : "On the home screen",
+    // What the window is doing (an open tool, music playing…), also from the home screen.
+    const detail = current?.detail && current.detail.length >= 2 ? current.detail : "";
+    return { type: 0, details: detail || (current?.mode === "editing" ? "Editing a track" : "On the home screen"),
       state: current?.mode === "editing" && current.file ? (current.file.length >= 2 ? current.file : `Track: ${current.file}`) : "Mario Kart Wii track editor", timestamps: { start: this.started } };
   }
   private publish() {

@@ -232,8 +232,11 @@ export function buildKMP(doc) {
 export function cameraRouteIssues(kmp) {
   const issues = [];
   (kmp.CAME || []).forEach((cam, index) => {
+    // Opening cameras (types 5 and 6) follow their route; the game's own tracks have route-searching
+    // cameras (type 2) without one, so only a route that is there is checked for those.
     if (![2, 5, 6].includes(cam.type)) return;
     const route = kmp.POTI?.[cam.route];
+    if (cam.type === 2 && cam.route === 0xff) return;
     if (cam.route === 0xff || !route || route.points.length < 2)
       issues.push({ index, message: `Camera #${index} (type ${cam.type}) needs a route with at least 2 points: Mario Kart Wii can crash while loading this track.` });
     else if (route.smooth && route.points.length < 3)
