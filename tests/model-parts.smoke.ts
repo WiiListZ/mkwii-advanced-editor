@@ -136,7 +136,7 @@ try {
     const a = (window as any).app;
     a.doc.filePath = path;
     a.doc.fileKind = "szs";
-    await a.save(false);
+    await a.save(false, { check: false });
   }, saved);
   await wait(500);
   await page.evaluate(async (path) => { (window as any).app.doc.dirty = false; await (window as any).app.openPath(path); }, saved);

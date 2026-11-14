@@ -44,10 +44,11 @@ const clean = (value, where, max = 2000) => {
 };
 
 // The input fields of a setting: signed, min, max (real limits of the value box), options (a list to
-// choose from, { "value": "label" }) and otherValues (the list also allows typing another number).
+// choose from, { "value": "label" }), otherValues (the list also allows typing another number) and
+// required (the object does not work with 0 here: the track check reports it).
 function parseSettingInput(setting, where) {
   const out = {};
-  for (const flag of ['signed', 'otherValues']) {
+  for (const flag of ['signed', 'otherValues', 'required']) {
     if (setting[flag] === undefined) continue;
     if (typeof setting[flag] !== 'boolean') throw new Error(`${where}.${flag} must be true or false`);
     out[flag] = setting[flag];
@@ -110,6 +111,11 @@ export function parseObjectDocumentation(input) {
         if (setting.limits !== undefined) entry.settings[index].limits = clean(setting.limits, `${key}.settings.${index}.limits`);
         Object.assign(entry.settings[index], parseSettingInput(setting, `${key}.settings.${index}`));
       }
+    }
+    if (value.route !== undefined) {
+      if (!plain(value.route) || typeof value.route.required !== 'boolean') throw new Error(`${key}.route must be { "required": true or false }`);
+      entry.route = { required: value.route.required };
+      if (value.route.description !== undefined) entry.route.description = clean(value.route.description, `${key}.route.description`);
     }
     if (!Object.keys(entry).length) throw new Error(`${key} has no documentation`);
     if (entry.status === 'documented' && entry.documented !== undefined && entry.documented < 100) throw new Error(`${key}: "documented" needs 100%, use "partial" below that`);

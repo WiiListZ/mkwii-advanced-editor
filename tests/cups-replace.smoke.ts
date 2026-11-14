@@ -90,7 +90,7 @@ try {
   check(await page.evaluate(() => (window as any).app.doc.kmp === (window as any).__oldTrack), "creating a cup track opens its own editor without replacing the previous document");
   await child!.setRequestInterception(true);
   child!.on("request", (q) => { if (new URL(q.url()).pathname === "/api/save-dialog") { saves++; void q.respond({ status: 200, contentType: "application/json", body: JSON.stringify({ path: null }) }); } else void q.continue(); });
-  await child!.evaluate(async () => { const a = (window as any).app; a.doc.change("Set laps", () => { a.doc.kmp.STGI[0].laps = 4; }); await a.save(); });
+  await child!.evaluate(async () => { const a = (window as any).app; a.doc.change("Set laps", () => { a.doc.kmp.STGI[0].laps = 4; }); await a.save(false, { check: false }); });
   check(saves === 0 && parseKMP(findFile(parseU8(yaz0Decompress(new Uint8Array(readFileSync(generated)))), "course.kmp").data).STGI[0].laps === 4, "Save before Apply keeps the cup track's edits automatically without touching the game");
   check(await page.$$eval('button', (buttons) => buttons.some((b) => b.textContent?.trim() === "Apply changes…" && !b.disabled)), "the generated track passes its checks and can be applied immediately");
   const tree = parseU8(yaz0Decompress(new Uint8Array(readFileSync(generated))));
@@ -113,7 +113,7 @@ try {
   await clickText('[role="dialog"] button', "Apply without backup");
   await child!.waitForFunction((path) => (window as any).app.doc.filePath === path && !(window as any).app.cupTrackLink?.pending, { timeout: 15000 }, original);
   check(parseKMP(findFile(parseU8(yaz0Decompress(new Uint8Array(readFileSync(original)))), "course.kmp").data).STGI[0].laps === 4, "Apply installs the generated track into the selected cup's game archive");
-  await child!.evaluate(async () => { const a = (window as any).app; a.doc.change("Set laps again", () => { a.doc.kmp.STGI[0].laps = 5; }); await a.save(); });
+  await child!.evaluate(async () => { const a = (window as any).app; a.doc.change("Set laps again", () => { a.doc.kmp.STGI[0].laps = 5; }); await a.save(false, { check: false }); });
   check(saves === 0 && parseKMP(findFile(parseU8(yaz0Decompress(new Uint8Array(readFileSync(original)))), "course.kmp").data).STGI[0].laps === 5 && parseKMP(findFile(parseU8(yaz0Decompress(new Uint8Array(readFileSync(generated)))), "course.kmp").data).STGI[0].laps === 4, "after Apply the same editor saves directly to that cup position, with no destination prompt");
   if (process.argv[2]) await page.screenshot({ path: process.argv[2] });
   check(errors.length === 0, "no browser errors");

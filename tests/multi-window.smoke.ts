@@ -61,7 +61,7 @@ try {
   check(await x(a) === 0 && await x(b) === 200, "each editor has its own document and Undo history");
   await a.evaluate(() => (window as any).app.cmd("redo"));
   check(await x(a) === 100 && (await a.title()).includes("First track.kmp") && (await b.title()).includes("Second track.kmp"), "Redo and window titles identify the correct track");
-  await Promise.all([a.evaluate(() => (window as any).app.save()), b.evaluate(() => (window as any).app.save())]);
+  await Promise.all([a.evaluate(() => (window as any).app.save(false, { check: false })), b.evaluate(() => (window as any).app.save(false, { check: false }))]);
   check(diskX(first) === 100 && diskX(second) === 200, "simultaneous saves write to the respective track files");
   const preferences = await a.evaluate(async () => {
     const token = new URLSearchParams(location.search).get("t")!;
@@ -77,14 +77,14 @@ try {
   const copy = (await copyTarget.page())!;
   copy.on("pageerror", (e) => errors.push(e.message));
   await copy.waitForFunction((path) => (window as any).app?.doc.filePath === path, {}, first);
-  await change(a, 150); await a.evaluate(() => (window as any).app.save());
+  await change(a, 150); await a.evaluate(() => (window as any).app.save(false, { check: false }));
   await change(copy, 999);
-  await copy.evaluate(() => { void (window as any).app.save(); });
+  await copy.evaluate(() => { void (window as any).app.save(false, { check: false }); });
   await copy.waitForFunction(() => document.querySelector('[role="alertdialog"]')?.textContent?.includes("This track changed on disk"));
   await copy.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find((b) => b.textContent === "Cancel")!.click());
   check(diskX(first) === 150 && await copy.evaluate(() => (window as any).app.doc.dirty), "a stale window cannot silently overwrite another window's saved changes");
   await copy.close(); await a.close(); await parent.close();
-  await change(b, 250); await b.evaluate(() => (window as any).app.save());
+  await change(b, 250); await b.evaluate(() => (window as any).app.save(false, { check: false }));
   check(diskX(second) === 250, "the remaining editor stays usable after Home and another editor close");
   // In-memory drops cross the window boundary without acquiring a path or overwriting the source.
   await b.evaluate(async (data) => { await (window as any).app.loadFiles([{ name: "Dropped.kmp", data: new Uint8Array(data) }], null, { newWindow: true }); }, [...buildKMP(kmp)]);

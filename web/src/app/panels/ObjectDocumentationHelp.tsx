@@ -15,8 +15,9 @@ const SKELETON = `{
       "notes": "…",
       "status": "partial",
       "documented": 60,
+      "route": { "required": true, "description": "…" },
       "settings": {
-        "1": { "label": "…", "description": "…", "min": 0, "max": 100, "limits": "…" },
+        "1": { "label": "…", "description": "…", "min": 0, "max": 100, "required": true, "limits": "…" },
         "2": { "label": "…", "options": { "0": "…", "1": "…" }, "otherValues": true },
         "3": { "label": "…", "signed": true, "values": "…" }
       }
@@ -76,6 +77,7 @@ export function ObjectDocumentationHelp() {
           <Field name="notes" rule="up to 2000 characters">A remark shown highlighted under the description (requirements, known problems…).</Field>
           <Field name="status" rule='"documented", "partial" or "unknown"'>The label of the object: Documented, Partially documented or Unknown.</Field>
           <Field name="documented" rule="whole number, 0 to 100">How much of the object is documented, in percent. With "documented" it must be 100.</Field>
+          <Field name="route" rule='{ "required": true or false }'>Whether the object follows a route (POTI). With <code className="font-mono text-[12px]">"required": true</code> an object placed without a route is an error in Check (the game crashes with "Invalid read from 0x00000000"), and an object added in the editor gets a route at once. <code className="font-mono text-[12px]">"description"</code> (up to 2000 characters) says what the route does. Without this field the editor uses the list of route-following objects of Wiimm's SZS Tools.</Field>
           <Field name="settings" rule='keys "1" to "8"'>The KMP settings 1 to 8 of the object, each with the fields below.</Field>
         </div>
       </section>
@@ -89,6 +91,7 @@ export function ObjectDocumentationHelp() {
           <Field name="max" rule="whole number">The largest value the Inspector accepts. Without min and max the box takes the whole stored range, 0 to 65535.</Field>
           <Field name="signed" rule="true or false">The value has a sign: the box shows −32768 to 32767 (the file stores −1 as 65535). min and max are then signed too.</Field>
           <Field name="options" rule='{ "value": "label" }, 1 to 256'>The setting becomes a list to choose from in the Inspector instead of a number box. Every value must be inside min–max.</Field>
+          <Field name="required" rule="true or false">The object does not work while this setting is 0: Check warns about every placed object that leaves it at 0, and the Inspector marks it as required.</Field>
           <Field name="otherValues" rule="true or false">With options: the list also has "Other value…", which shows the number box to type a value that is not listed.</Field>
           <Field name="values" rule="up to 2000 characters">A note on the values, shown under the setting (for example what a number means when there is no list).</Field>
           <Field name="limits" rule="up to 2000 characters">A note on the limits, shown after the min–max range.</Field>

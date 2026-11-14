@@ -606,3 +606,31 @@ test.skipIf(!game || !existsSync(join(game || "", "Race", "Course", "block_battl
   for (let i = 0; i < placed.count; i++) if (placed.fromMap[i] && design.assign[i] !== placed.swatch[i]) painted++;
   expect(painted).toBeLessThan(placed.count / 100);
 });
+
+test("the canvas lets a map be painted anywhere it can show, under the track and never doubling it", () => {
+  const kcl = fakeKCL(), frame = { minX: -20000, maxX: 20000, minZ: -15000, maxZ: 15000 };
+  const track: any = minimapTrack(kcl, [], { canvas: true, bounds: frame })!, plain: any = minimapTrack(kcl, [])!;
+  const canvas = Array.from({ length: track.count }, (_, i) => i).filter((i) => track.canvas[i]);
+  // The road keeps its own grain; the canvas comes on top of it, reaching past the frame.
+  expect(track.count - canvas.length).toBe(plain.count);
+  expect(track.canvasBounds.minX).toBeLessThan(frame.minX);
+  expect(track.canvasBounds.maxZ).toBeGreaterThan(frame.maxZ);
+  const locate = trackLocator(track);
+  // Far from the collision there is canvas to paint; on the road the road is found, never the canvas under it.
+  expect(track.canvas[locate(15000, -12000)]).toBe(1);
+  expect(track.canvas[locate(100, 100)]).toBe(0);
+  for (const i of locate.within(500, 500, 300)) expect(track.covered[i]).toBe(0);
+  expect(locate.within(500, 500, 300).every((i: number) => !track.canvas[i] || !track.covered[i])).toBe(true);
+  // The canvas lies under everything and starts empty: neither the seed nor New from track use it.
+  expect(track.canvas[track.first[track.order[0]]]).toBe(1);
+  const { assign } = seedMinimapDesign(track, null);
+  expect(canvas.every((i) => assign[i] === MINIMAP_HIDDEN)).toBe(true);
+  const generated = generateMinimapDesign(track, [{ id: "road", hex: "#fff" }, { id: "offroad", hex: "#888" }]).assign;
+  expect(canvas.every((i) => generated[i] === MINIMAP_HIDDEN)).toBe(true);
+  // A tile painted all in one colour costs two triangles in the game.
+  const s = track.source[locate(15000, -12000)], tile = new Int16Array(track.count).fill(MINIMAP_HIDDEN);
+  // The two triangles of a tile are consecutive sources, the first of each pair at an even offset.
+  const offset = s - track.source[canvas[0]], partner = offset % 2 ? s - 1 : s + 1;
+  for (const source of [s, partner]) for (let i = track.first[source]; i < track.first[source + 1]; i++) tile[i] = 0;
+  expect(minimapTriangleCount(track, tile)).toBe(2);
+});

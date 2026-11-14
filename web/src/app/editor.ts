@@ -37,7 +37,7 @@ import { isItemSlot, isStatsFile } from "../../js/formats/params.js";
 
 export const PATH_KINDS = ["ENPT", "ITPT", "CKPT", "POTI"];
 export const LAYER_LABEL: Record<string, string> = { VISUAL: "Track model", SKY: "Sky", KCL: "Collision", MODEL: "Reference model", GRID: "Grid", ...SECTION_LABEL };
-const PERSISTED = ["workspace", "riivolutionXml", "cameraPreview", "hideGrid", "confirmModelDrop", "partsFolder", "favoriteObjects", "favoriteModelSources", "favoriteModelParts", "iconSize", "checkpointWidth", "autoCheckpointWidth", "pathWidth", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "showDescriptions", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "textureBrushSize", "uiFont", "offerCopyUpdates", "keepBackups", "keepVersions", "versionsKept", "map2DAddSeveral", "introFollow", "introTimelineHeight", "dragToMove", "hideMoveArrows", "trackVideoPreviews", "discordActivity", "collisionCopyChoices"] as const;
+const PERSISTED = ["workspace", "riivolutionXml", "cameraPreview", "hideGrid", "confirmModelDrop", "partsFolder", "favoriteObjects", "favoriteModelSources", "favoriteModelParts", "iconSize", "checkpointWidth", "autoCheckpointWidth", "pathWidth", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "showDescriptions", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "textureBrushSize", "uiFont", "offerCopyUpdates", "keepBackups", "keepVersions", "versionsKept", "map2DAddSeveral", "introFollow", "introTimelineHeight", "dragToMove", "hideMoveArrows", "trackVideoPreviews", "discordActivity", "collisionCopyChoices", "saveCheckWarnings"] as const;
 const VIEW_SETTINGS = new Set<keyof Settings>(["hideGrid", "iconSize", "modelMode", "displayMode", "modelEditing", "smartAlignment", "animations", "showLabels", "selectionBox", "showAreaVolumes", "areaOutlinesThroughWalls", "showEffects", "quality", "flySpeed", "lookSensitivity", "hideCursorWhileLooking", "dragToMove", "hideMoveArrows"]);
 const textEncoder = new TextEncoder();
 const sameBytes = (a: Uint8Array, b: Uint8Array) => {
@@ -56,6 +56,7 @@ export interface Settings {
   flySpeed: number; lookSensitivity: number; hideCursorWhileLooking: boolean; textureBrushSize: number;
   dragToMove: boolean; hideMoveArrows: boolean;
   trackVideoPreviews: boolean; discordActivity: boolean;
+  saveCheckWarnings: boolean; // Saving also stops for track check warnings, not only for errors
   collisionCopyChoices: Record<string, boolean>;
   dolphinPath: string; dolphinGame: string; workspace: string; riivolutionXml: string; partsFolder: string; favoriteObjects: number[]; favoriteModelSources: string[]; favoriteModelParts: string[];
   confirmModelDrop: boolean; hideGrid: boolean; cameraPreview: boolean; offerCopyUpdates: boolean; keepBackups: boolean; keepVersions: boolean; versionsKept: number; map2DAddSeveral: boolean;
@@ -68,7 +69,7 @@ export interface Settings {
 // Preferences that "Reset to defaults" restores. Recent files, favourites and folders are kept.
 export const DEFAULT_SETTINGS = {
   collisionCopyChoices: {},
-  iconSize: 150, checkpointWidth: 3000, autoCheckpointWidth: true, pathWidth: 20, trackVideoPreviews: true, discordActivity: true,
+  iconSize: 150, checkpointWidth: 3000, autoCheckpointWidth: true, pathWidth: 20, trackVideoPreviews: true, discordActivity: true, saveCheckWarnings: true,
   modelMode: "real", displayMode: "visual", modelEditing: true, smartAlignment: false, animations: true, showLabels: true, selectionBox: false, showAreaVolumes: true, areaOutlinesThroughWalls: false, showEffects: true, showDescriptions: true, quality: "high",
   flySpeed: 1, lookSensitivity: 1, hideCursorWhileLooking: true, dragToMove: false, hideMoveArrows: false, textureBrushSize: 8, confirmModelDrop: true, hideGrid: true, cameraPreview: true, uiFont: "default", offerCopyUpdates: true, keepBackups: true, keepVersions: true, versionsKept: 20, map2DAddSeveral: false, introFollow: true, introTimelineHeight: 118,
 } satisfies Partial<Settings>;
@@ -208,6 +209,14 @@ export class Editor {
 
   constructor() {
     this.ops = new Ops(this.doc, this.settings);
+    this.ops.objectDocumentation = (id: number) => this.getObjectDocumentation(id);
+    // Whether saving provides an object's files although the SZS lacks them: the same rule as
+    // copyLibraryObjects (Common.szs has the model, or the tracks folder has the object).
+    this.ops.objectFilesAvailable = (id: number) => {
+      const assets = this.assets, names: string[] = assets?.resourceNames(id) || [];
+      if (assets?.common && names.some((n) => findFile(assets.common, `${n}.brres`))) return true;
+      return !!this.doc.szs && !names.some((n) => findFile(this.doc.szs, `${n}.brres`)) && names.some((n) => assets?.library?.find(n));
+    };
     const d = this.doc;
     d.on("change", () => { this.introCache.clear(); this.bump("doc"); this.scheduleValidate(); this.refreshCameraViews(); });
     d.on("load", () => { this.collisionChoiceTrack = null; resetPieceMemory(); this.textureOriginals.clear(); this.bump("doc"); this.bump("selection"); this.scheduleValidate(); });
@@ -940,7 +949,8 @@ export class Editor {
     d.kclFlagsChanged = false;
   }
 
-  async save(saveAs = false) {
+  // check: false skips the track check shown before saving (automated tests that save on purpose).
+  async save(saveAs = false, { check = true }: { check?: boolean } = {}) {
     const d = this.doc;
     try { await this.refreshCupTrackTarget(); }
     catch (e: any) { toast.error("Could not resolve the cup track's destination", { description: e.message }); return false; }
@@ -960,6 +970,12 @@ export class Editor {
       let fixed = 0;
       this.editIntro("Fix intro cameras", (k) => { fixed = fixIntroShots(k); });
       toast.info(`${fixed} intro camera${fixed === 1 ? "" : "s"} fixed for the game`, { description: "They were saved so the game plays them as the Cameras tab shows them. Ctrl+Z undoes it.", duration: 9000 });
+    }
+    // The track check runs first: errors (and warnings, unless turned off) are shown before saving,
+    // with their fixes and "Save anyway".
+    this.runValidate();
+    if (check && this.issues.some((issue) => issue.level === "error" || (issue.level === "warning" && this.settings.saveCheckWarnings))) {
+      if (!(await dialogs.open("saveCheck", {}))) return false;
     }
     if (hasBackend && this.diskVersion && path.replace(/\\/g, "/").toLowerCase() === this.diskVersion.path.replace(/\\/g, "/").toLowerCase()) {
       try {

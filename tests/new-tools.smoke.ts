@@ -196,9 +196,9 @@ try {
   const moved = await page.evaluate(async () => {
     const app = (window as any).app, object = app.doc.kmp.GOBJ.find((o: any) => o.objectId === 0x65);
     app.doc.change("Move a box", () => { object.pos[0] += 700; });
-    await app.save(false);
+    await app.save(false, { check: false });
     app.doc.change("Remove an object", () => { app.doc.kmp.GOBJ.splice(app.doc.kmp.GOBJ.length - 1, 1); });
-    await app.save(false);
+    await app.save(false, { check: false });
     return object.uid;
   });
   await open("versions", "[data-version]");

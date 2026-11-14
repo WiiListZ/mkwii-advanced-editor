@@ -400,7 +400,7 @@ const saved = await page.evaluate(async (path) => {
   const movedY = a.doc.kcl.verts[1];
   a.stopTool();
   a.doc.filePath = path; a.doc.fileKind = "szs"; a.doc.fileName = "mkwii_ui_test.szs";
-  const ok = await a.save(false);
+  const ok = await a.save(false, { check: false });
   const counts = { gobj: a.doc.kmp.GOBJ.length, ck: a.doc.kmp.CKPT[0].points.length, tris: a.doc.kcl.count };
   a.doc.dirty = false;
   await a.openPath(path);

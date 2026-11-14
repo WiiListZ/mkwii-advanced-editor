@@ -167,7 +167,7 @@ try {
     const app = (window as any).app;
     app.doc.filePath = path;
     app.doc.fileKind = "szs";
-    await app.save(false);
+    await app.save(false, { check: false });
     await app.openPath(path);
   }, saved);
   if (!existsSync(saved) || await page.evaluate(() => (window as any).app.doc.kmp.GOBJ.length) !== afterObjects)

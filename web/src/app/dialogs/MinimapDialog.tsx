@@ -48,6 +48,14 @@ const SOURCES: { id: string; label: string; hex: string; on: boolean }[] = [
 const TRACK_FILL = "#2c343b";
 const CANVAS_FILL = "#14181c";
 const PREVIEW_FILL = "#20262c";
+// The In game panel: the frame at one scale on both axes, centred, 6 pixels in from the edges.
+const previewView = (frame: Bounds, sw: number, sh: number) => {
+  const fw = Math.max(1, frame.maxX - frame.minX), fh = Math.max(1, frame.maxZ - frame.minZ), k = Math.min((sw - 12) / fw, (sh - 12) / fh);
+  return { k, ox: (sw - fw * k) / 2 - frame.minX * k, oy: (sh - fh * k) / 2 - frame.minZ * k };
+};
+// The part of the world the panel shows, edge to edge.
+const previewArea = ({ k, ox, oy }: { k: number; ox: number; oy: number }, sw: number, sh: number): Bounds =>
+  ({ minX: -ox / k, maxX: (sw - ox) / k, minZ: -oy / k, maxZ: (sh - oy) / k });
 
 const css = (rgb: number[], alpha = 1, grey = false) => {
   const g = Math.round(rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114);
@@ -89,7 +97,7 @@ export function MinimapDialog({ close }: { close: (value: any) => void }) {
   }, [data]);
   // Follows what is on the track now: objects, routes and the finish line come from the open KMP.
   const docVersion = editor.version(["doc"]);
-  const track = React.useMemo(() => minimapTrack(doc.kcl, minimapElements(doc.kmp), { map }), [doc.kcl, docVersion, map]);
+  const track = React.useMemo(() => minimapTrack(doc.kcl, minimapElements(doc.kmp), { map, canvas: true }), [doc.kcl, docVersion, map]);
   const sourceCounts = React.useMemo(() => minimapSourceCounts(track), [track]);
   const locate = React.useMemo(() => track ? trackLocator(track) : null, [track]);
 
@@ -183,8 +191,11 @@ export function MinimapDialog({ close }: { close: (value: any) => void }) {
       minX = Math.min(minX, x); maxX = Math.max(maxX, x);
       minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
     };
-    if (track) for (let i = 0; i < track.count * 9; i += 3) include(track.verts[i], track.verts[i + 2]);
-    if (map?.bounds) { include(map.bounds.minX, map.bounds.minZ); include(map.bounds.maxX, map.bounds.maxZ); }
+    // The canvas reaches past the track: fitting it would make the track small.
+    if (track) for (let i = 0; i < track.count; i++) if (!track.canvas[i]) for (let c = 0; c < 9; c += 3) include(track.verts[i * 9 + c], track.verts[i * 9 + c + 2]);
+    // All that the In game panel shows, so the dashed line is in view.
+    const frame = design.bounds || map?.bounds;
+    if (frame) { const seen = previewArea(previewView(frame, 300, 300), 300, 300); include(seen.minX, seen.minZ); include(seen.maxX, seen.maxZ); }
     if (minX > maxX) { minX = minZ = -5000; maxX = maxZ = 5000; }
     const { w, h } = size.current;
     view.current = {
@@ -250,7 +261,7 @@ export function MinimapDialog({ close }: { close: (value: any) => void }) {
     // The track to paint on. Elements off the map are not drawn: dozens would hide it.
     if (track) for (const s of track.order) {
       const first = track.first[s];
-      if (track.element[first] || track.fromMap[first]) continue;
+      if (track.element[first] || track.fromMap[first] || track.canvas[first]) continue;
       const o = s * 9, v = track.sourceVerts;
       triangle([v[o], v[o + 2], v[o + 3], v[o + 5], v[o + 6], v[o + 8]], TRACK_FILL);
     }
@@ -279,6 +290,14 @@ export function MinimapDialog({ close }: { close: (value: any) => void }) {
       ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
     }
     const bounds = design.bounds;
+    // What the In game panel shows: the frame fitted into its square, so on the frame's shorter side
+    // a little more than the frame is on the map. Painting can go anywhere; only this part shows.
+    if (bounds && tool !== "frame") {
+      const side = inGame.current?.width || 300, seen = previewArea(previewView(bounds, side, side), side, side);
+      const [x0, y0] = toScreen(seen.minX, seen.minZ), [x1, y1] = toScreen(seen.maxX, seen.maxZ);
+      ctx.strokeStyle = "rgba(255,255,255,.25)"; ctx.lineWidth = 1; ctx.setLineDash([4, 6]);
+      ctx.strokeRect(x0, y0, x1 - x0, y1 - y0); ctx.setLineDash([]);
+    }
     if (bounds && tool === "frame") {
       const [x0, y0] = toScreen(bounds.minX, bounds.minZ), [x1, y1] = toScreen(bounds.maxX, bounds.maxZ);
       ctx.strokeStyle = "#facc15"; ctx.lineWidth = 1; ctx.setLineDash([5, 5]);
@@ -308,8 +327,7 @@ export function MinimapDialog({ close }: { close: (value: any) => void }) {
       }
     }
     if (!frame) return;
-    const fw = Math.max(1, frame.maxX - frame.minX), fh = Math.max(1, frame.maxZ - frame.minZ), k = Math.min((sw - 12) / fw, (sh - 12) / fh);
-    const ox = (sw - fw * k) / 2 - frame.minX * k, oy = (sh - fh * k) / 2 - frame.minZ * k;
+    const { k, ox, oy } = previewView(frame, sw, sh);
     for (const { p, rgb, alpha } of drawn) {
       const fill = css(rgb, alpha, !isBattle);
       sctx.fillStyle = fill; sctx.strokeStyle = fill; sctx.lineWidth = .5;
@@ -333,7 +351,7 @@ export function MinimapDialog({ close }: { close: (value: any) => void }) {
     const touched = new Set<number>();
     const touch = (hit: number, whole: boolean) => {
       if (hit < 0) return;
-      if (whole) for (const i of track.parts.get(track.piece[hit])) touched.add(i);
+      if (whole) for (const i of track.parts.get(track.piece[hit])) { if (!track.covered[i]) touched.add(i); }
       else touched.add(hit);
     };
     if (tool === "fill") touch(locate(x, z, accept), true);
@@ -579,7 +597,7 @@ export function MinimapDialog({ close }: { close: (value: any) => void }) {
         <div className="min-w-0 flex-1">
           <DialogTitle className="text-sm">Minimap (beta)</DialogTitle>
           <DialogDescription className="text-xs">
-            {canPaint ? "Grey shows the track. Paint on it to add it to the map, erase to take it off, recolour to change what is already there." : "This track has no collision to paint on. You can still change colours and the frame."}
+            {canPaint ? "Grey shows the track. Paint on it or anywhere around it to add to the map, erase to take off, recolour to change what is there. The dashed line is what the In game panel shows." : "This track has no collision to paint on. You can still change colours and the frame."}
           </DialogDescription>
         </div>
         <Button size="sm" variant="ghost" className="h-7 gap-1.5 px-2 text-xs" onClick={importFile}><FileUp className="size-3.5" /> Import…</Button>

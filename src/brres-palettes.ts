@@ -27,14 +27,18 @@ export function hasBRRESModelAnimations(data: Uint8Array) {
     ["AnmChr(NW4R)", "AnmShp(NW4R)", "AnmVis(NW4R)"].includes(folder.name));
 }
 
-// ABMatt cannot read every SHP0/VIS0/PAT0 encoding. Keep them out of temporary
-// geometry conversions; pattern animations are transferred separately below.
+// ABMatt parses (and re-encodes) every BRRES folder, but cannot read every
+// CHR0/CLR0/SCN0/SHP0/VIS0/PAT0 encoding: custom tracks often carry SCN0 lights
+// or fog it rejects with "Incorrect name offset". Geometry work only needs the
+// models, textures and texture-matrix animations, so everything else is kept
+// out of ABMatt; preserveBRRESPatterns puts it back byte for byte.
+const ABMATT_FOLDERS = ["3DModels(NW4R)", "Textures(NW4R)", "Palettes(NW4R)", "AnmTexSrt(NW4R)"];
+const passthrough = (name: string) => !ABMATT_FOLDERS.includes(name) && name !== "AnmTexPat(NW4R)";
 export async function staticBRRESModelSource(data: Uint8Array, dir: string) {
-  const folders = group(data, view(data).getUint16(12) + 8)
-    .filter((folder) => ["AnmShp(NW4R)", "AnmVis(NW4R)", "AnmTexPat(NW4R)"].includes(folder.name));
+  const folders = group(data, view(data).getUint16(12) + 8).filter((folder) => !ABMATT_FOLDERS.includes(folder.name));
   if (!folders.length) return data;
   const exe = wszstPath();
-  if (!exe) throw new Error("Importing an animated model part requires the included Wiimm tools");
+  if (!exe) throw new Error("Editing a model with animations requires the included Wiimm tools");
   await mkdir(dir, { recursive: true });
   const source = join(dir, "source.brres"), extracted = join(dir, "resources"), output = join(dir, "static.brres");
   const run = async (...args: string[]) => {
@@ -297,7 +301,49 @@ export async function preserveExistingBRRESTextures(original: Uint8Array, result
 
 // ABMatt only handles the first PAT0 slot. Keep complete original animations
 // and attach imported patterns natively after it has finished the geometry.
+// Resources removed by staticBRRESModelSource (CHR0, CLR0, SCN0, SHP0, VIS0…)
+// are restored unchanged.
 export async function preserveBRRESPatterns(original: Uint8Array, result: Uint8Array, dir: string, additions: any[] = []) {
+  const patterned = await preservePatternResources(original, result, join(dir, "pat0"), additions);
+  return restorePassthroughResources(original, patterned, join(dir, "passthrough"));
+}
+
+async function restorePassthroughResources(original: Uint8Array, result: Uint8Array, dir: string) {
+  const resourceNames = (data: Uint8Array) => new Map(group(data, view(data).getUint16(12) + 8)
+    .map((folder) => [folder.name, new Set(group(data, folder.offset).map((resource) => resource.name))]));
+  const before = resourceNames(original), after = resourceNames(result);
+  const missing = [...before].filter(([folder, names]) => passthrough(folder) && [...names].some((name) => !after.get(folder)?.has(name)));
+  if (!missing.length) return result;
+  const exe = wszstPath();
+  if (!exe) throw new Error("Preserving model animations requires the included Wiimm tools");
+  await mkdir(dir, { recursive: true });
+  const sourcePath = join(dir, "original.brres"), resultPath = join(dir, "result.brres"), output = join(dir, "output.brres");
+  const sourceDir = join(dir, "original"), resultDir = join(dir, "result");
+  const run = async (...args: string[]) => {
+    const child = Bun.spawn([exe, ...args], { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe", windowsHide: true });
+    const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    if (code) throw new Error(`Could not preserve model animations: ${(out + "\n" + err).trim().slice(-600)}`);
+  };
+  await writeFile(sourcePath, original); await writeFile(resultPath, result);
+  await run("EXTRACT", sourcePath, "--dest", sourceDir);
+  await run("EXTRACT", resultPath, "--dest", resultDir);
+  for (const [folder] of missing) {
+    const from = resolve(sourceDir, folder), to = resolve(resultDir, folder);
+    if (!from.startsWith(resolve(sourceDir) + sep) || !to.startsWith(resolve(resultDir) + sep)) throw new Error("Invalid animation resource path");
+    await mkdir(to, { recursive: true });
+    // Resources the operation itself added (e.g. an imported CHR0) are kept.
+    const existing = new Set((await readdir(to)).map((file) => file.toLowerCase()));
+    for (const file of await readdir(from)) if (!existing.has(file.toLowerCase())) await cp(join(from, file), join(to, file), { recursive: true });
+  }
+  await run("CREATE", "--brres", resultDir, "--dest", output);
+  const restored = new Uint8Array(await readFile(output)), final = resourceNames(restored);
+  for (const [folder, names] of missing) for (const name of names) {
+    if (!final.get(folder)?.has(name)) throw new Error(`Model resource ${folder}/${name} was not preserved`);
+  }
+  return restored;
+}
+
+async function preservePatternResources(original: Uint8Array, result: Uint8Array, dir: string, additions: any[]) {
   const before = parseBRRES(original).pat, after = parseBRRES(result).pat;
   const signature = (animation: any) => JSON.stringify([animation.name, animation.frames, animation.loop, [...animation.materials]]);
   if (!additions.length && before.size === after.size && [...before].every(([name, animation]) => after.has(name) && signature(animation) === signature(after.get(name)))) return result;

@@ -6,6 +6,7 @@ import { make } from '../formats/kmp.js';
 import { findFile, setFilePath } from '../formats/u8.js';
 import { GROUPED, FLAT } from './document.js';
 import { turnYaw } from './heading.js';
+import { addMissingObjectRoutes, objectNeedsRoute, routeForObject } from '../data/route-objects.js';
 
 const yawFromDir = (dx, dz) => Math.round((Math.atan2(dx, dz) * 180) / Math.PI * 100) / 100;
 
@@ -35,6 +36,10 @@ export class Ops {
   constructor(doc, settings) {
     this.doc = doc;
     this.settings = settings; // { checkpointWidth, iconSize }
+    // (objectId) => the object documentation in use, set by the editor: it says which objects need a route.
+    this.objectDocumentation = null;
+    // (objectId) => true when saving provides the object's files although the SZS lacks them.
+    this.objectFilesAvailable = null;
   }
 
   get k() { return this.doc.kmp; }
@@ -129,6 +134,8 @@ export class Ops {
           if (extra.settings) o.settings = [...extra.settings];
           if (extra.scale) o.scale = [...extra.scale];
           if (extra.presence !== undefined) o.presence = extra.presence;
+          // Objects that follow a route crash the game without one.
+          if (objectNeedsRoute(o, this.objectDocumentation)) { k.POTI.push(routeForObject(o)); o.route = k.POTI.length - 1; }
           k.GOBJ.push(o);
           newKey = o.uid;
           break;
@@ -215,6 +222,13 @@ export class Ops {
       doc.selection = new Set([String(key)]);
     });
     doc.emit('selection');
+  }
+
+  // Validator fix: a route for every object that must follow one but has none.
+  addMissingObjectRoutes() {
+    let fixed = 0;
+    this.doc.change('Add missing object routes', () => { fixed = addMissingObjectRoutes(this.k, this.objectDocumentation); this.doc.invalidate(); });
+    return fixed;
   }
 
   // ---- Deleting ------------------------------------------------------------------

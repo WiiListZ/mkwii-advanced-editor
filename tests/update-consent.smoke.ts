@@ -69,7 +69,7 @@ try {
   if (postponed.apply || postponed.close) throw new Error('Postponing a downloaded update restarted the editor');
   await page.evaluate(() => { void (window as any).app.cmd('about'); });
   await page.waitForFunction(() => document.body.innerText.includes('Updates from GitHub Releases'));
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent?.trim() === 'Check now')?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent?.trim() === 'Check for updates')?.click());
   await page.waitForFunction(() => document.querySelector('[role="alertdialog"]')?.textContent?.includes('ready to install'));
   if (!(await page.evaluate(() => (window as any).__updateCalls.download === 1 && (window as any).__updateCalls.apply === 0))) throw new Error('Checking again lost the verified download');
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find((b) => b.textContent?.trim() === 'Later')?.click());

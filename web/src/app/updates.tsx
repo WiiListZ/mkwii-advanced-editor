@@ -112,6 +112,22 @@ export function useUpdates() {
   return value;
 }
 
+// The state of the updates from GitHub Releases with its buttons: Help › About and Settings.
+export function UpdateControls() {
+  const updates = useUpdates();
+  const busy = updates.phase === "checking" || updates.phase === "downloading" || updates.phase === "installing";
+  return <div className="flex flex-col items-start gap-2.5 text-xs" data-update-controls>
+    <div className="flex w-full items-center justify-between gap-2"><span className="font-semibold">Updates from GitHub Releases</span><Button size="sm" variant="secondary" onClick={() => updates.check()} disabled={busy}><RefreshCw /> Check for updates</Button></div>
+    {updates.phase === "checking" ? <p className="m-0 text-muted-foreground">Checking for updates…</p>
+      : updates.phase === "downloading" ? <p className="m-0 text-muted-foreground">Downloading update {updates.status?.version}… {Math.floor(updates.progress * 100)}%</p>
+      : updates.phase === "installing" ? <p className="m-0 text-muted-foreground">Installing update {updates.status?.version}…</p>
+      : updates.status?.available ? <><p className="m-0">Version {updates.status.version} {updates.phase === "ready" ? "is ready to install." : "is available."}</p>{updates.phase === "error" && <p className="m-0 text-destructive">Download failed: {updates.error}</p>}<div className="flex gap-2"><Button size="sm" onClick={() => void (updates.phase === "ready" ? updates.restart() : updates.accept())}>{updates.phase === "ready" ? "Restart & install update" : updates.phase === "error" ? "Retry update" : "Download update"}</Button><Button size="sm" variant="secondary" onClick={() => updates.showNotes({ version: updates.status?.version || "", title: updates.status?.title, notes: updates.status?.notes || "", url: updates.status?.url })}>Release notes</Button></div></>
+      : updates.phase === "error" ? <p className="m-0 text-muted-foreground">Could not check: {updates.error}</p>
+      : <p className="m-0 text-muted-foreground">{updates.status?.supported ? "You have the latest release." : "Updates are available in the built Windows executable."}</p>}
+    {updates.installed && <Button size="sm" variant="secondary" onClick={() => updates.showNotes(updates.installed!)}>What's new in {updates.installed.version}</Button>}
+  </div>;
+}
+
 export function ReleaseNotesDialog() {
   const { reading, closeNotes } = useUpdates();
   // The last notes stay rendered while the dialog closes.

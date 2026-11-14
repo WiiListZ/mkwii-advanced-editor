@@ -14,6 +14,7 @@ import { AREA_TYPES, AREA_SHAPES, CAMERA_TYPES, CHECKPOINT_TYPE_LABEL } from "..
 import { AREA_TYPE_HELP, KIND_HELP, fieldHelp } from "../../../js/data/help.js";
 import { settingDisplayValue, settingGuidance, settingStoredValue } from "../../../js/data/object-documentation.js";
 import { DocumentationStatus } from "./ObjectDocumentationView";
+import { routeForObject, routeRequired } from "../../../js/data/route-objects.js";
 import { findFile } from "../../../js/formats/u8.js";
 import { lookSummary, LOOKS } from "../../../js/editor/track-looks.js";
 import { useEditor } from "../hooks";
@@ -575,6 +576,19 @@ function FieldEditor({ info, f, bulk }: { info: any; f: Field; bulk: boolean }) 
           </Hint>
         </div>
       );
+      // Objects that follow a route crash the game without one (object documentation "route").
+      if (info.kind === "GOBJ" && f.key === "route" && routeRequired(it.objectId, ed.ops.objectDocumentation)) {
+        const description = ed.getObjectDocumentation(it.objectId).route?.description;
+        control = <div className="flex flex-col gap-1">
+          {control}
+          <p className={cn("m-0 text-[11px] leading-relaxed", val === f.none ? "text-destructive" : "text-muted-foreground")}>
+            {val === f.none ? "Required: this object has no route and the game crashes." : "Required: this object follows its route."}{description ? ` ${description}` : ""}
+          </p>
+          {val === f.none && <Button size="sm" variant="secondary" className="self-start" onClick={() => d.change("Create object route", () => {
+            k.POTI.push(routeForObject(it)); it.route = k.POTI.length - 1; d.invalidate();
+          })}>Create a route here</Button>}
+        </div>;
+      }
       break;
     }
     case "cktype":
@@ -617,7 +631,7 @@ function FieldEditor({ info, f, bulk }: { info: any; f: Field; bulk: boolean }) 
             const value = <SettingValue index={i + 1} raw={it.settings[i]} setting={documented} onLive={liveIndex(i)} onCommit={setIndex(i)} />;
             return <div key={i} className="rounded-md border bg-muted/20 px-2 py-1.5">
               <div className="flex items-center gap-2">
-                <span className="min-w-0 flex-1 text-xs font-medium">{i + 1}. {documented?.label || `Setting ${i + 1}`}</span>
+                <span className="min-w-0 flex-1 text-xs font-medium">{i + 1}. {documented?.label || `Setting ${i + 1}`}{documented?.required && <span className={cn("font-normal", it.settings[i] ? "text-muted-foreground" : "text-destructive")}> · required{it.settings[i] ? "" : ", 0 does not work"}</span>}</span>
                 {!guidance.options.length && value}
               </div>
               {guidance.options.length > 0 && <div className="mt-1">{value}</div>}

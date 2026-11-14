@@ -187,7 +187,7 @@ try {
     const app = (window as any).app;
     app.doc.filePath = path;
     app.doc.fileKind = "szs";
-    await app.save(false);
+    await app.save(false, { check: false });
     await app.openPath(path);
   }, saved);
   if (!same(await fileBytes(), expected)) throw new Error("The minimap did not survive save and reopen");

@@ -311,7 +311,7 @@ for (const t of tracks) {
       a.doc.filePath = path;
       a.doc.fileKind = "szs";
       a.doc.fileName = "model-save.szs";
-      const saved = await a.save();
+      const saved = await a.save(false, { check: false });
       await a.openPath(path);
       await a.loadTrackAssets();
       const reopened = vp.courseGroup.children[0]?.children.find((o: any) => o.isMesh && o.userData.materialName === "kinoko_m");
@@ -348,7 +348,7 @@ for (const t of tracks) {
       const a = (window as any).app, vp = a.viewport;
       const inMemory = vp.courseGroup.children[0]?.children.find((o: any) => o.isMesh && o.userData.materialName === "kinoko_m");
       const liveDelta = inMemory.geometry.attributes.position.array[vertex * 3] - before;
-      const saved = await a.save();
+      const saved = await a.save(false, { check: false });
       await a.openPath(path);
       await a.loadTrackAssets();
       const reopened = vp.courseGroup.children[0]?.children.find((o: any) => o.isMesh && o.userData.materialName === "kinoko_m");
@@ -386,7 +386,7 @@ for (const t of tracks) {
       vp.selectGeometry(null);
       vp.onGizmoDragging(false);
       const committed = a.doc.snapshot().modelBytes !== oldBytes;
-      const saved = await a.save();
+      const saved = await a.save(false, { check: false });
       await a.openPath(path);
       await a.loadTrackAssets();
       const reopened = vp.courseGroup.children[0]?.children.find((o: any) => o.isMesh && o.userData.materialName === "kinoko_m");
@@ -406,7 +406,7 @@ for (const t of tracks) {
       await a.cmd("paste");
       const after = a.assets.brres(a.doc.szs, "course_model.brres").models[0].objects.find((o: any) => o.name === "polygon39");
       const selected = vp.geometrySelection?.type === "model" && vp.geometrySelection?.mesh?.userData.modelPart?.name === "polygon39";
-      const saved = await a.save();
+      const saved = await a.save(false, { check: false });
       await a.openPath(path);
       await a.loadTrackAssets();
       const reopened = a.assets.brres(a.doc.szs, "course_model.brres").models[0].objects.find((o: any) => o.name === "polygon39");

@@ -228,6 +228,13 @@ export function minimapElements(kmp) {
 const PAINT_CELL = 400;
 const MAP_SOURCE_TYPE = 254; // not a collision surface
 const MAX_PAINT_TRIANGLES = 120000;
+// The canvas: the whole area a map can show, under the track, so a map can have shapes off the
+// collision too (outlines, grounds, water…). Big tiles: one painted all in one colour stays two
+// triangles in the game. The frame of the file and the track, with room around for a new frame.
+const CANVAS_SOURCE_TYPE = 253;
+const CANVAS_TILES = 8, CANVAS_PIECES = 40000, CANVAS_MARGIN = 0.25;
+// Which pieces share corners: the file's own, the canvas and the collision are separate layers.
+const pieceLayer = (track, i) => track.fromMap[i] ? 1 : track.canvas?.[i] ? 2 : 0;
 
 // Driveable collision triangles and the placed elements above them. Collision triangles joined by
 // a shared corner with the same surface form a part. `count` triangles are the painted grain;
@@ -250,7 +257,30 @@ export function minimapTrack(kcl, elements = [], options = {}) {
     keep.push(t);
   }
   const surfaces = keep.length, mapTris = map?.tris.length || 0;
-  const sources = surfaces + mapTris + elements.reduce((sum, item) => sum + item.tris.length, 0);
+  // The canvas covers the track, the file's map and its frame, with a margin all round.
+  let canvas = null;
+  if (options.canvas) {
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    const include = (x, z) => { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z); };
+    for (const t of keep) for (let c = 0; c < 9; c += 3) include(v[t * 9 + c], v[t * 9 + c + 2]);
+    for (const tri of map?.tris || []) for (let c = 0; c < 6; c += 2) include(tri.p[c], tri.p[c + 1]);
+    for (const item of elements) for (const tri of item.tris) for (let c = 0; c < 6; c += 2) include(tri[c], tri[c + 1]);
+    // A frame shows as a square on the map (the In game panel): the canvas covers that square.
+    for (const b of [map?.bounds, options.bounds]) if (b) {
+      const half = Math.max(b.maxX - b.minX, b.maxZ - b.minZ) / 2, cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2;
+      include(cx - half, cz - half); include(cx + half, cz + half);
+    }
+    if (minX < maxX && minZ < maxZ) {
+      const margin = Math.max(maxX - minX, maxZ - minZ) * CANVAS_MARGIN;
+      canvas = { minX: minX - margin, maxX: maxX + margin, minZ: minZ - margin, maxZ: maxZ + margin };
+      const w = canvas.maxX - canvas.minX, h = canvas.maxZ - canvas.minZ;
+      // Each tile is two right triangles cut into n × n rows of pieces.
+      canvas.cell = Math.max(PAINT_CELL, Math.sqrt(4 * w * h / CANVAS_PIECES));
+      canvas.divisions = Math.max(1, Math.ceil(Math.max(w, h) / CANVAS_TILES / canvas.cell));
+    }
+  }
+  const canvasSources = canvas ? 2 * CANVAS_TILES * CANVAS_TILES : 0;
+  const sources = surfaces + mapTris + elements.reduce((sum, item) => sum + item.tris.length, 0) + canvasSources;
   const sourceVerts = new Float32Array(sources * 9), sourceTypes = new Uint8Array(sources), sourceKinds = new Uint8Array(sources), parent = new Int32Array(sources);
   const sourceFromMap = new Uint8Array(sources), sourceSwatch = new Int16Array(sources).fill(MINIMAP_HIDDEN);
   const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
@@ -299,6 +329,21 @@ export function minimapTrack(kcl, elements = [], options = {}) {
       nextSource++;
     }
   }
+  // Under everything, so the track and the file's map stay on top where they overlap. One part:
+  // Fill on an empty place fills the whole background.
+  if (canvas) {
+    const first = nextSource, y = bottom - Math.max(100, (top - bottom) * 0.05);
+    const tw = (canvas.maxX - canvas.minX) / CANVAS_TILES, th = (canvas.maxZ - canvas.minZ) / CANVAS_TILES;
+    for (let tx = 0; tx < CANVAS_TILES; tx++) for (let tz = 0; tz < CANVAS_TILES; tz++) {
+      const x0 = canvas.minX + tx * tw, x1 = x0 + tw, z0 = canvas.minZ + tz * th, z1 = z0 + th;
+      for (const tri of [[x0, z0, x1, z0, x0, z1], [x1, z1, x0, z1, x1, z0]]) {
+        sourceVerts.set([tri[0], y, tri[1], tri[2], y, tri[3], tri[4], y, tri[5]], nextSource * 9);
+        sourceTypes[nextSource] = CANVAS_SOURCE_TYPE;
+        parent[nextSource] = first;
+        nextSource++;
+      }
+    }
+  }
 
   // Collision can hold one triangle for half a battle arena, and painting needs a finer grain.
   // Elements stay whole: their exact shape is how a map is read back.
@@ -311,19 +356,21 @@ export function minimapTrack(kcl, elements = [], options = {}) {
     lowX = Math.min(lowX, sourceVerts[i]); highX = Math.max(highX, sourceVerts[i]);
     lowZ = Math.min(lowZ, sourceVerts[i + 2]); highZ = Math.max(highZ, sourceVerts[i + 2]);
   }
-  const divisionsOf = (s, size) => sourceKinds[s] ? 1 : Math.max(1, Math.ceil(longestEdge(s) / size));
-  const total = (size) => { let sum = 0; for (let s = 0; s < sources; s++) sum += divisionsOf(s, size) ** 2; return sum; };
+  // The canvas has a grain of its own, outside the budget of the track's.
+  const isCanvas = (s) => sourceTypes[s] === CANVAS_SOURCE_TYPE;
+  const divisionsOf = (s, size) => isCanvas(s) ? canvas.divisions : sourceKinds[s] ? 1 : Math.max(1, Math.ceil(longestEdge(s) / size));
+  const total = (size, withCanvas = false) => { let sum = 0; for (let s = 0; s < sources; s++) if (withCanvas || !isCanvas(s)) sum += divisionsOf(s, size) ** 2; return sum; };
   let cell = options.cell ?? Math.max(PAINT_CELL, (Math.max(highX - lowX, highZ - lowZ) || 0) / 160);
   while (Number.isFinite(cell) && total(cell) > MAX_PAINT_TRIANGLES) cell *= 1.25;
 
-  const count = total(cell), verts = new Float32Array(count * 9), types = new Uint8Array(count), element = new Uint8Array(count);
-  const fromMap = new Uint8Array(count), swatch = new Int16Array(count);
+  const count = total(cell, true), verts = new Float32Array(count * 9), types = new Uint8Array(count), element = new Uint8Array(count);
+  const fromMap = new Uint8Array(count), swatch = new Int16Array(count), onCanvas = new Uint8Array(count);
   const piece = new Int32Array(count), source = new Int32Array(count), first = new Int32Array(sources + 1), groups = new Map();
   let next = 0;
   const push = (s, a, b, c) => {
     verts.set(a, next * 9); verts.set(b, next * 9 + 3); verts.set(c, next * 9 + 6);
     types[next] = sourceTypes[s]; element[next] = sourceKinds[s]; source[next] = s;
-    fromMap[next] = sourceFromMap[s]; swatch[next] = sourceSwatch[s];
+    fromMap[next] = sourceFromMap[s]; swatch[next] = sourceSwatch[s]; onCanvas[next] = isCanvas(s) ? 1 : 0;
     const root = find(s);
     piece[next] = root;
     if (!groups.has(root)) groups.set(root, []);
@@ -341,9 +388,19 @@ export function minimapTrack(kcl, elements = [], options = {}) {
   }
   first[sources] = next;
   const meanY = (i) => (verts[i * 9 + 1] + verts[i * 9 + 4] + verts[i * 9 + 7]) / 3;
+  // Canvas pieces under the collision or the file's map cannot be painted: the track above already
+  // shows there, and painting both would put every triangle on the map twice.
+  const covered = new Uint8Array(count);
+  if (canvas) {
+    const under = triangleLocator(surfaces + mapTris, (s) => { const o = s * 9; return [sourceVerts[o], sourceVerts[o + 2], sourceVerts[o + 3], sourceVerts[o + 5], sourceVerts[o + 6], sourceVerts[o + 8]]; }, () => 0);
+    for (let i = 0; i < count; i++) if (onCanvas[i] && surfaces + mapTris) {
+      const o = i * 9;
+      if (under((verts[o] + verts[o + 3] + verts[o + 6]) / 3, (verts[o + 2] + verts[o + 5] + verts[o + 8]) / 3) >= 0) covered[i] = 1;
+    }
+  }
   const sourceY = (s) => (sourceVerts[s * 9 + 1] + sourceVerts[s * 9 + 4] + sourceVerts[s * 9 + 7]) / 3;
   const order = Array.from({ length: sources }, (_, i) => i).sort((a, b) => sourceY(a) - sourceY(b));
-  return { count, verts, types, element, fromMap, swatch, piece, parts: groups, meanY, cell, sources, sourceVerts, source, first, order };
+  return { count, verts, types, element, fromMap, swatch, canvas: onCanvas, covered, canvasBounds: canvas, piece, parts: groups, meanY, cell, sources, sourceVerts, source, first, order };
 }
 
 function segmentDistance(x, z, ax, az, bx, bz) {
@@ -353,7 +410,7 @@ function segmentDistance(x, z, ax, az, bx, bz) {
 }
 
 // Finds the topmost triangle under a point, from arrays of [ax, az, bx, bz, cx, cz] and height.
-function triangleLocator(count, corners, heightOf) {
+function triangleLocator(count, corners, heightOf, skip = null) {
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (let i = 0; i < count; i++) {
     const p = corners(i);
@@ -367,6 +424,7 @@ function triangleLocator(count, corners, heightOf) {
   const cellZ = (z) => Math.max(0, Math.min(cells - 1, Math.floor((z - minZ) / sizeZ)));
   const grid = new Map();
   for (let i = 0; i < count; i++) {
+    if (skip?.[i]) continue;
     const p = corners(i);
     const x0 = cellX(Math.min(p[0], p[2], p[4])), x1 = cellX(Math.max(p[0], p[2], p[4]));
     const z0 = cellZ(Math.min(p[1], p[3], p[5])), z1 = cellZ(Math.max(p[1], p[3], p[5]));
@@ -416,7 +474,7 @@ const trackCorners = (track) => (i) => {
   const o = i * 9, v = track.verts;
   return [v[o], v[o + 2], v[o + 3], v[o + 5], v[o + 6], v[o + 8]];
 };
-export const trackLocator = (track) => triangleLocator(track.count, trackCorners(track), track.meanY);
+export const trackLocator = (track) => triangleLocator(track.count, trackCorners(track), track.meanY, track.covered);
 
 // The design starts as the file: its triangles keep their colours, and collision and elements stay
 // off until painted or generated. Without a file, the road and boosts are on the map and off-road
@@ -444,7 +502,7 @@ function mainRoad(track) {
   const v = track.sourceVerts, n = track.sources, keep = new Uint8Array(n), parent = new Int32Array(n);
   const eligible = (s) => {
     const i = track.first[s];
-    return !track.fromMap[i] && !track.element[i] && !OFFROAD_AND_HAZARDS.has(track.types[i]);
+    return !track.fromMap[i] && !track.element[i] && !track.canvas[i] && !OFFROAD_AND_HAZARDS.has(track.types[i]);
   };
   const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
   const corners = new Map();
@@ -604,7 +662,7 @@ export function forEachMinimapTriangle(track, assign, visit, offsets = null) {
   const moved = new Float32Array(9);
   const send = (tone, verts, o, s) => {
     if (!offsets?.size) return visit(tone, verts, o, s);
-    const layer = track.fromMap[track.first[s]];
+    const layer = pieceLayer(track, track.first[s]);
     for (let c = 0; c < 9; c += 3) {
       const shift = seenShift(offsets.get(vertexKey(layer, verts[o + c], verts[o + c + 2])));
       moved[c] = verts[o + c] + (shift ? shift[0] : 0);
@@ -618,7 +676,7 @@ export function forEachMinimapTriangle(track, assign, visit, offsets = null) {
     let uniform = true;
     for (let i = from + 1; i < to && uniform; i++) uniform = assign[i] === tone;
     if (uniform) { if (tone >= 0) send(tone, track.sourceVerts, s * 9, s); continue; }
-    const layer = track.fromMap[from], v = track.verts;
+    const layer = pieceLayer(track, from), v = track.verts;
     const isFree = !offsets?.size ? () => true : (piece) => {
       for (let c = 0; c < 9; c += 3) if (seenShift(offsets.get(vertexKey(layer, v[piece * 9 + c], v[piece * 9 + c + 2])))) return false;
       return true;
@@ -637,7 +695,7 @@ function paintMesh(track) {
   const w = track.sourceVerts, v = track.verts;
   for (let i = 0; i < track.count; i++) {
     if (track.element[i]) continue;
-    const layer = track.fromMap[i], s = track.source[i], o = s * 9;
+    const layer = pieceLayer(track, i), s = track.source[i], o = s * 9;
     for (let c = 0; c < 3; c++) {
       const x = v[i * 9 + c * 3], z = v[i * 9 + c * 3 + 2], key = vertexKey(layer, x, z);
       let id = ids.get(key);
@@ -911,7 +969,7 @@ export function minimapAlong(track, route) {
     const o = i * 9, v = track.verts;
     const x = (v[o] + v[o + 3] + v[o + 6]) / 3, y = (v[o + 1] + v[o + 4] + v[o + 7]) / 3, z = (v[o + 2] + v[o + 5] + v[o + 8]) / 3;
     // A file's own triangles have no true height: only the map can place them.
-    const flat = !!track.fromMap[i];
+    const flat = !!track.fromMap[i] || !!track.canvas[i];
     let best = Infinity, at = -1;
     for (const segment of segments) {
       const { t, gap } = distanceToSegment(segment, x, z);

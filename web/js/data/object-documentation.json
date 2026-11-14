@@ -131,6 +131,9 @@
           "label": "Start delay",
           "description": "Delay in frames (60 frames = one second)."
         }
+      },
+      "route": {
+        "required": true
       }
     },
     "choropu2": {
@@ -166,6 +169,9 @@
           "label": "Leader lead time",
           "description": "How much earlier the leader cow starts, in frames."
         }
+      },
+      "route": {
+        "required": true
       }
     },
     "dossunc": {
@@ -259,6 +265,9 @@
           "label": "Carried item boxes",
           "description": "Number of item boxes carried."
         }
+      },
+      "route": {
+        "required": true
       }
     },
     "poihana": {
@@ -316,6 +325,9 @@
           "values": "1=original-track value.",
           "limits": "Other values have no documented effect."
         }
+      },
+      "route": {
+        "required": true
       }
     },
     "sanbo": {
@@ -328,6 +340,9 @@
           "label": "Speed",
           "description": "Movement speed along the route."
         }
+      },
+      "route": {
+        "required": true
       }
     },
     "sanbo_big": {
@@ -344,6 +359,9 @@
         "1": {
           "label": "Speed"
         }
+      },
+      "route": {
+        "required": true
       }
     },
     "basabasa": {
@@ -380,6 +398,9 @@
           "label": "Start delay",
           "description": "Frames before the first group."
         }
+      },
+      "route": {
+        "required": true
       }
     },
     "FireSnake": {
@@ -416,6 +437,9 @@
           "otherValues": true,
           "limits": "Other values unverified."
         }
+      },
+      "route": {
+        "required": true
       }
     },
     "Crab": {
@@ -450,6 +474,9 @@
           "otherValues": true,
           "limits": "Other values unverified."
         }
+      },
+      "route": {
+        "required": true
       }
     },
     "kart_truck": {
@@ -477,6 +504,9 @@
           "otherValues": true,
           "limits": "Other values unverified."
         }
+      },
+      "route": {
+        "required": true
       }
     },
     "CarA2": {
@@ -493,6 +523,9 @@
         "3": {
           "label": "Pause time"
         }
+      },
+      "route": {
+        "required": true
       }
     },
     "CarA3": {
@@ -509,6 +542,9 @@
         "3": {
           "label": "Pause time"
         }
+      },
+      "route": {
+        "required": true
       }
     },
     "TruckWagon": {
@@ -537,6 +573,9 @@
           },
           "otherValues": true
         }
+      },
+      "route": {
+        "required": true
       }
     },
     "seagull": {
@@ -552,6 +591,9 @@
           "label": "Seagull count",
           "description": "Number of birds; the supported maximum is not documented."
         }
+      },
+      "route": {
+        "required": true
       }
     },
     "Epropeller": {
@@ -761,6 +803,9 @@
           "label": "Maximum height difference",
           "description": "How far it rises above its position."
         }
+      },
+      "route": {
+        "required": true
       }
     },
     "kinoko_ud": {
@@ -843,6 +888,251 @@
           "label": "Spawn behaviour",
           "description": "How the coin appears."
         }
+      }
+    },
+    "sound_river": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "sound_water_fall": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "sound_lake": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "sound_big_fall": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "sound_sea": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "sound_fountain": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "sound_volcano": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "sound_audience": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "sound_big_river": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "sound_lift": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "sound_Mii": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "sunDS": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "f_itembox": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "CarA1": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "HeyhoShipGBA": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "koopaBall": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "skyship": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "w_woodbox": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "w_itembox": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "w_itemboxline": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "VolcanoBall1": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "penguin_s": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "penguin_m": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "penguin_l": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "castleballoon1": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "boble": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "K_bomb_car": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "moray": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "Twanwan": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "cruiserR": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "bird": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "sin_itembox": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "heyho2": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "heyho": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
+      }
+    },
+    "DKship64": {
+      "status": "unknown",
+      "documented": 0,
+      "route": {
+        "required": true
       }
     }
   }

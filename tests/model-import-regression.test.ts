@@ -298,6 +298,25 @@ test.skipIf(process.platform !== "win32")("model imports retain palette colours,
     const commentedMaterial = comments.models[0].materials.find((m: any) => m.name !== "road");
     expect([...decodeTexture(comments.textures.get(commentedMaterial.layers[0].texture)).slice(0, 4)]).toEqual([0, 0, 255, 255]);
 
+    // Custom tracks may carry SCN0 lights ABMatt cannot read ("Incorrect name
+    // offset"). Imports must leave that resource out of ABMatt and keep it intact.
+    const scnDir = join(dir, "scn0");
+    await mkdir(scnDir);
+    await writeFile(join(scnDir, "base.brres"), base);
+    await run("EXTRACT", join(scnDir, "base.brres"), "--dest", join(scnDir, "base"));
+    const scn0 = Buffer.alloc(0x60);
+    scn0.write("SCN0"); scn0.writeUInt32BE(scn0.length, 4); scn0.writeUInt32BE(5, 8);
+    scn0.writeUInt32BE(0x48, 0x14); scn0.writeUInt16BE(1, 0x3c); // one light set at 0x48
+    scn0.writeUInt32BE(0x18, 0x48); scn0.writeUInt32BE(0x7ffffff0, 0x50); // whose name ABMatt cannot resolve
+    await mkdir(join(scnDir, "base", "AnmScn(NW4R)"));
+    await writeFile(join(scnDir, "base", "AnmScn(NW4R)", "lights"), scn0);
+    await run("CREATE", "--brres", join(scnDir, "base"), "--dest", join(scnDir, "with-scn0.brres"));
+    const withSCN0 = await importOBJModel(new Uint8Array(await readFile(join(scnDir, "with-scn0.brres"))), join(dir, "case-red", "Case.obj"), [0, 0, 0]);
+    expect(parseBRRES(withSCN0).models[0].objects.length).toBe(2);
+    await writeFile(join(scnDir, "result.brres"), withSCN0);
+    await run("EXTRACT", join(scnDir, "result.brres"), "--dest", join(scnDir, "result"));
+    expect(await readFile(join(scnDir, "result", "AnmScn(NW4R)", "lights"))).toEqual(scn0);
+
     await writeFile(join(dir, "alpha.obj"), "mtllib alpha.mtl\n" + tinyOBJ);
     await writeFile(join(dir, "alpha.mtl"), "newmtl Paint\nKd 1 0 0\nd 0.4\n");
     const translucent = parseBRRES(await importOBJModel(base, join(dir, "alpha.obj"), [0, 0, 0]));

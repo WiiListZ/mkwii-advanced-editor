@@ -104,6 +104,7 @@ function SettingCard({ index, setting, onChange, onRemove }: { index: string; se
       <NumberField label="Highest value" value={setting.max} onChange={(v) => set("max", v)} />
       <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!setting.signed} onChange={(e) => set("signed", e.target.checked || undefined)} /> Signed (can be below zero)</label>
       <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!setting.otherValues} onChange={(e) => set("otherValues", e.target.checked || undefined)} /> Other values allowed</label>
+      <label className="col-span-2 flex items-center gap-2 text-xs" title="Check reports placed objects that leave this setting at 0"><input type="checkbox" checked={!!setting.required} onChange={(e) => set("required", e.target.checked || undefined)} /> Required (the object does not work with 0)</label>
       <Choices options={setting.options} onChange={(options) => set("options", options)} />
     </div>
   </div>;
@@ -212,6 +213,12 @@ export function ObjectDocumentationVisual({ text, onChange, onRaw }: { text: str
           <ObjectFilter label="Status" ariaLabel="Status" value={entry.status ?? "automatic"} onChange={(value) => set("status", value === "automatic" ? undefined : value)}
             options={[["automatic", "Worked out from what is filled in"], ["documented", "Documented"], ["partial", "Partially documented"], ["unknown", "Unknown"]]} />
           <NumberField label="Documented (%)" value={entry.documented} onChange={(v) => set("documented", v)} />
+        </div>
+        <div className="grid grid-cols-2 gap-2 rounded-md border p-2.5" data-doc-route>
+          <ObjectFilter label="Route" ariaLabel="Route" value={entry.route ? (entry.route.required ? "required" : "none") : "unset"}
+            onChange={(value) => set("route", value === "unset" ? undefined : { ...(plain(entry.route) ? entry.route : {}), required: value === "required" })}
+            options={[["unset", "Not stated (the editor's list decides)"], ["required", "Required: the game crashes without one"], ["none", "Not needed"]]} />
+          {plain(entry.route) && <TextField label="What the route does" value={entry.route.description} onChange={(v) => set("route", withField(entry.route, "description", v))} multiline wide />}
         </div>
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2">

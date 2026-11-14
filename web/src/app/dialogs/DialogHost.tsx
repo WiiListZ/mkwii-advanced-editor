@@ -63,8 +63,9 @@ import { MenuResourceDialog } from "./MenuResourceDialog";
 import { EffectsDialog } from "./EffectsDialog";
 import { ParamsDialog } from "./ParamsDialog";
 import { SkeletonEditorDialog } from "./SkeletonEditorDialog";
+import { SaveCheckDialog } from "./SaveCheckDialog";
 import { NumberField } from "../number-field";
-import { APP_VERSION, DISCORD_URL, DiscordIcon, useUpdates } from "../updates";
+import { APP_VERSION, DISCORD_URL, DiscordIcon, UpdateControls } from "../updates";
 
 // Windows that can hold unsaved work: they close only through their own buttons, which ask first.
 const GUARDED = ["thp", "cups", "objectDocsEditor", "gameText", "audio", "assetEditor", "assetTextureEditor", "riivolution", "archive", "textureEditor", "objectTextureEditor", "sky", "minimap", "ghosts", "ghostRecord", "ghostReplay", "trackGhosts", "materials", "primitive", "sculpt", "effects", "params", "skeletonEditor"];
@@ -114,7 +115,7 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
     );
   }
   const sizes: Record<string, string> = {
-    generator: "max-w-[1180px]", cups: "flex h-[min(860px,94vh)] max-w-[min(1180px,96vw)] flex-col overflow-hidden", cupsApply: "max-w-[600px]", objectDocsEditor: "flex h-[min(900px,92vh)] max-w-[min(1100px,95vw)] flex-col overflow-hidden", thp: "flex h-[min(940px,95vh)] max-w-[min(1500px,97vw)] flex-col overflow-hidden", help: "max-w-[920px]", preferences: "max-w-[760px]", szs: "max-w-[760px]", modelParts: "max-w-[1180px]", gameObjects: "max-w-[1180px]", settings: "max-w-[620px] p-0 gap-0", trackSettings: "max-w-[520px]", importDrop: "max-w-[480px]", gameText: "flex h-[min(1100px,95vh)] max-w-[min(1640px,97vw)] flex-col overflow-hidden", riivolution: "flex h-[min(1000px,94vh)] max-w-[min(1400px,96vw)] flex-col overflow-hidden", audio: "flex h-[min(900px,92vh)] max-w-[min(1100px,95vw)] flex-col overflow-hidden", assetEditor: "flex h-[min(1100px,95vh)] max-w-[min(1640px,97vw)] flex-col overflow-hidden", assetTextureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", workspace: "max-w-[560px]", textureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", objectTextureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", objectAppearance: "max-w-[860px]", archive: "flex h-[min(820px,90vh)] max-w-[min(1000px,94vw)] flex-col overflow-hidden", menuResource: "flex h-[min(800px,92vh)] max-w-[min(1150px,96vw)] flex-col overflow-hidden", effects: "flex h-[min(900px,92vh)] max-w-[min(1300px,96vw)] flex-col overflow-hidden", params: "flex h-[min(900px,92vh)] max-w-[min(1300px,96vw)] flex-col overflow-hidden", skeletonEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", sky: "flex h-[min(900px,92vh)] max-w-[min(1300px,95vw)] flex-col overflow-hidden", minimap: "flex h-[min(940px,95vh)] max-w-[min(1500px,97vw)] flex-col overflow-hidden", ghosts: "flex h-[min(860px,94vh)] max-w-[min(1200px,96vw)] flex-col overflow-hidden", ghostRecord: "flex h-[min(720px,92vh)] max-w-[min(1000px,96vw)] flex-col overflow-hidden", ghostReplay: "max-w-[560px]", trackGhosts: "flex h-[min(720px,92vh)] max-w-[min(860px,96vw)] flex-col overflow-hidden", materials: "flex h-[min(860px,94vh)] max-w-[min(1100px,96vw)] flex-col overflow-hidden", primitive: "flex h-[min(860px,94vh)] max-w-[min(1200px,96vw)] flex-col overflow-hidden", sculpt: "flex h-[min(940px,95vh)] max-w-[min(1500px,97vw)] flex-col overflow-hidden", mapColour: "max-w-[440px]", fog: "flex h-[min(620px,92vh)] max-w-[min(1000px,96vw)] flex-col overflow-hidden", versions: "flex h-[min(560px,90vh)] max-w-[640px] flex-col overflow-hidden", trackCompare: "flex h-[min(700px,92vh)] max-w-[min(860px,96vw)] flex-col overflow-hidden", animationChoice: "max-w-[480px]", importObj: "max-w-[680px]", objectPicker: "max-w-[820px] p-0 gap-0",
+    generator: "max-w-[1180px]", cups: "flex h-[min(860px,94vh)] max-w-[min(1180px,96vw)] flex-col overflow-hidden", cupsApply: "max-w-[600px]", objectDocsEditor: "flex h-[min(900px,92vh)] max-w-[min(1100px,95vw)] flex-col overflow-hidden", thp: "flex h-[min(940px,95vh)] max-w-[min(1500px,97vw)] flex-col overflow-hidden", help: "max-w-[920px]", preferences: "max-w-[760px]", szs: "max-w-[760px]", modelParts: "max-w-[1180px]", gameObjects: "max-w-[1180px]", settings: "max-w-[620px] p-0 gap-0", trackSettings: "max-w-[520px]", importDrop: "max-w-[480px]", gameText: "flex h-[min(1100px,95vh)] max-w-[min(1640px,97vw)] flex-col overflow-hidden", riivolution: "flex h-[min(1000px,94vh)] max-w-[min(1400px,96vw)] flex-col overflow-hidden", audio: "flex h-[min(900px,92vh)] max-w-[min(1100px,95vw)] flex-col overflow-hidden", assetEditor: "flex h-[min(1100px,95vh)] max-w-[min(1640px,97vw)] flex-col overflow-hidden", assetTextureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", workspace: "max-w-[560px]", textureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", objectTextureEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", objectAppearance: "max-w-[860px]", archive: "flex h-[min(820px,90vh)] max-w-[min(1000px,94vw)] flex-col overflow-hidden", menuResource: "flex h-[min(800px,92vh)] max-w-[min(1150px,96vw)] flex-col overflow-hidden", effects: "flex h-[min(900px,92vh)] max-w-[min(1300px,96vw)] flex-col overflow-hidden", params: "flex h-[min(900px,92vh)] max-w-[min(1300px,96vw)] flex-col overflow-hidden", skeletonEditor: "flex h-[min(900px,92vh)] max-w-[min(1200px,94vw)] flex-col overflow-hidden", sky: "flex h-[min(900px,92vh)] max-w-[min(1300px,95vw)] flex-col overflow-hidden", minimap: "flex h-[min(940px,95vh)] max-w-[min(1500px,97vw)] flex-col overflow-hidden", ghosts: "flex h-[min(860px,94vh)] max-w-[min(1200px,96vw)] flex-col overflow-hidden", ghostRecord: "flex h-[min(720px,92vh)] max-w-[min(1000px,96vw)] flex-col overflow-hidden", ghostReplay: "max-w-[560px]", trackGhosts: "flex h-[min(720px,92vh)] max-w-[min(860px,96vw)] flex-col overflow-hidden", materials: "flex h-[min(860px,94vh)] max-w-[min(1100px,96vw)] flex-col overflow-hidden", primitive: "flex h-[min(860px,94vh)] max-w-[min(1200px,96vw)] flex-col overflow-hidden", sculpt: "flex h-[min(940px,95vh)] max-w-[min(1500px,97vw)] flex-col overflow-hidden", mapColour: "max-w-[440px]", fog: "flex h-[min(620px,92vh)] max-w-[min(1000px,96vw)] flex-col overflow-hidden", versions: "flex h-[min(560px,90vh)] max-w-[640px] flex-col overflow-hidden", trackCompare: "flex h-[min(700px,92vh)] max-w-[min(860px,96vw)] flex-col overflow-hidden", animationChoice: "max-w-[480px]", importObj: "max-w-[680px]", objectPicker: "max-w-[820px] p-0 gap-0", saveCheck: "max-w-[640px]",
   };
   const body = (() => {
     switch (entry.kind) {
@@ -163,6 +164,7 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
       case "mapColour": return <MapColourDialog close={close} />;
       case "fog": return <FogDialog close={close} />;
       case "versions": return <VersionsDialog close={close} />;
+      case "saveCheck": return <SaveCheckDialog close={close} />;
       case "trackCompare": return <TrackCompareDialog result={p.result} label={p.label} close={close} />;
       case "archive": return <ArchiveDialog {...p} close={close} />;
       case "menuResource": return <MenuResourceDialog {...p} close={close} />;
@@ -188,7 +190,7 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
   })();
   return (
     <Dialog open={!entry.closing} onOpenChange={(o) => !o && !GUARDED.includes(entry.kind) && close(null)}>
-      <DialogContent className={sizes[entry.kind]} onEscapeKeyDown={GUARDED.includes(entry.kind) ? (e) => e.preventDefault() : undefined} onPointerDownOutside={GUARDED.includes(entry.kind) ? (e) => e.preventDefault() : undefined} hideClose={["thp", "cups", "objectDocsEditor", "objectPicker", "textureEditor", "objectTextureEditor", "archive", "menuResource", "skeletonEditor", "sky", "minimap", "ghosts", "ghostRecord", "ghostReplay", "trackGhosts", "materials", "primitive", "sculpt", "effects", "params", "gameText", "audio", "assetEditor", "assetTextureEditor", "riivolution"].includes(entry.kind)}><DialogErrorBoundary close={() => close(null)}>{body}</DialogErrorBoundary></DialogContent>
+      <DialogContent className={sizes[entry.kind]} onOpenAutoFocus={entry.kind === "about" ? (e) => e.preventDefault() : undefined} onEscapeKeyDown={GUARDED.includes(entry.kind) ? (e) => e.preventDefault() : undefined} onPointerDownOutside={GUARDED.includes(entry.kind) ? (e) => e.preventDefault() : undefined} hideClose={["thp", "cups", "objectDocsEditor", "objectPicker", "textureEditor", "objectTextureEditor", "archive", "menuResource", "skeletonEditor", "sky", "minimap", "ghosts", "ghostRecord", "ghostReplay", "trackGhosts", "materials", "primitive", "sculpt", "effects", "params", "gameText", "audio", "assetEditor", "assetTextureEditor", "riivolution"].includes(entry.kind)}><DialogErrorBoundary close={() => close(null)}>{body}</DialogErrorBoundary></DialogContent>
     </Dialog>
   );
 }
@@ -474,7 +476,6 @@ function HelpDialog({ tab = "start", tutorial, close }: { tab?: string; tutorial
 }
 
 function AboutDialog() {
-  const updates = useUpdates();
   return (
     <>
       <DialogHeader>
@@ -482,18 +483,9 @@ function AboutDialog() {
         <DialogDescription>A visual track editor for Mario Kart Wii.</DialogDescription>
       </DialogHeader>
       <p className="m-0 text-[13px] text-muted-foreground">Reads and writes SZS (Yaz0 + U8), KMP, KCL and BRRES models natively. Built with Bun, React, shadcn/ui, Three.js and WebView2.</p>
-      <p className="m-0 text-[13px]"><span className="font-semibold">Credits</span> · WiiListZ</p>
+      <p className="m-0 text-[13px]"><span className="font-semibold">Credits</span> · <button type="button" className="cursor-pointer text-primary underline-offset-4 hover:underline" title="github.com/WiiListZ" onClick={() => api.openUrl("https://github.com/WiiListZ")}>WiiListZ</button></p>
       <p className="m-0 text-[13px]">Help, questions and news: <button type="button" className="cursor-pointer text-primary underline-offset-4 hover:underline" onClick={() => api.openUrl(DISCORD_URL)}>the editor's Discord server</button></p>
-      <div className="space-y-2 rounded-md border p-3 text-xs">
-        <div className="flex items-center justify-between gap-2"><span className="font-semibold">Updates from GitHub Releases</span><Button size="sm" variant="secondary" onClick={() => updates.check()} disabled={updates.phase === "checking" || updates.phase === "downloading" || updates.phase === "installing"}>Check now</Button></div>
-        {updates.phase === "checking" ? <p className="m-0 text-muted-foreground">Checking for updates…</p>
-          : updates.phase === "downloading" ? <p className="m-0 text-muted-foreground">Downloading update {updates.status?.version}… {Math.floor(updates.progress * 100)}%</p>
-          : updates.phase === "installing" ? <p className="m-0 text-muted-foreground">Installing update {updates.status?.version}…</p>
-          : updates.status?.available ? <><p className="m-0">Version {updates.status.version} {updates.phase === "ready" ? "is ready to install." : "is available."}</p>{updates.phase === "error" && <p className="m-0 text-destructive">Download failed: {updates.error}</p>}<div className="flex gap-2"><Button size="sm" onClick={() => void (updates.phase === "ready" ? updates.restart() : updates.accept())}>{updates.phase === "ready" ? "Restart & install update" : updates.phase === "error" ? "Retry update" : "Download update"}</Button><Button size="sm" variant="secondary" onClick={() => updates.showNotes({ version: updates.status?.version || "", title: updates.status?.title, notes: updates.status?.notes || "", url: updates.status?.url })}>Release notes</Button></div></>
-          : updates.phase === "error" ? <p className="m-0 text-muted-foreground">Could not check: {updates.error}</p>
-          : <p className="m-0 text-muted-foreground">{updates.status?.supported ? "You have the latest release." : "Updates are available in the built Windows executable."}</p>}
-        {updates.installed && <Button size="sm" variant="secondary" onClick={() => updates.showNotes(updates.installed!)}>What's new in {updates.installed.version}</Button>}
-      </div>
+      <div className="rounded-md border p-3"><UpdateControls /></div>
       <p className="m-0 text-[13px] text-muted-foreground">Not affiliated with Nintendo. Use your own legally dumped game files.</p>
     </>
   );

@@ -100,7 +100,7 @@ try {
   await editor.setRequestInterception(true);
   editor.on("request", (r) => new URL(r.url()).pathname === "/api/save-dialog"
     ? void r.respond({ status: 200, contentType: "application/json", body: JSON.stringify({ path: savedPath }) }) : void r.continue());
-  await editor.evaluate(() => (window as any).app.save());
+  await editor.evaluate(() => (window as any).app.save(false, { check: false }));
   const bytes = new Uint8Array(await readFile(savedPath));
   const saved = parseU8(isYaz0(bytes) ? yaz0Decompress(bytes) : bytes), course = parseBRRES(findFile(saved, "course_model.brres")!.data);
   check([...decodeTexture(course.textures.get("road")).slice(0, 4)].join(",") === "40,80,240,128", "the saved SZS contains the custom texture with its exact colour and transparency");

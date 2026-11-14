@@ -117,7 +117,7 @@ try {
   if (process.env.MKWII_COLLISION_MOBILE_SCREENSHOT) await page.screenshot({ path: process.env.MKWII_COLLISION_MOBILE_SCREENSHOT });
   const mobilePixels = await pixelCheck();
   if (mobilePixels <= 500) throw new Error(`The 3D collision view is blank on mobile (${mobilePixels} non-dark pixels)`);
-  if (!(await page.evaluate(() => (window as any).app.save()))) throw new Error("Could not save generated collision");
+  if (!(await page.evaluate(() => (window as any).app.save(false, { check: false })))) throw new Error("Could not save generated collision");
   const saved = new Uint8Array(await Bun.file(track).arrayBuffer());
   const tree = parseU8(yaz0Decompress(saved));
   const kcl = parseKCL(findFile(tree, "course.kcl")!.data);
@@ -162,7 +162,7 @@ try {
   if (objectRemoval.matched < 12) throw new Error("Generated object collision not found");
   await removeCollision(true);
   if (!(await page.evaluate((before) => (window as any).app.doc.kcl.count === before.count - before.matched && (window as any).app.doc.kmp.GOBJ.length === before.objects, objectRemoval))) throw new Error("Removing object collision deleted its model or the wrong triangles");
-  if (!(await page.evaluate(() => (window as any).app.save()))) throw new Error("Could not save removed collision");
+  if (!(await page.evaluate(() => (window as any).app.save(false, { check: false })))) throw new Error("Could not save removed collision");
   const afterRemoval = await page.evaluate(async (path) => { const app = (window as any).app; await app.openPath(path); return app.doc.kcl.count; }, track);
   if (afterRemoval !== objectRemoval.count - objectRemoval.matched) throw new Error("Removed collision returned after save/reopen");
   console.log("Object collision removal kept the object and survived save/reopen");

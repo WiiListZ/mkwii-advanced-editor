@@ -155,7 +155,7 @@ try {
     return { undone, redone: a.doc.snapshot().modelBytes === painted, dirty: a.doc.dirty };
   });
   if (!history.undone || !history.redone || !history.dirty) throw new Error("Saved texture history failed: " + JSON.stringify(history));
-  const saved = await page.evaluate(async () => (window as any).app.save());
+  const saved = await page.evaluate(async () => (window as any).app.save(false, { check: false }));
   console.log("Save finished:", saved);
   if (!saved) throw new Error("Saving painted SZS failed");
   const reopened = await page.evaluate(async (path) => {
@@ -197,7 +197,7 @@ try {
     return { scaleMode, scaled: a.doc.snapshot().modelBytes !== before };
   });
   if (!modelScale.scaleMode || !modelScale.scaled) throw new Error("Model scaling failed: " + JSON.stringify(modelScale));
-  await page.evaluate(async () => (window as any).app.save());
+  await page.evaluate(async () => (window as any).app.save(false, { check: false }));
   const modelReopened = await page.evaluate(async (path) => {
     const a = (window as any).app, before = a.doc.snapshot().modelBytes;
     await a.openPath(path);

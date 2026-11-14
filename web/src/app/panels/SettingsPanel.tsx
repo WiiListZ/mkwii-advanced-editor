@@ -14,6 +14,7 @@ import { WorkspaceCard } from "./WorkspaceCard";
 import { CommonSzsCard, ObjectDocumentationCard } from "./GameFilesCards";
 import type { Settings } from "../editor";
 import { DiscordActivityControl } from "../discord-activity";
+import { APP_VERSION, UpdateControls } from "../updates";
 
 type SettingKey = keyof Settings;
 
@@ -58,7 +59,13 @@ export function SettingsPanel() {
       <div><h2 className="text-sm font-semibold">Settings</h2><p className="text-[11px] text-muted-foreground">Changes are saved automatically for the next launch.</p></div>
     </div>
 
-    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Interface</h3>
+    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Version</h3>
+    <div className="space-y-2 rounded-md border bg-muted/20 p-2.5" data-settings-version>
+      <div className="text-xs font-medium">MKWii Advanced Editor {APP_VERSION}</div>
+      <UpdateControls />
+    </div>
+
+    <h3 className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Interface</h3>
     <div className="space-y-2">
       <SettingRow name="uiFont">{choices("uiFont", [["default", "Default"], ["game", "Mario Kart Wii"]])}</SettingRow>
     </div>

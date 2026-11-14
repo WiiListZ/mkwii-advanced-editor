@@ -5,6 +5,9 @@ import { Ops } from '../web/js/editor/ops.js';
 import { validate } from '../web/js/editor/validate.js';
 import { buildKCL, parseKCL, kclLookup } from '../web/js/formats/kcl.js';
 import { buildKMP, parseKMP, make } from '../web/js/formats/kmp.js';
+import { newSzsTree } from '../web/js/formats/u8.js';
+import { BUILTIN_OBJECT_DOCUMENTATION, objectDocumentation, parseObjectDocumentation } from '../web/js/data/object-documentation.js';
+import { ROUTE_REQUIRED_OBJECTS, routeRequired } from '../web/js/data/route-objects.js';
 
 const settings = { checkpointWidth: 3000, autoCheckpointWidth: true, iconSize: 150, pathWidth: 20, viewCenter: () => [0, 0, 0] };
 
@@ -34,6 +37,82 @@ for (const name of ['Oval', 'Figure eight', 'Kidney', 'Hilly']) {
     expect(errors.length).toBe(0);
   });
 }
+
+test('Route-following objects without a route are reported, fixed and never created', () => {
+  const { doc } = docFromPreset('Oval');
+  const ops = new Ops(doc, settings);
+  // A w_woodbox (0xd3) with route 0xFFFF crashes the game: invalid read from 0x00000000.
+  const box = make.GOBJ(0xd3, [100, 200, 300]);
+  box.rot = [0, 90, 0];
+  doc.kmp.GOBJ.push(box);
+  doc.invalidate();
+  const issue = validate(doc, ops, null).find((i) => i.key === String(box.uid));
+  expect(issue?.level).toBe('error');
+  const routes = doc.kmp.POTI.length;
+  expect(ops.addMissingObjectRoutes()).toBe(1);
+  expect(box.route).toBe(routes);
+  const points = doc.kmp.POTI[routes].points.map((p) => p.pos.map(Math.round));
+  expect(points).toEqual([[100, 200, 300], [1100, 200, 300]]);
+  expect(validate(doc, ops, null).some((i) => i.key === String(box.uid))).toBe(false);
+  // Placing one creates its route straight away; item boxes stay without a route.
+  ops.add('GOBJ', [0, 0, 0], { objectId: 0xd3 });
+  expect(doc.kmp.GOBJ.at(-1).route).toBe(routes + 1);
+  expect(doc.kmp.POTI[routes + 1].points).toHaveLength(2);
+  ops.add('GOBJ', [0, 0, 0], { objectId: 0x65 });
+  expect(doc.kmp.GOBJ.at(-1).route).toBe(0xFFFF);
+});
+
+test('Object documentation decides required routes and settings', () => {
+  const { doc } = docFromPreset('Oval');
+  const ops = new Ops(doc, settings);
+  const docs = parseObjectDocumentation({ version: 1, objects: {
+    '0x03e8': { route: { required: true, description: 'Moves along it.' }, settings: { 2: { label: 'Speed', required: true } } },
+    w_woodbox: { route: { required: false } },
+  } });
+  ops.objectDocumentation = (id) => objectDocumentation(id, id === 0xd3 ? 'w_woodbox' : '', docs);
+  const custom = make.GOBJ(0x3e8, [0, 0, 0]), box = make.GOBJ(0xd3, [0, 0, 0]);
+  doc.kmp.GOBJ.push(custom, box);
+  doc.invalidate();
+  const issues = validate(doc, ops, null);
+  const mine = (o) => issues.filter((i) => i.key === String(o.uid));
+  // A custom object the documentation says needs a route, and a required setting left at 0.
+  expect(mine(custom).map((i) => i.level).sort()).toEqual(['error', 'warning']);
+  expect(mine(custom).find((i) => i.level === 'warning').msg).toContain('setting 2 (Speed)');
+  // The documentation overrides the built-in list: this w_woodbox needs no route here.
+  expect(mine(box)).toEqual([]);
+  custom.settings[1] = 5;
+  expect(validate(doc, ops, null).filter((i) => i.key === String(custom.uid)).map((i) => i.level)).toEqual(['error']);
+  expect(ops.addMissingObjectRoutes()).toBe(1);
+  expect(box.route).toBe(0xFFFF);
+  // Malformed route documentation is refused.
+  expect(() => parseObjectDocumentation({ version: 1, objects: { a: { route: true } } })).toThrow('route');
+  expect(() => parseObjectDocumentation({ version: 1, objects: { a: { settings: { 1: { label: 'x', required: 1 } } } } })).toThrow('required');
+  // The default documentation states the route of every route-following object of the built-in list.
+  const stated = Object.values(BUILTIN_OBJECT_DOCUMENTATION).filter((entry) => entry.route?.required).length;
+  expect(stated).toBe(ROUTE_REQUIRED_OBJECTS.size);
+  expect(objectDocumentation(0xd3, 'w_woodbox').route).toEqual({ required: true });
+  expect(routeRequired(0x65, (id) => objectDocumentation(id, 'itembox'))).toBe(false);
+});
+
+test('Track check finds cannons without destinations, missing object files and broken camera links', () => {
+  const { doc } = docFromPreset('Oval');
+  const ops = new Ops(doc, settings);
+  doc.kcl.flags[0] = 0x11 | (1 << 5); // cannon 1, with no CNPT
+  doc.szs = newSzsTree();
+  doc.kmp.GOBJ.push(make.GOBJ(0xd3, [0, 0, 0]));
+  doc.kmp.GOBJ.at(-1).route = 0;
+  doc.kmp.POTI.push(make.route([make.routePoint([0, 0, 0]), make.routePoint([10, 0, 0])]));
+  doc.kmp.extras = { ...(doc.kmp.extras || {}), CAME: (200 << 8) | 0xff };
+  doc.invalidate();
+  const messages = validate(doc, ops, null).map((i) => `${i.level}: ${i.msg}`);
+  expect(messages.some((m) => m.startsWith('error') && m.includes('cannon 1') && m.includes('0 cannon destinations'))).toBe(true);
+  expect(messages.some((m) => m.startsWith('error') && m.includes('woodbox.brres'))).toBe(true);
+  expect(messages.some((m) => m.startsWith('warning') && m.includes('rk_woodbox.breff'))).toBe(true);
+  expect(messages.some((m) => m.startsWith('error') && m.includes('camera 200'))).toBe(true);
+  // Files that saving copies from the tracks folder are not reported.
+  ops.objectFilesAvailable = (id) => id === 0xd3;
+  expect(validate(doc, ops, null).some((i) => i.msg.includes('woodbox.brres'))).toBe(false);
+});
 
 test('Checkpoints face the driving direction (left/right convention)', () => {
   const { doc } = docFromPreset('Oval');

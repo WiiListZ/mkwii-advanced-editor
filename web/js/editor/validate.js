@@ -3,6 +3,9 @@
 import { parseBRRES } from '../formats/brres.js';
 import { findFile } from '../formats/u8.js';
 import { cameraRouteIssues } from '../formats/kmp.js';
+import { missingRequiredSettings, objectNeedsRoute } from '../data/route-objects.js';
+import { OBJECT_FILES } from '../data/object-files.js';
+import { introIndex, selectionIndex } from './cameras.js';
 import { geometryIssues } from './geometry-check.js';
 import { usageIssues } from './track-limits.js';
 import { fixIntroShots, introShotIssues } from './intro-keys.js';
@@ -129,23 +132,58 @@ export function validate(doc, ops, objectNames) {
 
   // Objects
   const routeCount = k.POTI.length;
+  const documentation = ops.objectDocumentation;
+  const objectName = (o) => documentation?.(o.objectId)?.label || objectNames?.[o.objectId] || `Object 0x${o.objectId.toString(16)}`;
+  const routeFix = { label: 'Create a route for each', run: () => ops.addMissingObjectRoutes() };
+  const objectRoutes = new Set(), cameraRoutes = new Set();
   k.GOBJ.forEach((o) => {
     if (o.route !== 0xFFFF && o.route >= routeCount) add('error', `Object uses missing route ${o.route}.`, o.uid);
+    if (o.route !== 0xFFFF) objectRoutes.add(o.route);
+    if (objectNeedsRoute(o, documentation)) add('error', `${objectName(o)} must follow a route but has none: the game crashes (invalid read from 0x00000000).`, o.uid, routeFix);
+    for (const setting of missingRequiredSettings(o, documentation)) {
+      add('warning', `${objectName(o)}: setting ${setting.index} (${setting.label}) is required by its documentation but is 0.`, o.uid);
+    }
     if (objectNames && Object.keys(objectNames).length > 5 && !objectNames[o.objectId]) add('warning', `Unknown object ID 0x${o.objectId.toString(16)}.`, o.uid);
   });
+  // Files the game loads for each object type. Files the editor copies from the tracks folder when
+  // saving, or that Common.szs provides, count as present (ops.objectFilesAvailable).
+  if (doc.szs) for (const id of new Set(k.GOBJ.map((o) => o.objectId))) {
+    const missing = (OBJECT_FILES[id] || []).filter((path) => !findFile(doc.szs, path));
+    if (!missing.length || ops.objectFilesAvailable?.(id)) continue;
+    const first = k.GOBJ.find((o) => o.objectId === id), models = missing.filter((path) => /\.(brres|kcl)$/i.test(path));
+    if (models.length) add('error', `${objectName(first)} needs ${models.join(', ')}, which the SZS does not contain: the game can crash when it loads the object. Add the file with File › SZS contents.`, first.uid);
+    const others = missing.filter((path) => !models.includes(path));
+    if (others.length) add('warning', `${objectName(first)} needs ${others.join(', ')}, which the SZS does not contain (effects or animations of the object).`, first.uid);
+  }
   if (k.GOBJ.length > 1000) add('warning', `${k.GOBJ.length} objects: may cause lag or memory problems.`);
   if (!k.GOBJ.some((o) => o.objectId === 0x65)) add('info', 'No item boxes on the track.');
 
-  k.POTI.forEach((r, i) => { if (r.points.length < 2) add('error', `Route ${i} has fewer than 2 points.`, r.uid); });
+  k.POTI.forEach((r, i) => {
+    if (r.points.length < 2) add('error', `Route ${i} has fewer than 2 points.`, r.uid);
+    // Cameras report their own smooth routes (cameraRouteIssues).
+    else if (r.smooth && r.points.length < 3 && objectRoutes.has(i)) add('error', `Route ${i} is smooth with only ${r.points.length} points: the game freezes while loading the track. Add a point or turn smoothing off.`, r.uid);
+  });
 
   k.AREA.forEach((a) => {
     if (a.camera !== 0xFF && a.camera >= k.CAME.length) add('error', `Area links missing camera ${a.camera}.`, a.uid);
+    else if (a.type === 0 && a.camera === 0xFF) add('warning', 'Camera area without a camera: choose the camera it switches to.', a.uid);
     if (a.route !== 0xFF && a.route >= routeCount) add('error', `Area links missing route ${a.route}.`, a.uid);
+    if (a.enemyPoint !== 0xFF && a.type === 4 && a.enemyPoint >= k.ENPT.reduce((n, g) => n + g.points.length, 0)) add('error', `Area links missing enemy point ${a.enemyPoint}.`, a.uid);
   });
   k.CAME.forEach((c) => {
     if (c.next !== 0xFF && c.next >= k.CAME.length) add('error', `Camera links missing next camera ${c.next}.`, c.uid);
     if (c.route !== 0xFF && c.route >= routeCount) add('error', `Camera uses missing route ${c.route}.`, c.uid);
+    if (c.route !== 0xFF) cameraRoutes.add(c.route);
+    if (c.type > 9) add('warning', `Camera type ${c.type} is unknown to the game.`, c.uid);
   });
+  for (const r of cameraRoutes) if (objectRoutes.has(r) && k.POTI[r]) add('warning', `Route ${r} is used by both a camera and an object: this can freeze the game. Give each its own route.`, k.POTI[r].uid);
+  if (k.CAME.length) {
+    const intro = introIndex(k), selection = selectionIndex(k);
+    if (intro !== 0xFF && intro >= k.CAME.length) add('error', `The intro starts with camera ${intro}, which does not exist.`);
+    if (selection !== 0xFF && selection >= k.CAME.length) add('error', `The track selection camera ${selection} does not exist.`);
+    const goals = k.CAME.filter((c) => c.type === 0);
+    if (goals.length > 1) add('warning', `${goals.length} goal cameras (type 0): the game expects one.`, goals[1].uid);
+  }
   for (const issue of cameraRouteIssues(k)) add('error', issue.message, k.CAME[issue.index].uid);
   for (const goal of k.CAME.filter((c) => c.type === 0 && [...c.viewStart, ...c.viewEnd].some((v) => Math.abs(v) > GOAL_VIEW_REACH))) {
     add('warning', 'The goal camera aims at a place on the track instead of near the kart: the kart can leave the picture when the race ends.', goal.uid, {
@@ -161,10 +199,22 @@ export function validate(doc, ops, objectNames) {
 
   k.JGPT.forEach((j, i) => { if (j.id !== i) add('info', `Respawn ${i} has ID ${j.id} (usually equal to the index).`, j.uid, { label: 'Renumber IDs', run: () => ops.renumberIds() }); });
 
+  if (k.STGI.length > 1) add('warning', `${k.STGI.length} stage info entries: the game expects one.`);
+  if (st && st.pole > 1) add('warning', `Pole position ${st.pole} is not defined (0 = left, 1 = right).`, st.uid);
+  if (st && st.distance > 1) add('warning', `Start mode ${st.distance} is not defined (0 = normal, 1 = narrow).`, st.uid);
+
   // Collision
   if (!doc.kcl) add('warning', 'No collision (course.kcl) loaded.');
   else {
     if (doc.kcl.count > 65534) add('error', 'Too many collision triangles for a KCL.');
+    // Cannon activators (KCL type 0x11) shoot to CNPT[flag >> 5]; fall boundaries 0x70 need ice.brres.
+    let cannons = 0, ice = false;
+    for (const flag of doc.kcl.flags || []) {
+      if ((flag & 0x1F) === 0x11) cannons = Math.max(cannons, (flag >> 5) + 1);
+      else if (flag === 0x70) ice = true;
+    }
+    if (cannons > k.CNPT.length) add('error', `The collision has cannon ${cannons - 1}, but the KMP has ${k.CNPT.length} cannon destination${k.CNPT.length === 1 ? '' : 's'} (CNPT): the game crashes when a kart touches it.`);
+    if (ice && doc.szs && !findFile(doc.szs, 'ice.brres')) add('warning', 'The collision uses a fall boundary that needs ice.brres, which the SZS does not contain: the Wii may freeze when a kart falls.');
     if (doc.heights) {
       for (const s of k.KTPT) {
         const y = doc.heights.groundBelow(s.pos[0], s.pos[2], s.pos[1] + 200, 0);

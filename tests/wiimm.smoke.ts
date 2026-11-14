@@ -30,7 +30,7 @@ try {
   await page.evaluate(async (path) => (window as any).app.openPath(path), track);
   const objects = await page.evaluate(() => (window as any).app.doc.kmp.GOBJ.length);
   if (!objects) throw new Error("WLZ track opened without its KMP objects");
-  const saved = await page.evaluate(async () => (window as any).app.save());
+  const saved = await page.evaluate(async () => (window as any).app.save(false, { check: false }));
   if (!saved) throw new Error("Could not save the reconstructed track");
   const bytes = readFileSync(track), original = readFileSync(track + ".bak");
   if (bytes.toString("ascii", 0, 4) !== "Yaz0" || original.toString("ascii", 0, 4) !== "WLZa")
@@ -42,7 +42,7 @@ try {
   await page.waitForFunction(() => (window as any).app.settings.keepBackups === false);
   await page.keyboard.press("Escape");
   await page.evaluate(async (path) => (window as any).app.openPath(path), trackNoBackup);
-  if (!(await page.evaluate(async () => (window as any).app.save()))) throw new Error("Could not save with backups off");
+  if (!(await page.evaluate(async () => (window as any).app.save(false, { check: false })))) throw new Error("Could not save with backups off");
   if (existsSync(trackNoBackup + ".bak")) throw new Error("Save created a .bak while backups were off");
   const edited = await page.evaluate(async (folder) => {
     const res = await fetch(`/api/modified-files?path=${encodeURIComponent(folder)}`, { headers: { "x-token": "wiimm-smoke" } });

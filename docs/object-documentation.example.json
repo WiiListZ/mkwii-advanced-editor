@@ -33,14 +33,16 @@
     "0x03E8": {
       "label": "My custom object",
       "description": "Describe what this custom object does and where its model comes from.",
+      "route": { "required": true, "description": "The object moves along this route; without one the game crashes." },
       "settings": {
         "1": {
           "label": "Speed",
           "description": "Describe the unit here.",
-          "values": "0 stops the object; higher values move it faster.",
+          "values": "Higher values move it faster.",
+          "required": true,
           "min": 0,
           "max": 120,
-          "limits": "Tested on this custom object."
+          "limits": "0 does not work: the object needs a speed. Tested on this custom object."
         },
         "2": {
           "label": "Direction",
