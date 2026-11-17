@@ -14,7 +14,8 @@ import { api } from "../../../js/api.js";
 import { buildU8, findFile, listFiles, newSzsTree, parseU8, setFilePath } from "../../../js/formats/u8.js";
 import { buildBMG, escapes, fontSizePercent, messagePlace, messageTextLength, parseBMG, plainText, setFontSizePercent, stripFontSizePrefix } from "../../../js/formats/bmg.js";
 import { messageTextError, messageTextLimit } from "../../../js/editor/text-limits.js";
-import { BMG_COLOURS, bmgSelectionRange, colourBmgSelection } from "../../../js/formats/bmg-style.js";
+import { BMG_COLOURS, bmgColour, bmgSelectionRange, colourBmgSelection } from "../../../js/formats/bmg-style.js";
+import { gameText } from "../../../js/editor/text-displays.js";
 import { TextEditHistory } from "../../../js/editor/text-history.js";
 import { gameTextAssetsFor } from "../game-text-assets";
 import { drawText, parseBRFNT } from "../../../js/formats/brfnt.js";
@@ -22,9 +23,11 @@ import { editor, type LooseFile } from "../editor";
 import { dialogs } from "../dialogs-store";
 import { DEFAULT_GAME_SCREEN_VH, GameTextPreview, MAX_GAME_SCREEN_VH, MIN_GAME_SCREEN_VH } from "./GameTextPreview";
 import { cn } from "@/lib/utils";
+import { VirtualRows } from "../virtual-rows";
 
 const LANGUAGES: Record<string, string> = { E: "English", I: "Italian", F: "French", G: "German", S: "Spanish", J: "Japanese", K: "Korean", U: "English (US)", M: "Spanish (Americas)", Q: "French (Canada)" };
-const LIST_LIMIT = 400;
+// Every message is listed (the game has thousands): rows have one height, two lines of text.
+const ROW = 56;
 
 // `loose`: a .bmg opened on its own; its tree holds just that file, saved back as the .bmg.
 interface Archive { path: string; name: string; tree: any; bmgs: Map<string, { path: string; bmg: any }>; loose?: LooseFile }
@@ -296,23 +299,21 @@ export function GameTextDialog({ search: initialSearch = "", folder: initialFold
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,380px)_minmax(0,1fr)] gap-3">
         <div className="flex min-h-0 flex-col rounded-md border">
           <div className="shrink-0 border-b px-2.5 py-1.5 text-[11px] text-muted-foreground">
-            {loading || (archives ? `${filtered.length.toLocaleString()} messages${filtered.length > LIST_LIMIT ? ` · first ${LIST_LIMIT} shown, refine the search` : ""}` : "…")}
+            {loading || (archives ? `${filtered.length.toLocaleString()} messages` : "…")}
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-1">
-            {filtered.slice(0, LIST_LIMIT).map((m) => {
+          <VirtualRows items={filtered} rowHeight={ROW} resetKey={JSON.stringify([query, language, fileFilter, onlyChanged])} row={(m) => {
               const text = edits[m.key] ?? m.text;
               return (
-                <button key={m.key} onClick={() => setSelected(m.key)}
-                  className={cn("flex w-full cursor-pointer flex-col items-start gap-0.5 rounded px-2 py-1.5 text-left hover:bg-accent/60", m.key === selected && "bg-accent")}>
+                <button key={m.key} onClick={() => setSelected(m.key)} style={{ height: ROW }}
+                  className={cn("flex w-full cursor-pointer flex-col items-start justify-center gap-0.5 overflow-hidden rounded px-2 text-left hover:bg-accent/60", m.key === selected && "bg-accent")}>
                   <span className="flex w-full items-center gap-1.5 text-[10.5px] text-muted-foreground">
                     <span className="font-mono">{hex(m.id)}</span> · {m.place}
                     {edits[m.key] !== undefined && <span className="ml-auto size-1.5 rounded-full bg-primary" title="Changed" />}
                   </span>
-                  <span className="line-clamp-2 w-full whitespace-pre-line text-[12.5px]">{plainText(text) || <span className="text-muted-foreground">(empty)</span>}</span>
+                  <span className="line-clamp-2 w-full whitespace-pre-line text-[12.5px]">{plainText(text) ? <GameTextInline text={stripFontSizePrefix(text)} iconFont={iconFont} /> : <span className="text-muted-foreground">(empty)</span>}</span>
                 </button>
               );
-            })}
-          </div>
+            }} />
         </div>
 
         <div className="flex min-h-0 flex-col gap-3 overflow-y-auto">
@@ -489,7 +490,7 @@ function MessageEditor({ message, folder, value, font, iconFont, twins, lookup, 
         <span className="font-mono text-[11px] text-muted-foreground">{message.file}.bmg · {hex(message.id)}</span>
         <span className="ml-auto text-[11px] text-muted-foreground">{message.copies} {message.copies === 1 ? "copy" : "copies"} in this language</span>
       </div>
-      <GameTextPreview key={`${folder}:${message.key}`} folder={folder} file={message.file} id={message.id} font={font} text={value} originalText={message.text} place={message.place} lookup={lookup} inGamePreview={inGamePreview} onInGamePreviewChange={onInGamePreviewChange} screenVh={screenVh} onScreenVhChange={onScreenVhChange} />
+      <GameTextPreview key={`${folder}:${message.key}`} folder={folder} file={message.file} id={message.id} font={font} iconFont={iconFont} text={value} originalText={message.text} place={message.place} lookup={lookup} inGamePreview={inGamePreview} onInGamePreviewChange={onInGamePreviewChange} screenVh={screenVh} onScreenVhChange={onScreenVhChange} />
       <div data-message-edit-controls className="flex shrink-0 flex-col gap-1.5">
         <textarea ref={area} value={body} onChange={(e) => {
           const type = (e.nativeEvent as InputEvent).inputType;
@@ -528,4 +529,45 @@ function MessageEditor({ message, folder, value, font, iconFont, twins, lookup, 
       </div>
     </>
   );
+}
+
+// A message in a list, as the game shows it: its colours, its button icons from the game's icon
+// font (tt_kart_extension_font), and sample names and numbers where the game fills them in.
+const iconImages = new WeakMap<object, Map<number, string>>();
+function iconImage(font: any, code: number) {
+  if (!font?.chars.has(code)) return null;
+  let cache = iconImages.get(font);
+  if (!cache) { cache = new Map(); iconImages.set(font, cache); }
+  if (!cache.has(code)) {
+    const w = font.widths.get(font.chars.get(code)) || font.defaultWidth;
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, w.advance); c.height = font.cellH;
+    drawText(c.getContext("2d")!, font, [{ text: String.fromCodePoint(code), color: "#ffffff" }], 0, 0);
+    cache.set(code, c.toDataURL());
+  }
+  return cache.get(code)!;
+}
+function GameTextInline({ text, iconFont }: { text: string; iconFont: any }) {
+  const parts: React.ReactNode[] = [];
+  let color: string | undefined, last = 0, key = 0;
+  const push = (t: string) => { if (t) parts.push(<span key={key++} style={color ? { color } : undefined}>{t}</span>); };
+  for (const e of escapes(text)) {
+    push(text.slice(last, e.start));
+    last = e.end;
+    const b = e.bytes;
+    if (b[1] === 0 && b[2] === 0 && b[3] === 1) {
+      const rgba = bmgColour(b[4] * 256 + b[5]);
+      color = rgba ? `rgb(${rgba[0]},${rgba[1]},${rgba[2]})` : undefined;
+      continue;
+    }
+    if (b[1] === 0 && b[2] === 0 && b[3] === 0) continue; // font size
+    const shown = gameText(text.slice(e.start, e.end));
+    for (const ch of shown) {
+      const src = iconImage(iconFont, ch.codePointAt(0)!);
+      if (src) parts.push(<img key={key++} src={src} alt="" aria-hidden className="mx-px inline-block h-[1.15em] w-auto align-[-0.2em]" />);
+      else push(ch);
+    }
+  }
+  push(text.slice(last));
+  return <>{parts}</>;
 }

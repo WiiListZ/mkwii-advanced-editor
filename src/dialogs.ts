@@ -273,5 +273,9 @@ export function revealInExplorer(path: string) {
   // absolute path, including when the file is on another drive or its folder contains spaces.
   const target = resolve(path);
   if (!existsSync(target)) throw new Error("The file or folder no longer exists");
-  Bun.spawn(["explorer.exe", `/select,${target}`], { stdout: "ignore", stderr: "ignore", windowsHide: true });
+  // Not windowsHide: Explorer passes the hidden start to the folder window, which then opens
+  // invisible. The window belongs to the running Explorer, not to the process started here, so
+  // any process may take the foreground (ASFW_ANY) to open it in front of the editor.
+  getWin32()?.allowForeground(0xffffffff);
+  Bun.spawn(["explorer.exe", `/select,${target}`], { stdout: "ignore", stderr: "ignore" });
 }

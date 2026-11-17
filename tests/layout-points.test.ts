@@ -1,19 +1,40 @@
 import { expect, test } from 'bun:test';
-import { PRESETS, sampleSpline, trackSamples, layoutIssues, generateTrack } from '../web/js/editor/trackgen.js';
+import { PRESETS, sampleSpline, trackSamples, layoutIssues, generateTrack, MIN_TURN_RADIUS } from '../web/js/editor/trackgen.js';
 import { moveStartToFit, nearestLayoutSegment, startLayoutAt } from '../web/js/editor/layout-points.js';
 import { buildShortcuts, shortcutWallGaps, shortcutWalls } from '../web/js/editor/track-branches.js';
 import { DEFAULT_PARAMS, roadFrames } from '../web/js/editor/trackgen.js';
 
 const oval = () => PRESETS.Oval().map((p: any) => ({ ...p, w: 1 }));
 
-test('adding or bending a point near the start never rewrites the horizontal spline', () => {
+// The tightest turn of the centre line (radius over samples 800 units apart), away from the start
+// line (a bend there is the starting grid's problem, left as drawn).
+const tightest = (s: number[][]) => {
+  const n = s.length, k = 2;
+  let least = Infinity;
+  for (let i = 5; i < n - 5; i++) {
+    const a = s[(i - k + n) % n], b = s[i], c = s[(i + k) % n];
+    const ab = Math.hypot(b[0] - a[0], b[2] - a[2]), bc = Math.hypot(c[0] - b[0], c[2] - b[2]), ca = Math.hypot(a[0] - c[0], a[2] - c[2]);
+    const cross = Math.abs((b[0] - a[0]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[0] - a[0]));
+    if (cross > 1e-6) least = Math.min(least, (ab * bc * ca) / (2 * cross));
+  }
+  return least;
+};
+
+test('adding a point near the start never rewrites the horizontal spline; bending it into a tight turn eases only that turn', () => {
   const points = oval(), hit = nearestLayoutSegment(points, 4500, -13000)!;
   points.splice(hit.segment + 1, 0, { x: hit.at[0], z: hit.at[1], y: hit.height, w: hit.width });
-  for (const layout of [points, points.map((p: any, i: number) => i === 1 ? { ...p, z: p.z + 9000 } : p)]) {
+  const bent = points.map((p: any, i: number) => i === 1 ? { ...p, z: p.z + 9000 } : p);
+  for (const layout of [points, bent]) {
     const raw = sampleSpline(layout, 400).samples, out = trackSamples(layout).samples;
     expect(out.length).toBe(raw.length);
-    for (let i = 0; i < raw.length; i++) {
-      expect(out[i][0]).toBe(raw[i][0]); expect(out[i][2]).toBe(raw[i][2]);
+    if (layout === points) {
+      for (let i = 0; i < raw.length; i++) { expect(out[i][0]).toBe(raw[i][0]); expect(out[i][2]).toBe(raw[i][2]); }
+    } else {
+      // The drawn bend is tighter than the generator allows; the generated road rounds it out.
+      expect(tightest(raw)).toBeLessThan(MIN_TURN_RADIUS * 3600);
+      expect(tightest(out)).toBeGreaterThan(MIN_TURN_RADIUS * 3600 * .97);
+      // The start line stays where it was drawn.
+      expect(out[0][0]).toBe(raw[0][0]); expect(out[0][2]).toBe(raw[0][2]);
     }
     const track = generateTrack(layout);
     for (const face of track.model.tris.filter((t: any) => ['road', 'startline', 'boost', 'offroad'].includes(t.mat))) {

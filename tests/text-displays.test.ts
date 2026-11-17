@@ -54,11 +54,39 @@ test("automatic placement is tied to the message ID, never its translation, leng
       expect(defaultDisplay(file, id, text)).toBe(display);
   }
   for (const file of ["Menu", "Race", "Number", "StaffRoll", "Mod text"])
-    expect(defaultDisplay(file, 0xffff, "Short label")).toBe(file === "Race" ? "genericRaceWindow" : "genericWindow");
-  expect(defaultDisplay("Common", 0x2382, "Not a known vehicle")).toBe("genericWindow");
+    expect(defaultDisplay(file, 0xffff, "Short label")).toBe("font");
+  expect(defaultDisplay("Common", 0x2382, "Not a known vehicle")).toBe("font");
   expect(messagePlacement("Menu", 0xd4a)?.control).toEqual(["bg", "MenuObiTitleText", "text"]);
   expect(messagePlacement("Menu", 0xcf0)?.control).toEqual(["control", "MachineAbility", "ability_text"]);
   expect(defaultDisplay("Menu", 0xa29, "Add")).toBe("channelInstall");
+});
+
+test("names that mods add under their own IDs open on the cup and course selection", () => {
+  // LE-CODE: Common.bmg, cup 0x6800 + cup, track 0x7000 + slot.
+  expect(messagePlacement("Common", 0x6803)).toMatchObject({ display: "courseSelect", control: ["control", "CourseSelectCup", "text"], mod: { cup: 3 } });
+  expect(messagePlacement("Common", 0x7000 + 0x2b)).toMatchObject({ display: "courseSelect", control: ["button", "CourseSelectCourse", "text"], mod: { cup: 10, row: 3 } });
+  expect(defaultDisplay("Menu", 0x7000, "")).toBe("font"); // only Common holds LE-CODE names
+  // Pulsar: cup 0x10000 + cup, track 0x20000 + cup × 4 + position, variants above bit 12.
+  expect(messagePlacement("BMG", 0x10009)).toMatchObject({ mod: { cup: 9 } });
+  expect(messagePlacement("BMG", 0x20000 + 21 + (2 << 12))).toMatchObject({ mod: { cup: 5, row: 1 } });
+  expect(defaultDisplay("BMG", 0x30005, "Author")).toBe("font");
+
+  // Drawn in its cup and row, next to the names of the same mod.
+  const seen: { ctrl: string; variant: string; text: Record<string, string> }[] = [];
+  const assets: any = {
+    texture: () => null, place: () => ({ x: 0, y: 0, scale: 1 }),
+    drawControl: (_ctx: any, _folder: string, ctrl: string, variant: string, opts: any = {}) => { if (opts.text) seen.push({ ctrl, variant, text: opts.text }); },
+  };
+  const ctx: any = { canvas: { width: 608, height: 456 }, fillRect() {}, createLinearGradient: () => ({ addColorStop() {} }) };
+  const lookup = (_file: string, id: number) => id >= 0x6800 ? `Mod ${id.toString(16)}` : `Original ${id.toString(16)}`;
+  drawDisplay(assets, ctx, "courseSelect", { file: "Common", id: 0x702b, text: "Edited track", lookup });
+  const course = (row: number) => seen.find((s) => s.ctrl === "CourseSelectCourse" && s.variant === `Button${row}`)?.text.text;
+  const cup = (i: number) => seen.find((s) => s.ctrl === "CourseSelectCup" && s.variant === `Button${i}`)?.text.text;
+  expect([course(0), course(3)]).toEqual(["Mod 7028", "Edited track"]);
+  expect([cup(0), cup(2)]).toEqual(["Mod 6808", "Mod 680a"]);
+  seen.length = 0;
+  drawDisplay(assets, ctx, "courseSelect", { file: "BMG", id: 0x10009, text: "Edited cup", lookup });
+  expect([cup(1), cup(0), course(0)]).toEqual(["Edited cup", "Mod 10008", "Mod 20024"]);
 });
 
 const originalGame = process.env.MKWII_GAME_DIR;
@@ -79,6 +107,8 @@ test.skipIf(!originalGame || !existsSync(join(originalGame, "Scene/UI")))("every
   expect(messageTextLimit(assets, "Race", 0x515, "")?.capacity).toBe(12);
   expect(messageTextLimit(assets, "Race", 0x5de, "")?.capacity).toBe(20);
   expect(messageTextLimit(assets, "Menu", 0xffff, "Short label")).toBeNull();
+  expect(messageTextLimit(assets, "Common", 0x7020, "")?.capacity).toBe(messageTextLimit(assets, "Common", 0x2455, "")!.capacity);
+  expect(messageTextLimit(assets, "Common", 0x6800, "")?.capacity).toBe(messageTextLimit(assets, "Common", 0x23f0, "")!.capacity);
   expect(assets.panePlacement("pad_recognize", "RecognizePadWindow", "RecognizePadWindow", "icon_set_null")).toEqual({ x: 0, y: -42, scale: 1 });
   for (const kind of ["han_con", "nun_con", "cla_con", "gc_con"])
     expect(assets.anim(`pad_recognize/anim/common_w055_message_connect_${kind}.brlan`)).not.toBeNull();

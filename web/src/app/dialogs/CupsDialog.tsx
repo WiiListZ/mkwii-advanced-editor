@@ -5,8 +5,8 @@
 
 import * as React from "react";
 import {
-  ArchiveRestore, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleHelp, FileAudio, FileQuestion, FileUp, FolderOpen, History, LibraryBig, LoaderCircle, Plus,
-  Clapperboard, Music, Pencil, Replace, RotateCcw, Sparkles, Trash2, TriangleAlert, Trophy, X,
+  ArchiveRestore, ImagePlus, VideoOff, VolumeX, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleHelp, FileAudio, FileQuestion, FileUp, FolderOpen, History, LibraryBig, LoaderCircle, Plus,
+  Clapperboard, Music, Pencil, Replace, RotateCcw, Sparkles, Trash2, TriangleAlert, Trophy, Undo2, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -17,16 +17,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { api, FILTERS } from "../../../js/api.js";
-import { CUPS, SLOTS, appliedMusic, initialArrangement, isChanged, moveSlot, neighbourSlot, planArrangement, plannedMusic, replaceSlot, resetSlot, setSlotMusic, slotById, slotPlace, swapSlots } from "../../../js/data/cups.js";
+import { CUPS, SLOTS, appliedMusic, initialArrangement, isChanged, moveSlot, neighbourSlot, planArrangement, plannedMusic, replaceSlot, resetSlot, setNoVideo, setSlotMusic, slotById, slotPlace, swapSlots } from "../../../js/data/cups.js";
 import { editor } from "../editor";
 import { dialogs } from "../dialogs-store";
-import { buildWrites, createCupTrack, describeArrangement, inspectTrack, musicFolderKey, readGameNames, restoreCupMusic, saveCupMusic, snapshotCupMusic, writeAll, type Arrangement, type MusicChoice } from "../cups";
+import { NO_MUSIC, buildWrites, createCupTrack, describeArrangement, inspectTrack, musicFolderKey, readGameNames, restoreCupMusic, saveCupMusic, snapshotCupMusic, writeAll, type Arrangement, type MusicChoice } from "../cups";
 import { decodeFile } from "../audio-convert";
 import { Hint } from "../common";
 import { Checkbox } from "@/components/ui/checkbox";
 import { THP_LAYOUTS } from "../../../js/formats/thp.js";
 import { ThpPart, forgetPreviews } from "../thp-preview";
-import { CupIcon, useCupIcons } from "../cup-icons";
+import { CupIcon, forgetCupIcons, useCupIcons } from "../cup-icons";
 import { findPulsarPack, newPulsarCups, pulsarCups } from "../pulsar";
 import { findLECode, leCodeCups } from "../lecode-cups";
 import { ModCupsView } from "./PulsarCupsView";
@@ -54,7 +54,7 @@ export function CupsDialog({ initialFile, close }: { initialFile?: string; close
   const [list, setList] = React.useState<null | "all" | "other">(null);
   // Which cups: the game's own, or those of a mod that adds cups: a Pulsar pack (Config.pul) or an
   // LE-CODE distribution (rel/lecode-*.bin), found in the workspace or opened by hand.
-  type Source = { kind: "game" } | { kind: "pulsar"; path: string } | { kind: "lecode"; paths: string[] } | { kind: "new"; name: string; folder: string };
+  type Source = { kind: "game" } | { kind: "pulsar"; path: string } | { kind: "lecode"; paths: string[] } | { kind: "new"; name: string; folder: string; videos?: boolean };
   const [source, setSource] = React.useState<Source>({ kind: "game" });
   const [mods, setMods] = React.useState<{ pulsar: string | null; lecode: string[] }>({ pulsar: null, lecode: [] });
   const [modChanges, setModChanges] = React.useState(0);
@@ -74,7 +74,37 @@ export function CupsDialog({ initialFile, close }: { initialFile?: string; close
   const choose = async (next: Source) => { if (JSON.stringify(next) === JSON.stringify(source) || !(await leaveMod())) return; setModChanges(0); setSource(next); };
   const openMod = async () => {
     const path = await api.choosePath([{ name: "Mod with its own cups (Config.pul, lecode-*.bin)", extensions: ["pul", "bin"] }], "Open the cups of a mod: Binaries/Config.pul of a Pulsar pack, or rel/lecode-PAL.bin of an LE-CODE distribution");
-    if (!path) return;
+    if (path) await useModPath(path);
+  };
+  // A folder with the mod: the SD card folder (riivolution and the pack beside it), the pack itself, or
+  // a game folder with an LE-CODE distribution. The mods in it are found by themselves; a game
+  // folder found there becomes the game folder when none is chosen yet.
+  const openModFolder = async () => {
+    const folder = await api.chooseFolder("Choose the folder of the mod: the folder with riivolution and the pack (as on the SD card), or a game folder with an LE-CODE distribution");
+    if (!folder) return;
+    const found = await editor.withBusy("Looking for mods in the folder…", () => api.findMods(folder));
+    if (!found) return;
+    if (!editor.workspace() && found.games.length && !(await editor.setWorkspace(found.games[0]))) return;
+    const lecodeFolders: string[] = [...new Set<string>(found.lecode.map((p: string) => p.replace(/[\\/]rel[\\/][^\\/]+$/i, "")))];
+    const choices: [string, string][] = [
+      ...found.pulsar.map((p: string) => [p, `Pulsar pack ${p.split(/[\\/]/).slice(-3, -2)[0]}`] as [string, string]),
+      ...lecodeFolders.map((d) => [found.lecode.find((p: string) => p.startsWith(d))!, `LE-CODE distribution in ${d.split(/[\\/]/).slice(-2).join("/")}`] as [string, string]),
+    ];
+    if (!choices.length) {
+      toast.error("No mod with its own cups in this folder", { description: found.xml.length
+        ? `Riivolution XML found (${found.xml.map((p: string) => p.split(/[\\/]/).pop()).join(", ")}), but no Pulsar pack (a folder with Binaries/Config.pul) or LE-CODE distribution (rel/lecode-*.bin) in this folder.`
+        : "Choose the folder that holds the riivolution folder and the pack, or the game folder of an LE-CODE distribution." });
+      return;
+    }
+    let pick = choices[0][0];
+    if (choices.length > 1) {
+      const v = await dialogs.form({ title: "Which mod?", description: `${choices.length} mods with their own cups are in this folder.`, fields: [{ key: "mod", label: "Mod", type: "select", value: pick, options: choices }] });
+      if (!v) return;
+      pick = String(v.mod);
+    }
+    await useModPath(pick);
+  };
+  const useModPath = async (path: string) => {
     if (/\.pul$/i.test(path)) { setMods((m) => ({ ...m, pulsar: path })); await choose({ kind: "pulsar", path }); return; }
     // An LE-CODE distribution is read through its files folder (tracks, names and icons are there).
     const files = path.replace(/[\\/]rel[\\/][^\\/]+$/i, "");
@@ -86,7 +116,7 @@ export function CupsDialog({ initialFile, close }: { initialFile?: string; close
     if (lecode.length) setSource({ kind: "lecode", paths: lecode });
   };
   const loadPulsar = React.useCallback(() => pulsarCups((source as any).path), [(source as any).path]); // eslint-disable-line react-hooks/exhaustive-deps
-  const loadNew = React.useCallback(() => newPulsarCups((source as any).name, (source as any).folder), [(source as any).name, (source as any).folder]); // eslint-disable-line react-hooks/exhaustive-deps
+  const loadNew = React.useCallback(() => newPulsarCups((source as any).name, (source as any).folder).then((cups) => ({ ...cups, startVideos: !!(source as any).videos })), [(source as any).name, (source as any).folder, (source as any).videos]); // eslint-disable-line react-hooks/exhaustive-deps
   // The game's cups are fixed: a new cup goes into a mod with its own cups, an existing one or a new
   // Pulsar mod made here (the game's 8 cups stay first, the new cups follow).
   const newCup = async () => {
@@ -97,6 +127,7 @@ export function CupsDialog({ initialFile, close }: { initialFile?: string; close
       fields: [
         { key: "where", label: "Put the new cup in", type: "select", value: existing.length ? existing[0][0] : "new", options: [...existing, ["new", "A new cup pack"]] },
         { key: "name", label: "Name of the new mod (folder)", type: "text", value: "MyCups", visible: (v) => v.where === "new", hint: "Up to 14 letters, digits, - and _. This is also the name shown when you launch the pack." },
+        { key: "videos", label: "Menu videos (experimental)", type: "switch", value: false, visible: (v) => v.where === "new", hint: "Pulsar, the engine of the pack, turns off the videos of the cup and course selection. On: the editor changes the engine so they play, each original cup with its own video (PAL games only; no file is copied). Custom cups show the video of an original cup. It can be changed later in the pack's cups." },
       ],
       confirmLabel: "Continue",
     });
@@ -110,7 +141,7 @@ export function CupsDialog({ initialFile, close }: { initialFile?: string; close
     if (await api.exists(`${folder}\\${name}`)) { toast.error(`${name} already exists there`, { description: "Open it with Open a mod…, or choose another name." }); return; }
     const play = pulsarLaunchPaths(name, folder);
     if (await api.exists(play.xmlPath)) { toast.error("A Riivolution patch with this name already exists", { description: "Choose another name or destination." }); return; }
-    await choose({ kind: "new", name, folder });
+    await choose({ kind: "new", name, folder, videos: !!answer.videos });
   };
   // A rename opens the game text editor on that message (every language archive), then the names are read again.
   const renameInGame = async (id: number) => {
@@ -139,8 +170,46 @@ export function CupsDialog({ initialFile, close }: { initialFile?: string; close
     try { setArrangement((a) => fn(a)); } catch (e: any) { toast.warning(e.message); }
   };
   const changedSlots = SLOTS.filter((s) => isChanged(arrangement, s.id)).map((s) => s.id);
-  const changeCount = changedSlots.length + Object.keys(arrangement.cupNames).length;
-  const plan = planArrangement(arrangement, { moveMusic });
+  const changeCount = changedSlots.length + Object.keys(arrangement.cupNames).length + Object.keys(arrangement.cupIcons || {}).length;
+  // The icons as they will be: a picture chosen for a cup shows until the changes are applied or discarded.
+  const shownIcons = React.useMemo(() => ({ ...icons, ...Object.fromEntries(Object.entries(arrangement.cupIcons || {}).filter(([, v]) => !v.original).map(([c, v]) => [c, v.url])) }), [icons, arrangement.cupIcons]);
+  // The original icons can come back when the menu archives have their .bak copy (an icon was applied).
+  const [iconBackup, setIconBackup] = React.useState(false);
+  // Counts the applies, so what is read from the files is read again after each one.
+  const [applied, setApplied] = React.useState(0);
+  React.useEffect(() => {
+    const ui = editor.workspacePath("Scene", "UI");
+    setIconBackup(false);
+    if (ui) void api.exists(`${ui}\\MenuSingle.szs.bak`).then(setIconBackup, () => {});
+  }, [workspace, applied]);
+  // Music streams that differ from their .bak copy: other music is in them (also when it was put
+  // there by an earlier version or by hand), so their original can come back.
+  const [bakDiffers, setBakDiffers] = React.useState<Record<string, true>>({});
+  React.useEffect(() => {
+    const strm = editor.workspacePath("sound", "strm");
+    setBakDiffers({});
+    if (!strm) return;
+    void api.listDirSizes(strm, ["brstm", "bak"]).then(({ files, sizes }: any) => {
+      const out: Record<string, true> = {};
+      for (const f of files as string[]) {
+        const m = /^(.+)_[nf]\.brstm\.bak$/i.exec(f);
+        const now = f.slice(0, -4);
+        if (m && (files as string[]).includes(now) && sizes[now] !== sizes[f]) out[m[1]] = true;
+      }
+      setBakDiffers(out);
+    }, () => {});
+  }, [workspace, applied]);
+  // Streams holding other music than their own: those an apply recorded, and those unlike their .bak.
+  const replacedMusic = React.useMemo(() => ({ ...bakDiffers, ...savedMusic }), [bakDiffers, savedMusic]);
+  const originalIcon = (c: number) => update((a) => ({ ...a, cupIcons: { ...a.cupIcons, [c]: { path: "", url: "", original: true } } }));
+  const chooseIcon = async (c: number) => {
+    const f = await api.openFile([{ name: "Picture", extensions: ["png", "jpg", "jpeg", "webp", "bmp", "gif"] }], `Icon for ${cupName(c)}`);
+    if (!f?.path) return;
+    const url = URL.createObjectURL(new Blob([f.data]));
+    update((a) => ({ ...a, cupIcons: { ...a.cupIcons, [c]: { path: f.path, url } } }));
+  };
+  const resetIcon = (c: number) => update((a) => { const cupIcons = { ...a.cupIcons }; delete cupIcons[c]; return { ...a, cupIcons }; });
+  const plan = planArrangement(arrangement, { moveMusic, saved: replacedMusic });
   const fileCheck = (id: number) => { const s = arrangement.content[id]; return s.type === "file" ? checks[`${s.path}|${slotById(id).battle}`] : undefined; };
   const blocked = changedSlots.some((id) => { const c = fileCheck(id); return arrangement.content[id].type === "file" && (!c || "loading" in c || "failed" in c || c.errors.length > 0); });
 
@@ -211,7 +280,7 @@ export function CupsDialog({ initialFile, close }: { initialFile?: string; close
     const done = await editor.withBusy("Preparing the changes…", async () => {
       const progress = (text: string) => { editor.busy = text; editor.bump("ui"); };
       try {
-        const { writes, notes, plan: writtenPlan, musicApplied } = await buildWrites(arrangement, { moveMusic, moveVideos, progress });
+        const { writes, notes, plan: writtenPlan, musicApplied } = await buildWrites(arrangement, { moveMusic, moveVideos, saved: replacedMusic, progress });
         if (!writes.length) { toast.info("Nothing to write: the files already match."); return false; }
         const open = editor.doc.filePath?.toLowerCase();
         const touchesOpen = !!open && writes.some((w) => w.path.toLowerCase() === open);
@@ -229,8 +298,10 @@ export function CupsDialog({ initialFile, close }: { initialFile?: string; close
     });
     if (done) {
       setArrangement(initialArrangement());
+      setApplied((n) => n + 1);
       setChecks({});
       forgetPreviews();
+      forgetCupIcons();
       loadNames();
       void editor.refreshTrackFiles();
     }
@@ -264,6 +335,98 @@ export function CupsDialog({ initialFile, close }: { initialFile?: string; close
   const raceCups = CUPS.map((c, i) => ({ ...c, i })).filter((c) => !c.battle), battleCups = CUPS.map((c, i) => ({ ...c, i })).filter((c) => c.battle);
   const current = CUPS[cup];
 
+  // One cup of the game, with its tracks: shown for the game's cups, and inside a mod's view for
+  // the original cups (they are the game's own tracks: their changes are applied to the game files).
+  // Music and video switches, Discard and Apply of the game's cups.
+  const gameFooter = () => (
+    <DialogFooter className="shrink-0 items-center gap-3 border-t pt-3 sm:justify-between">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+        <label className="flex cursor-pointer items-center gap-2 text-xs">
+          <Switch checked={moveMusic} onCheckedChange={setMoveMusic} />
+          <span>Music moves with the track <span className="block text-[11px] text-muted-foreground">Off: each position keeps its own music.</span></span>
+        </label>
+        <label className="flex cursor-pointer items-center gap-2 text-xs">
+          <Switch checked={moveVideos} onCheckedChange={setMoveVideos} />
+          <span>Preview videos follow the tracks <span className="block text-[11px] text-muted-foreground">The cup's video is encoded again (a few seconds per cup).</span></span>
+        </label>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground">{changeCount ? `${changeCount} change${changeCount === 1 ? "" : "s"} not applied yet` : "No changes"}</span>
+        <Button variant="outline" disabled={!changeCount} onClick={() => { setArrangement(initialArrangement()); setChecks({}); }}><RotateCcw /> Discard</Button>
+        <Hint title="Apply changes" text={blocked ? "A replacement track has problems the game cannot handle: see the red messages." : "Shows a summary, backs up the files and writes the new cups into the game folder."}>
+          <span className="inline-flex"><Button disabled={!changeCount || blocked} onClick={() => void apply()}>Apply changes…</Button></span>
+        </Hint>
+      </div>
+    </DialogFooter>
+  );
+  // An original cup in a mod's view: the same panel and Apply as in the game's cups.
+  // Its tracks are the game's own files, loaded by the pack as they are: they are written to the
+  // game folder with this panel's Apply, separately from the pack's cups.
+  const originalCupPanel = (c: number, go: (c: number) => void, videosOff?: string) => <>
+    {gameCupPanel(c, go, 7, true, videosOff)}
+    {gameFooter()}
+  </>;
+  const gameCupPanel = (c: number, go: (c: number) => void, last = CUPS.length - 1, inMod = false, videosOff?: string) => {
+    const cur = CUPS[c];
+    return (
+    <div className={cn("flex min-h-0 flex-1 flex-col", inMod ? "gap-2" : "gap-3")}>
+      <div className="flex shrink-0 items-center gap-2">
+        <Hint title="Previous cup" text="Show the cup before this one."><Button size="icon" variant="outline" aria-label="Previous cup" disabled={c === 0} onClick={() => { go(c - 1); }}><ChevronLeft /></Button></Hint>
+        <div className="min-w-0 flex-1 text-center">
+          {renaming === "cup" ? (
+            <NameInput value={cupName(c)} onDone={(v) => { setRenaming(null); if (v !== null) update((a) => { const cupNames = { ...a.cupNames }; if (v === (names?.text(cur.nameId) ?? cur.name)) delete cupNames[c]; else cupNames[c] = v; return { ...a, cupNames }; }); }} />
+          ) : (
+            <button type="button" className="group inline-flex cursor-pointer items-center gap-1.5 rounded px-2 py-0.5 text-[15px] font-semibold hover:bg-accent" onClick={() => void renameInGame(cur.nameId).then(() => update((a) => { const cupNames = { ...a.cupNames }; delete cupNames[c]; return { ...a, cupNames }; }))} title="Rename this cup in the game text editor">
+              <CupIcon cup={c} icons={shownIcons} className="size-7" /> {cupName(c)} <Pencil className="size-3.5 text-muted-foreground opacity-0 group-hover:opacity-100" />
+            </button>
+          )}
+          {inMod
+            ? <Hint title="Original game cup" text="Its tracks are the game's own files, loaded by the pack as they are. Changes here are written to the game folder with the Apply changes… below, separately from the pack's cups."><div className="text-[11px] text-muted-foreground">Original game cup {c + 1} of 8 · applied to the game folder</div></Hint>
+            : <div className="text-[11px] text-muted-foreground">{cur.battle ? `Battle stages ${c - 7} of 2` : `Cup ${c + 1} of 8`} · {cur.slots.length} {cur.battle ? "arenas" : "tracks"}{loadingNames ? " · reading names…" : names ? ` · names in language ${names.language}` : ""}</div>}
+        </div>
+        <Hint title="Next cup" text="Show the cup after this one."><Button size="icon" variant="outline" aria-label="Next cup" disabled={c === last} onClick={() => { go(c + 1); }}><ChevronRight /></Button></Hint>
+      </div>
+      {!cur.battle && <div className="flex shrink-0 flex-wrap items-center justify-center gap-1">
+        <Hint title="Change cup icon" text="Use a picture as this cup's icon in the menus, the race, the awards and the licence screen. It is written when you apply."><Button size="sm" variant="ghost" onClick={() => void chooseIcon(c)}><ImagePlus /> Change cup icon</Button></Hint>
+        {arrangement.cupIcons?.[c] && <Hint title="Keep the current icon" text={arrangement.cupIcons[c].original ? "Do not put the original icon back." : "Forget the picture chosen for this cup."}><Button size="sm" variant="ghost" onClick={() => resetIcon(c)}><RotateCcw /> Keep the current icon</Button></Hint>}
+        {iconBackup && !arrangement.cupIcons?.[c] && <Hint title="Original icon" text="Put the game's own icon of this cup back when you apply (from the .bak copies of the menu archives)."><Button size="sm" variant="ghost" onClick={() => originalIcon(c)}><Undo2 /> Original icon</Button></Hint>}
+        {arrangement.cupIcons?.[c]?.original && <span className="text-[11px] text-muted-foreground">The original icon comes back when you apply.</span>}
+      </div>}
+
+      {pendingFile && (
+        <div className="flex shrink-0 items-center gap-2 rounded-md border px-3 py-2 text-xs">
+          <FileUp className="size-4 shrink-0" />
+          <span className="min-w-0 flex-1">Choose the position for <b>{pendingFile.split(/[\\/]/).pop()}</b>: press <b>Put here</b> on the track it should replace.</span>
+          <Button size="sm" variant="ghost" onClick={() => setPendingFile("")}>Cancel</Button>
+        </div>
+      )}
+
+      <div className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto pr-1", inMod ? "gap-1.5" : "gap-2")}>
+        {cur.slots.map((id: number, position: number) => (
+          <SlotRow key={id} id={id} position={position} arrangement={arrangement} check={fileCheck(id)} name={shownName(id)} gameName={gameName}
+            preview={previewOf(id)} playPreview={ed.settings.trackVideoPreviews} videosOff={videosOff} noVideo={arrangement.noVideo?.[id] || false} onNoVideo={(off) => update((a) => setNoVideo(a, id, off))} onOpen={!pendingFile && renaming !== id ? () => void openTrack(id) : null}
+            music={plannedMusic(plan, id, savedMusic)} musicReplaced={!!replacedMusic[slotById(id).music]} applied={applied} musicKept={plan.musicKept.some((m: any) => m.slots.includes(id))}
+            musicShared={(() => { const m = plan.musicShared.find((m: any) => m.slots.includes(id)); return m ? m.slots.filter((s: number) => s !== id).map((s: number) => slotById(s).label).join(" and ") : null; })()}
+            onMusic={(choice) => update((a) => setSlotMusic(a, id, choice))} onMusicFile={() => void chooseMusicFile(id)}
+            renaming={renaming === id} setRenaming={(on) => setRenaming(on ? id : null)} pending={!!pendingFile}
+            onRenameRequest={() => {
+              const source = arrangement.content[id];
+              if (source.type !== "slot") { setRenaming(id); return; }
+              const nameId = source.id >= 0x20 ? 0x24b8 + source.id - 0x20 : 0x2454 + source.id;
+              void renameInGame(nameId).then(() => update((a) => { const n = { ...a.names }; delete n[id]; return { ...a, names: n }; }));
+            }}
+            onMove={(dir) => update((a) => moveSlot(a, id, dir))}
+            onSwap={(other) => update((a) => swapSlots(a, id, other))}
+            onFile={() => void chooseFile(id)} onOpenTrack={() => void useOpenTrack(id)} onNewTrack={() => void newTrack(id)} onPlace={() => void placePending(id)}
+            onRename={(v) => update((a) => { const n = { ...a.names }; const source = a.content[id]; const original = source.type === "slot" ? gameName(source.id) : null; if (v === original) delete n[id]; else n[id] = v; return { ...a, names: n }; })}
+            onReset={() => update((a) => resetSlot(a, id))}
+            slotName={(other) => `${cupName(slotPlace(other).cup)} ${slotPlace(other).position + 1} · ${shownName(other)}`} />
+        ))}
+      </div>
+    </div>
+    );
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex shrink-0 items-start justify-between gap-3">
@@ -296,7 +459,13 @@ export function CupsDialog({ initialFile, close }: { initialFile?: string; close
               {mods.lecode.length > 0 && <SelectItem value="lecode" title={mods.lecode.join(", ")}>LE-CODE distribution</SelectItem>}
             </SelectContent>
           </Select>
-          <Hint title="Open a mod" text="A mod that adds its own cups: the Config.pul in the Binaries folder of a Pulsar pack (such as Insane Kart Wii), or a lecode-*.bin in the rel folder of an LE-CODE distribution. Mods found through the game folder or its Riivolution XML are listed here by themselves."><Button size="sm" variant="ghost" onClick={() => void openMod()}><FolderOpen /> Open a mod…</Button></Hint>
+          <DropdownMenu>
+            <Hint wrap title="Open a mod" text="A mod that adds its own cups: a Pulsar pack (such as Insane Kart Wii) or an LE-CODE distribution. Choose the folder it is in, or its Config.pul / lecode-*.bin. Mods found through the game folder or its Riivolution XML are listed here by themselves."><DropdownMenuTrigger asChild><Button size="sm" variant="ghost"><FolderOpen /> Open a mod…</Button></DropdownMenuTrigger></Hint>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onSelect={() => void openModFolder()}><FolderOpen /> Folder with the mod…</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void openMod()}><FileUp /> Config.pul or lecode-*.bin…</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Hint title="Beta" text="The cups of mods (Pulsar packs and LE-CODE distributions) and the creation of new cups are in beta: keep the backup and test the mod in Dolphin before sharing it."><Badge variant="outline">Mod cups: beta</Badge></Hint>
           <Hint title="Background videos" text="Play the tracks’ video previews behind their rows. Turn off to reduce background activity. Your choice is remembered.">
             <label className="ml-auto flex cursor-pointer items-center gap-2 text-xs">
@@ -307,9 +476,9 @@ export function CupsDialog({ initialFile, close }: { initialFile?: string; close
         </div>
       )}
 
-      {view === "cups" && source.kind === "pulsar" ? <ModCupsView key={source.path} load={loadPulsar} onChanges={setModChanges} />
-        : view === "cups" && source.kind === "lecode" ? <ModCupsView key={source.paths.join("|")} load={loadLECode} onChanges={setModChanges} />
-        : view === "cups" && source.kind === "new" ? <ModCupsView key={`new|${source.folder}|${source.name}`} load={loadNew} onChanges={setModChanges}
+      {view === "cups" && source.kind === "pulsar" ? <ModCupsView key={source.path} load={loadPulsar} onChanges={setModChanges} originalCupPanel={originalCupPanel} />
+        : view === "cups" && source.kind === "lecode" ? <ModCupsView key={source.paths.join("|")} load={loadLECode} onChanges={setModChanges} originalCupPanel={originalCupPanel} />
+        : view === "cups" && source.kind === "new" ? <ModCupsView key={`new|${source.folder}|${source.name}`} load={loadNew} onChanges={setModChanges} originalCupPanel={originalCupPanel}
           onApplied={() => {
             const path = `${source.folder}\\${source.name}\\Binaries\\Config.pul`;
             const play = pulsarLaunchPaths(source.name, source.folder);
@@ -336,11 +505,11 @@ export function CupsDialog({ initialFile, close }: { initialFile?: string; close
               <React.Fragment key={title}>
                 <div className="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground first:pt-0">{title}</div>
                 {cups.map((c: any) => {
-                  const n = c.slots.filter((s: number) => changedSlots.includes(s)).length + (arrangement.cupNames[c.i] !== undefined ? 1 : 0);
+                  const n = c.slots.filter((s: number) => changedSlots.includes(s)).length + (arrangement.cupNames[c.i] !== undefined ? 1 : 0) + (arrangement.cupIcons?.[c.i] ? 1 : 0);
                   return (
                     <button key={c.i} type="button" aria-pressed={!list && cup === c.i} onClick={() => { setCup(c.i); setList(null); setRenaming(null); }}
                       className={cn("flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs", !list && cup === c.i ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground")}>
-                      <CupIcon cup={c.i} icons={icons} />
+                      <CupIcon cup={c.i} icons={shownIcons} />
                       <span className="min-w-0 flex-1 truncate">{cupName(c.i)}</span>
                       {n > 0 && <span className="shrink-0 text-[10px] tabular-nums text-foreground" title={`${n} change${n === 1 ? "" : "s"}`}>{n} changed</span>}
                     </button>
@@ -365,79 +534,11 @@ export function CupsDialog({ initialFile, close }: { initialFile?: string; close
               </div>
               <TrackList section={list} onOpen={(path) => void openFile(path)} />
             </div>
-          ) : (
-          <div className="flex min-h-0 flex-col gap-3">
-            <div className="flex shrink-0 items-center gap-2">
-              <Hint title="Previous cup" text="Show the cup before this one."><Button size="icon" variant="outline" aria-label="Previous cup" disabled={cup === 0} onClick={() => { setCup(cup - 1); setRenaming(null); }}><ChevronLeft /></Button></Hint>
-              <div className="min-w-0 flex-1 text-center">
-                {renaming === "cup" ? (
-                  <NameInput value={cupName(cup)} onDone={(v) => { setRenaming(null); if (v !== null) update((a) => { const cupNames = { ...a.cupNames }; if (v === (names?.text(current.nameId) ?? current.name)) delete cupNames[cup]; else cupNames[cup] = v; return { ...a, cupNames }; }); }} />
-                ) : (
-                  <button type="button" className="group inline-flex cursor-pointer items-center gap-1.5 rounded px-2 py-0.5 text-[15px] font-semibold hover:bg-accent" onClick={() => void renameInGame(current.nameId).then(() => update((a) => { const cupNames = { ...a.cupNames }; delete cupNames[cup]; return { ...a, cupNames }; }))} title="Rename this cup in the game text editor">
-                    <CupIcon cup={cup} icons={icons} className="size-7" /> {cupName(cup)} <Pencil className="size-3.5 text-muted-foreground opacity-0 group-hover:opacity-100" />
-                  </button>
-                )}
-                <div className="text-[11px] text-muted-foreground">{current.battle ? `Battle stages ${cup - 7} of 2` : `Cup ${cup + 1} of 8`} · {current.slots.length} {current.battle ? "arenas" : "tracks"}{loadingNames ? " · reading names…" : names ? ` · names in language ${names.language}` : ""}</div>
-              </div>
-              <Hint title="Next cup" text="Show the cup after this one."><Button size="icon" variant="outline" aria-label="Next cup" disabled={cup === CUPS.length - 1} onClick={() => { setCup(cup + 1); setRenaming(null); }}><ChevronRight /></Button></Hint>
-            </div>
-
-            {pendingFile && (
-              <div className="flex shrink-0 items-center gap-2 rounded-md border px-3 py-2 text-xs">
-                <FileUp className="size-4 shrink-0" />
-                <span className="min-w-0 flex-1">Choose the position for <b>{pendingFile.split(/[\\/]/).pop()}</b>: press <b>Put here</b> on the track it should replace.</span>
-                <Button size="sm" variant="ghost" onClick={() => setPendingFile("")}>Cancel</Button>
-              </div>
-            )}
-
-            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
-              {current.slots.map((id: number, position: number) => (
-                <SlotRow key={id} id={id} position={position} arrangement={arrangement} check={fileCheck(id)} name={shownName(id)} gameName={gameName}
-                  preview={previewOf(id)} playPreview={ed.settings.trackVideoPreviews} onOpen={!pendingFile && renaming !== id ? () => void openTrack(id) : null}
-                  music={plannedMusic(plan, id, savedMusic)} musicKept={plan.musicKept.some((m: any) => m.slots.includes(id))}
-                  musicShared={(() => { const m = plan.musicShared.find((m: any) => m.slots.includes(id)); return m ? m.slots.filter((s: number) => s !== id).map((s: number) => slotById(s).label).join(" and ") : null; })()}
-                  onMusic={(choice) => update((a) => setSlotMusic(a, id, choice))} onMusicFile={() => void chooseMusicFile(id)}
-                  renaming={renaming === id} setRenaming={(on) => setRenaming(on ? id : null)} pending={!!pendingFile}
-                  onRenameRequest={() => {
-                    const source = arrangement.content[id];
-                    if (source.type !== "slot") { setRenaming(id); return; }
-                    const nameId = source.id >= 0x20 ? 0x24b8 + source.id - 0x20 : 0x2454 + source.id;
-                    void renameInGame(nameId).then(() => update((a) => { const n = { ...a.names }; delete n[id]; return { ...a, names: n }; }));
-                  }}
-                  onMove={(dir) => update((a) => moveSlot(a, id, dir))}
-                  onSwap={(other) => update((a) => swapSlots(a, id, other))}
-                  onFile={() => void chooseFile(id)} onOpenTrack={() => void useOpenTrack(id)} onNewTrack={() => void newTrack(id)} onPlace={() => void placePending(id)}
-                  onRename={(v) => update((a) => { const n = { ...a.names }; const source = a.content[id]; const original = source.type === "slot" ? gameName(source.id) : null; if (v === original) delete n[id]; else n[id] = v; return { ...a, names: n }; })}
-                  onReset={() => update((a) => resetSlot(a, id))}
-                  slotName={(other) => `${cupName(slotPlace(other).cup)} ${slotPlace(other).position + 1} · ${shownName(other)}`} />
-              ))}
-            </div>
-          </div>
-          )}
+          ) : gameCupPanel(cup, (c) => { setCup(c); setRenaming(null); })}
         </div>
       )}
 
-      {workspace && view === "cups" && source.kind === "game" && (
-        <DialogFooter className="shrink-0 items-center gap-3 border-t pt-3 sm:justify-between">
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-            <label className="flex cursor-pointer items-center gap-2 text-xs">
-              <Switch checked={moveMusic} onCheckedChange={setMoveMusic} />
-              <span>Music moves with the track <span className="block text-[11px] text-muted-foreground">Off: each position keeps its own music.</span></span>
-            </label>
-            <label className="flex cursor-pointer items-center gap-2 text-xs">
-              <Switch checked={moveVideos} onCheckedChange={setMoveVideos} />
-              <span>Preview videos follow the tracks <span className="block text-[11px] text-muted-foreground">The cup's video is encoded again (a few seconds per cup).</span></span>
-            </label>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">{changeCount ? `${changeCount} change${changeCount === 1 ? "" : "s"} not applied yet` : "No changes"}</span>
-            <Button variant="outline" disabled={!changeCount} onClick={() => { setArrangement(initialArrangement()); setChecks({}); }}><RotateCcw /> Discard</Button>
-            <Hint title="Apply changes" text={blocked ? "A replacement track has problems the game cannot handle: see the red messages." : "Shows a summary, backs up the files and writes the new cups into the game folder."}>
-              <span className="inline-flex"><Button disabled={!changeCount || blocked} onClick={() => void apply()}>Apply changes…</Button></span>
-            </Hint>
-          </div>
-        </DialogFooter>
-      )}
+      {workspace && view === "cups" && source.kind === "game" && gameFooter()}
     </div>
   );
 }
@@ -450,6 +551,7 @@ function HowItWorks({ onClose }: { onClose: () => void }) {
         <p className="m-0">Every cup position is a fixed <b>slot</b> of the game: Mushroom Cup 1 always loads <code>Race/Course/beginner_course.szs</code>, Flower Cup 2 always loads <code>shopping_course.szs</code>, and so on. To put Coconut Mall where Luigi Circuit was, the two archives change places, and so do their names in the menus.</p>
         <p className="m-0"><b>Move a track:</b> <ArrowUp className="inline size-3" /> <ArrowDown className="inline size-3" /> move it one place up or down (into the next cup at the ends), <ArrowLeft className="inline size-3" /> <ArrowRight className="inline size-3" /> move it to the same place of the previous or next cup. <b>Swap with</b> exchanges it directly with any other track. The track that was there takes its old place.</p>
         <p className="m-0"><b>Replace a track:</b> <b>Replace</b> puts a track archive from disk (a custom track, or one made with <i>Create new track</i>) into the slot, or the track open in the editor. It is checked first: it needs course.kmp, course.kcl, course_model.brres and vrcorn_model.brres, and checkpoints in a race slot.</p>
+        <p className="m-0"><b>Cup icons:</b> <b>Change cup icon</b> under the cup's name uses a picture as its icon, fitted in the game's 128-pixel icon (and the small one of the licence screen) in every menu archive of Scene/UI when you apply.</p>
         <p className="m-0"><b>Names and music:</b> names follow the track in every language; a name you type is used in every language. Music follows the track too (unless you turn it off below), except where two positions share one music file (Luigi Circuit and Mario Circuit): there the music stays with the position.</p>
         <p className="m-0"><b>Change the music:</b> click the <Music className="inline size-3" /> music of a track to give it the <b>music of another track</b> or an <b>audio file</b> of yours (WAV, MP3, Ogg, FLAC, BRSTM…), converted to the game's format when you apply, with its loop, volume and a faster final lap. The chosen music moves with the track.</p>
         <p className="m-0"><b>Apply</b> writes the archives (and the <code>_d</code> multiplayer copies), the music and the game text. Its confirmation always has a <b>Make a backup first?</b> checkbox. With it checked, every affected file is copied before writing; <b>Backups</b> can put the files back. Unchecked, no backup or .bak files are created for that operation.</p>
@@ -472,11 +574,15 @@ function NameInput({ value, onDone }: { value: string; onDone: (v: string | null
   );
 }
 
-function SlotRow({ id, position, arrangement, check, name, gameName, music, musicKept, musicShared, onMusic, onMusicFile, renaming, setRenaming, pending, onMove, onSwap, onFile, onOpenTrack, onNewTrack, onPlace, onRename, onReset, slotName, preview, playPreview, onOpen, onRenameRequest }: {
+function SlotRow({ id, position, arrangement, check, name, gameName, music, musicReplaced, applied, musicKept, musicShared, onMusic, onMusicFile, renaming, setRenaming, pending, onMove, onSwap, onFile, onOpenTrack, onNewTrack, onPlace, onRename, onReset, slotName, preview, playPreview, videosOff, noVideo, onNoVideo, onOpen, onRenameRequest }: {
   id: number; position: number; arrangement: Arrangement; check?: Check; name: string; gameName: (id: number) => string;
-  music: { stream: string; from: string | null; file: any }; musicKept: boolean; musicShared: string | null; onMusic: (choice: MusicChoice | null) => void; onMusicFile: () => void;
+  music: { stream: string; from: string | null; file: any }; musicReplaced: boolean; applied: number; musicKept: boolean; musicShared: string | null; onMusic: (choice: MusicChoice | null) => void; onMusicFile: () => void;
   preview: { path: string; name: string; part: string; label: string; rect: { x: number; y: number; width: number; height: number } } | null; onOpen: (() => void) | null; onRenameRequest: () => void;
   playPreview: boolean;
+  // Why the preview video is off (a Pulsar pack without menu videos): no background, no editing.
+  videosOff?: string;
+  // This position's part of the cup's preview video becomes black when applied.
+  noVideo: boolean | "original"; onNoVideo: (off: boolean | "original") => void;
   renaming: boolean; setRenaming: (on: boolean) => void; pending: boolean;
   onMove: (dir: number | string) => void; onSwap: (other: number) => void; onFile: () => void; onOpenTrack: () => void; onNewTrack: () => void; onPlace: () => void;
   onRename: (v: string) => void; onReset: () => void; slotName: (id: number) => string;
@@ -488,6 +594,9 @@ function SlotRow({ id, position, arrangement, check, name, gameName, music, musi
   const musicChoice = arrangement.music[id];
   const musicTracks = music.file ? "" : SLOTS.filter((s) => s.music === music.from).map((s) => s.label).join(" / ");
   const [previewVersion, setPreviewVersion] = React.useState(0);
+  // The cup's video has a .bak copy (an apply changed it): its original part can come back.
+  const [videoBackup, setVideoBackup] = React.useState(false);
+  React.useEffect(() => { setVideoBackup(false); if (preview?.path) void api.exists(`${preview.path}.bak`).then(setVideoBackup, () => {}); }, [preview?.path, previewVersion, applied]);
   const openPreview = async () => {
     if (!preview) return;
     await dialogs.open("thp", { initialPath: preview.path, initialPart: preview.part });
@@ -509,7 +618,7 @@ function SlotRow({ id, position, arrangement, check, name, gameName, music, musi
         const target = e.target as HTMLElement;
         if (onOpen && e.currentTarget.contains(target) && !target.closest("button, input, a, [role=menuitem], form")) onOpen();
       }}>
-      {preview && playPreview && <div className="pointer-events-none absolute inset-0 bg-card">
+      {preview && playPreview && !videosOff && !noVideo && <div className="pointer-events-none absolute inset-0 bg-card">
         {/* Fade the video itself: separately clipped overlays leave bright subpixel seams. */}
         <div className="absolute inset-0" style={{ maskImage: "linear-gradient(to right, transparent, rgb(0 0 0 / 20%) 50%, rgb(0 0 0 / 70%))" }}>
           <ThpPart key={previewVersion} path={preview.path} rect={preview.rect} className="absolute inset-0 size-full" />
@@ -569,7 +678,7 @@ function SlotRow({ id, position, arrangement, check, name, gameName, music, musi
               <span className="inline-flex min-w-0 flex-1">
                 <DropdownMenuTrigger asChild>
                   <button type="button" aria-label="Music of this position" className="inline-flex w-max max-w-full min-w-0 cursor-pointer items-center gap-1 rounded px-1 text-left hover:bg-accent hover:text-foreground">
-                    <Music className="size-3 shrink-0" /><span className="min-w-0 truncate">{music.file ? `${music.file.label} (audio file)` : `${music.from}${musicTracks ? ` (${musicTracks})` : ""}`}{musicKept && " (stays: shared file)"}</span><ChevronDown className="size-3 shrink-0" />
+                    {music.file?.silent ? <VolumeX className="size-3 shrink-0" /> : <Music className="size-3 shrink-0" />}<span className="min-w-0 truncate">{music.file?.silent ? "No music" : music.file ? `${music.file.label} (audio file)` : `${music.from}${musicTracks ? ` (${musicTracks})` : ""}`}{musicKept && " (stays: shared file)"}</span><ChevronDown className="size-3 shrink-0" />
                   </button>
                 </DropdownMenuTrigger>
               </span>
@@ -577,6 +686,7 @@ function SlotRow({ id, position, arrangement, check, name, gameName, music, musi
             <DropdownMenuContent align="start" className="w-72">
               <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground">Music file of this position: {slot.music}</DropdownMenuLabel>
               <DropdownMenuItem onSelect={onMusicFile}><FileAudio /> Audio file (WAV, MP3, Ogg, FLAC, BRSTM…)…</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onMusic(NO_MUSIC)}><VolumeX /> No music</DropdownMenuItem>
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger><Music /> Music of another track</DropdownMenuSubTrigger>
                 <DropdownMenuSubContent className="max-h-[60vh] w-72 overflow-y-auto">
@@ -592,21 +702,41 @@ function SlotRow({ id, position, arrangement, check, name, gameName, music, musi
                   ))}
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
-              {musicChoice && <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => onMusic(null)}><RotateCcw /> Music that goes with the track</DropdownMenuItem>
-              </>}
+              {(musicChoice || musicReplaced) && <DropdownMenuSeparator />}
+              {musicChoice && <DropdownMenuItem onSelect={() => onMusic(null)}><RotateCcw /> Music that goes with the track</DropdownMenuItem>}
+              {musicReplaced && !(musicChoice?.type === "slot" && slotById(musicChoice.id).music === slot.music) && <DropdownMenuItem onSelect={() => onMusic({ type: "slot", id })}><RotateCcw /> Original music of this position ({slot.music})</DropdownMenuItem>}
             </DropdownMenuContent>
           </DropdownMenu>
           {musicChoice && <Badge variant="outline" className="h-4 px-1 text-[10px]">music changed</Badge>}
         </div>
         {musicShared && <div className="mt-1 flex items-start gap-1.5 text-[11px] text-warning"><TriangleAlert className="mt-px size-3 shrink-0" /> {slot.music} is also the music of {musicShared}: it plays this music too.</div>}
-        {preview && <div className="flex min-w-0">
-          <Hint side="bottom" hoverable={false} title="Track preview video" text={`Open thp/${preview.name} in the preview video editor, with ${preview.label}'s part selected. Each cup shares one THP file; you can replace just this track's preview with a picture or video.`}>
-            <button type="button" aria-label="Track preview video" onClick={() => void openPreview()} className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1 rounded px-1 text-left hover:bg-accent hover:text-foreground">
-              <Clapperboard className="size-3 shrink-0" /><span className="min-w-0 truncate">{preview.name} ({preview.label})</span><Pencil className="size-3 shrink-0" />
-            </button>
-          </Hint>
+        {preview && <div className="flex min-w-0 items-center gap-2">
+          {videosOff ? (
+            <Hint side="bottom" hoverable={false} title="Track preview video" text={videosOff}>
+              <button type="button" aria-label="Track preview video" aria-disabled className="inline-flex min-w-0 max-w-full cursor-not-allowed items-center gap-1 rounded px-1 text-left opacity-50">
+                <Clapperboard className="size-3 shrink-0" /><span className="min-w-0 truncate">{preview.name} ({preview.label})</span><ChevronDown className="size-3 shrink-0" />
+              </button>
+            </Hint>
+          ) : (
+            <DropdownMenu>
+              <Hint side="bottom" hoverable={false} title="Track preview video" text={noVideo === "original" ? "This position's part of the cup's preview video gets its original back when you apply." : noVideo ? "This position's part of the cup's preview video becomes black when you apply." : `thp/${preview.name}, ${preview.label}'s part. Each cup shares one THP file: edit just this track's preview in the preview video editor, or remove it.`}>
+                <span className="inline-flex min-w-0">
+                  <DropdownMenuTrigger asChild>
+                    <button type="button" aria-label="Track preview video" className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1 rounded px-1 text-left hover:bg-accent hover:text-foreground">
+                      {noVideo === true ? <VideoOff className="size-3 shrink-0" /> : <Clapperboard className="size-3 shrink-0" />}<span className="min-w-0 truncate">{noVideo === true ? "No preview video" : `${preview.name} (${preview.label}${noVideo === "original" ? ", original" : ""})`}</span><ChevronDown className="size-3 shrink-0" />
+                    </button>
+                  </DropdownMenuTrigger>
+                </span>
+              </Hint>
+              <DropdownMenuContent align="start">
+                <DropdownMenuItem disabled={!!noVideo} onSelect={() => void openPreview()}><Pencil /> Edit in the preview video editor…</DropdownMenuItem>
+                {noVideo !== true && <DropdownMenuItem onSelect={() => onNoVideo(true)}><VideoOff /> No preview video</DropdownMenuItem>}
+                {videoBackup && noVideo !== "original" && <DropdownMenuItem onSelect={() => onNoVideo("original")}><Undo2 /> Original preview video</DropdownMenuItem>}
+                {noVideo && <DropdownMenuItem onSelect={() => onNoVideo(false)}><RotateCcw /> Keep the preview video as it is</DropdownMenuItem>}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          {noVideo && <Badge variant="outline" className="h-4 px-1 text-[10px]">{noVideo === "original" ? "original video" : "video removed"}</Badge>}
         </div>}
       </div>
     </div>

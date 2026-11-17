@@ -296,3 +296,11 @@ export function setBRSARSoundProperties(data, index, patch) {
   }
   return out;
 }
+
+// The instrument bank a sequenced sound (type 1) plays its notes with, or null.
+export function soundBank(archive, index) {
+  const sound = archive.sounds[index];
+  if (!sound || sound.type !== 1) return null;
+  const r = archive.r, base = r.u32(0x18) + 8, info = base + r.u32(sound.entry + 0x18 + 4);
+  return archive.banks[r.u32(info + 4)] ?? null;
+}

@@ -1,6 +1,7 @@
 import * as React from "react";
 import {
   ArrowDownToLine, ArrowRight, BrickWall, ChevronRight, ClipboardPaste, Compass, Copy, Crosshair, ImagePlus, Lightbulb, MoveHorizontal, Paintbrush, Plus, Settings2, StretchHorizontal, Trash2, X,
+  Volume2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +16,10 @@ import { AREA_TYPE_HELP, KIND_HELP, fieldHelp } from "../../../js/data/help.js";
 import { settingDisplayValue, settingGuidance, settingStoredValue } from "../../../js/data/object-documentation.js";
 import { DocumentationStatus } from "./ObjectDocumentationView";
 import { routeForObject, routeRequired } from "../../../js/data/route-objects.js";
+import { ambientSoundOf } from "../../../js/data/ambient-sounds.js";
 import { findFile } from "../../../js/formats/u8.js";
+import { SLOTS, slotPlace } from "../../../js/data/cups.js";
+import { THP_LAYOUTS } from "../../../js/formats/thp.js";
 import { lookSummary, LOOKS } from "../../../js/editor/track-looks.js";
 import { useEditor } from "../hooks";
 import { editor, hex, KIND_LABEL, SECTION_LABEL } from "../editor";
@@ -278,6 +282,8 @@ export function Inspector() {
         <Hint title="Focus" text="Move the camera to the selection." shortcut="F"><Button size="sm" variant="secondary" onClick={() => ed.viewport.focusSelection()}><Crosshair /> Focus</Button></Hint>
         {infos.some((info: any) => info.kind === "GOBJ") && <Hint title="Generate collision" text={infos.length > 1 ? "Add static collision for the models of the selected objects to the course KCL. It will not move with them." : "Add a static copy of this object's model to the course KCL. It will not move with the object."}><Button size="sm" variant="secondary" disabled={!d.szs} onClick={() => ed.generateCollisionForSelection()}><BrickWall /> Generate collision…</Button></Hint>}
         {infos.some((info: any) => info.kind === "GOBJ") && <RemoveSelectionCollision />}
+        {infos.length === 1 && infos[0].kind === "GOBJ" && <Hint title="Add a sound here" text="Place one of the game's ambient sounds (river, waterfall, sea, audience…) where this object is."><Button size="sm" variant="secondary" onClick={() => void ed.addAmbientSound([...infos[0].item.pos])}><Volume2 /> Add a sound here…</Button></Hint>}
+        {infos.length === 1 && infos[0].kind === "GOBJ" && ambientSoundOf(infos[0].item.objectId) && <Hint title="Replace its sound" text="Opens Sounds and music on the samples this emitter plays. They are shared by every track."><Button size="sm" variant="secondary" onClick={() => void ed.replaceAmbientSound(infos[0].item.objectId)}><Volume2 /> Replace its sound…</Button></Hint>}
         <Hint title="Delete" text="Remove the selection. Indices that pointed to it are updated." shortcut="Ctrl+X"><Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => ed.cmd("delete")}><Trash2 /> Delete</Button></Hint>
       </div>
       <Separator />
@@ -318,9 +324,45 @@ export function TrackSettingsEditor() {
         The track's name in menus is game text (Scene/UI, Common.bmg).
         <Button size="sm" variant="secondary" className="shrink-0" onClick={() => ed.cmd("trackNameText")}>Track name…</Button>
       </div>
+      <TrackMedia fileName={ed.doc.fileName || ""} />
     </div>
   );
 }
+
+// The music and preview video of the open track: they belong to its place in the game's cups (the
+// file's name, beginner_course.szs or beginner_course_d.szs), not to the archive.
+function TrackMedia({ fileName }: { fileName: string }) {
+  const base = fileName.toLowerCase().replace(/.(szs|wbz|wlz|wu8)$/, "").replace(/_d$/, "");
+  const slot = SLOTS.find((s: any) => s.file.toLowerCase() === base);
+  if (!slot) return (
+    <div className="flex items-center justify-between gap-2 border-t pt-3 text-[11px] text-muted-foreground">
+      <span>Music and preview video belong to a place in the cups: this file is not one of the game's tracks. Choose them where the track is put, in Cups and tracks.</span>
+      <Button size="sm" variant="secondary" className="shrink-0" onClick={() => ed().cmd("cups")}>Cups and tracks…</Button>
+    </div>
+  );
+  const place = slotPlace(slot.id);
+  const entry = place && Object.entries(THP_LAYOUTS).find(([, l]: any) => l.cup === place.cup);
+  const thp = entry && editor.workspacePath("thp", ...entry[0].split("/"));
+  const shared = SLOTS.filter((s: any) => s.music === slot.music && s.id !== slot.id).map((s: any) => s.label);
+  return (
+    <div className="flex flex-col gap-2 border-t pt-3 text-[11px] text-muted-foreground">
+      <span>Music and preview video of {slot.label}'s place in the cups (they are files of the game, not of this archive).</span>
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0">Music: <span className="text-foreground">{slot.music}</span> (sound/strm, normal and final lap){shared.length ? `, shared with ${shared.join(", ")}` : ""}.</span>
+        <Button size="sm" variant="secondary" className="shrink-0" onClick={() => void dialogs.open("audio", { musicSearch: slot.music })}>Music…</Button>
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0">Preview video: {entry ? <><span className="text-foreground">thp/{entry[0]}</span>, {slot.label}'s part.</> : "none."}</span>
+        <Button size="sm" variant="secondary" className="shrink-0" disabled={!thp} onClick={() => void dialogs.open("thp", { initialPath: thp, initialPart: String(place!.position) })}>Preview video…</Button>
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <span>Another track's music, an audio file, no music or no preview video: in Cups and tracks.</span>
+        <Button size="sm" variant="ghost" className="shrink-0" onClick={() => ed().cmd("cups")}>Cups and tracks…</Button>
+      </div>
+    </div>
+  );
+}
+const ed = () => editor;
 
 // CHR0 animation of the track model: playback, frame, loop and delete.
 // Lighting, fog or effects selected in the track list: what the track holds of it.
@@ -478,6 +520,8 @@ function ModelInspector() {
         <Button size="sm" variant="secondary" disabled={!ed.doc.szs} onClick={() => ed.generateCollisionForSelection()} title="Generate course KCL from this selected model part"><BrickWall /> Generate collision…</Button>
         <RemoveSelectionCollision />
         <Button size="sm" variant="secondary" title="Positions and texture coordinates of this part, value by value" onClick={() => void ed.editTrackVertices(selected.modelName, selected.partIndex)}>Vertices and UVs…</Button>
+        <Button size="sm" variant="secondary" title="Place one of the game's ambient sounds (river, waterfall, sea, audience…) at this part" disabled={!selected.min || !selected.max}
+          onClick={() => void ed.addAmbientSound([0, 1, 2].map((c) => (selected.min[c] + selected.max[c]) / 2))}><Volume2 /> Add a sound here…</Button>
         <Button size="sm" variant="ghost" className="text-destructive" onClick={() => ed.cmd("delete")}><Trash2 /> Delete</Button>
       </div>
       <Separator />

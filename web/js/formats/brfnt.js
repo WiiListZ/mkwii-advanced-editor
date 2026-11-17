@@ -76,41 +76,44 @@ function sheetCanvas(font, index) {
 }
 
 // Draws text lines with the font; `runs` are [{ text, color }] pieces, "\n" breaks lines.
-// Returns the size used. Characters the font lacks use its replacement character.
-export function drawText(ctx, font, runs, x, y, { scale = 1, maxWidth = Infinity } = {}) {
-  const perSheet = font.cols * font.rows;
-  const pitchX = font.cellW + 1, pitchY = font.cellH + 1; // cells have a 1 pixel gap
+// Returns the size used. Characters the font lacks come from `fallback` (the game's icon font,
+// tt_kart_extension_font, for button icons) when it has them, else the font's replacement character.
+export function drawText(ctx, font, runs, x, y, { scale = 1, maxWidth = Infinity, fallback = null } = {}) {
   let penX = x, penY = y, widest = 0;
   const line = (font.lineFeed || font.height) * scale;
   for (const run of runs) {
     for (const ch of run.text) {
       if (ch === '\n') { widest = Math.max(widest, penX - x); penX = x; penY += line; continue; }
       const code = ch.codePointAt(0);
-      const index = font.chars.get(code) ?? font.chars.get(font.alterChar) ?? font.alterChar;
-      const w = font.widths.get(index) || font.defaultWidth;
+      const f = !font.chars.has(code) && fallback?.chars.has(code) ? fallback : font;
+      const perSheet = f.cols * f.rows, pitchX = f.cellW + 1, pitchY = f.cellH + 1; // cells have a 1 pixel gap
+      const index = f.chars.get(code) ?? f.chars.get(f.alterChar) ?? f.alterChar;
+      const w = f.widths.get(index) || f.defaultWidth;
       if (penX - x + w.advance * scale > maxWidth) { widest = Math.max(widest, penX - x); penX = x; penY += line; }
+      // A glyph of the other font sits on the same baseline.
+      const y0 = penY + (f === font ? 0 : (font.baseline - f.baseline) * scale);
       const sheet = Math.floor(index / perSheet), cell = index % perSheet;
-      if (sheet < font.sheets.length && w.glyph > 0 && run.alpha !== 0) {
-        const src = sheetCanvas(font, sheet);
-        const sx = (cell % font.cols) * pitchX, sy = Math.floor(cell / font.cols) * pitchY;
-        const colorSheet = font.sheets[sheet]?.format >= 4;
-        if (!colorSheet && run.color && run.color !== '#ffffff') {
+      if (sheet < f.sheets.length && w.glyph > 0 && run.alpha !== 0) {
+        const src = sheetCanvas(f, sheet);
+        const sx = (cell % f.cols) * pitchX, sy = Math.floor(cell / f.cols) * pitchY;
+        const colorSheet = f.sheets[sheet]?.format >= 4;
+        if (!colorSheet && run.color && run.color !== "#ffffff") {
           // Tint: draw the white glyph on a scratch canvas and colour it.
-          const t = tintCanvas(w.glyph, font.cellH);
-          const g = t.getContext('2d');
-          g.globalCompositeOperation = 'source-over';
+          const t = tintCanvas(w.glyph, f.cellH);
+          const g = t.getContext("2d");
+          g.globalCompositeOperation = "source-over";
           g.clearRect(0, 0, t.width, t.height);
-          g.drawImage(src, sx, sy, w.glyph, font.cellH, 0, 0, w.glyph, font.cellH);
+          g.drawImage(src, sx, sy, w.glyph, f.cellH, 0, 0, w.glyph, f.cellH);
           // Colours the fill and keeps the dark border, then restores the glyph's coverage.
-          g.globalCompositeOperation = 'multiply';
+          g.globalCompositeOperation = "multiply";
           g.fillStyle = run.color;
-          g.fillRect(0, 0, w.glyph, font.cellH);
-          g.globalCompositeOperation = 'destination-in';
-          g.drawImage(src, sx, sy, w.glyph, font.cellH, 0, 0, w.glyph, font.cellH);
-          g.globalCompositeOperation = 'source-over';
-          ctx.drawImage(t, 0, 0, w.glyph, font.cellH, penX + w.left * scale, penY, w.glyph * scale, font.cellH * scale);
+          g.fillRect(0, 0, w.glyph, f.cellH);
+          g.globalCompositeOperation = "destination-in";
+          g.drawImage(src, sx, sy, w.glyph, f.cellH, 0, 0, w.glyph, f.cellH);
+          g.globalCompositeOperation = "source-over";
+          ctx.drawImage(t, 0, 0, w.glyph, f.cellH, penX + w.left * scale, y0, w.glyph * scale, f.cellH * scale);
         } else {
-          ctx.drawImage(src, sx, sy, w.glyph, font.cellH, penX + w.left * scale, penY, w.glyph * scale, font.cellH * scale);
+          ctx.drawImage(src, sx, sy, w.glyph, f.cellH, penX + w.left * scale, y0, w.glyph * scale, f.cellH * scale);
         }
       }
       penX += w.advance * scale;

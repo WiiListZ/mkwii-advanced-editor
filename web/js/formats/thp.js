@@ -150,6 +150,7 @@ export function buildTHP(thp, videoFrames) {
     at += frame.size;
   });
   v.setUint32(8, Math.max(...built.map((f) => f.size)));
+  v.setUint32(0x14, built.length);
   v.setUint32(0x18, built[0].size);
   v.setUint32(0x1c, total - head.length);
   v.setUint32(0x2c, last);
@@ -189,5 +190,8 @@ export const THP_TITLES = {
 export function thpLayout(path) {
   const key = path.replace(/\\/g, '/').split('/').slice(-2).join('/').toLowerCase();
   const entry = Object.entries(THP_LAYOUTS).find(([k]) => k.toLowerCase() === key);
-  return entry ? { key: entry[0], ...entry[1] } : null;
+  if (entry) return { key: entry[0], ...entry[1] };
+  // A custom cup's video of a Pulsar pack made by this editor (thp/course/pulsar_<n>.thp): four strips.
+  if (/^course\/pulsar_\d+\.thp$/.test(key)) return { key, title: 'Custom cup tracks', regions: [0, 1, 2, 3].map((i) => ({ label: `Track ${i + 1}`, x: 0, y: i * 144, width: 400, height: 144 })) };
+  return null;
 }

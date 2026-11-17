@@ -68,13 +68,23 @@ export function nameIds(id) {
 // music[slot]   = { type: 'slot', id }      the music track `id` has now (its stream is copied)
 //               | { type: 'file', path, label, loop, loopStart, volume, finalFaster } an audio file,
 //                 converted to the game's format (finalFaster: the final lap plays it 10% faster)
-/** @returns {{ content: Record<number, any>, names: Record<number, string>, cupNames: Record<number, string>, music: Record<number, any> }} */
+// cupIcons: a picture chosen as the icon of a race cup ({ path, url }), written when applied.
+// noVideo: positions whose part of the cup's preview video becomes black (true, no preview video) or
+//   gets its original part back ("original", from the video's .bak copy) when applied.
+/** @returns {{ content: Record<number, any>, names: Record<number, string>, cupNames: Record<number, string>, music: Record<number, any>, cupIcons: Record<number, { path: string, url: string }>, noVideo: Record<number, boolean> }} */
 export function initialArrangement() {
-  return { content: Object.fromEntries(SLOTS.map((s) => [s.id, { type: 'slot', id: s.id }])), names: {}, cupNames: {}, music: {} };
+  return { content: Object.fromEntries(SLOTS.map((s) => [s.id, { type: 'slot', id: s.id }])), names: {}, cupNames: {}, music: {}, cupIcons: {}, noVideo: {} };
 }
 
 const same = (a, b) => a.type === b.type && (a.type === 'slot' ? a.id === b.id : a.path === b.path);
-export const isChanged = (arrangement, id) => !same(arrangement.content[id], { type: 'slot', id }) || arrangement.names[id] !== undefined || arrangement.music?.[id] !== undefined;
+export const isChanged = (arrangement, id) => !same(arrangement.content[id], { type: 'slot', id }) || arrangement.names[id] !== undefined || arrangement.music?.[id] !== undefined || !!arrangement.noVideo?.[id];
+
+// The preview video of a position: as it is (false), black (true) or its original part ("original").
+export function setNoVideo(arrangement, id, off) {
+  const noVideo = { ...arrangement.noVideo };
+  if (off) noVideo[id] = off; else delete noVideo[id];
+  return { ...arrangement, noVideo };
+}
 
 // Chooses the music of a slot (null: back to the music that goes with its track).
 export function setSlotMusic(arrangement, id, choice) {
@@ -134,9 +144,9 @@ export function resetSlot(arrangement, id) {
     if (home !== undefined) return resetSlot(swapSlots(arrangement, id, home), home);
   }
   const content = { ...arrangement.content, [id]: { type: 'slot', id } };
-  const names = { ...arrangement.names }, music = { ...arrangement.music };
-  delete names[id]; delete music[id];
-  return { ...arrangement, content, names, music };
+  const names = { ...arrangement.names }, music = { ...arrangement.music }, noVideo = { ...arrangement.noVideo };
+  delete names[id]; delete music[id]; delete noVideo[id];
+  return { ...arrangement, content, names, music, noVideo };
 }
 
 // Turns an arrangement into the operations that write it:
@@ -147,7 +157,12 @@ export function resetSlot(arrangement, id) {
 //   music chosen for one slot and are also played by other slots;
 // - names: true when some message of Common.bmg changes (computed per archive with nameChanges).
 // Music chosen for a slot comes before the music that follows a moved track.
-export function planArrangement(arrangement, { moveMusic = true } = {}) {
+// `saved`: what earlier applies put in each stream (see appliedMusic). The music of a track chosen
+// for a position is that track's original music ({ target, source, original: true }, read from the
+// stream's .bak copy) when its stream holds something else since then, such as the silence of No
+// music; chosen for its own position, it puts the original back. Music that follows a moved track
+// takes what its stream holds now.
+export function planArrangement(arrangement, { moveMusic = true, saved = {} } = {}) {
   const tracks = [];
   for (const slot of SLOTS) {
     const source = arrangement.content[slot.id];
@@ -173,6 +188,7 @@ export function planArrangement(arrangement, { moveMusic = true } = {}) {
     if (wanted.size > 1) { musicKept.push({ stream: target, slots }); continue; }
     const [only] = wanted.values();
     if (only.type === 'file') music.push({ target, file: only });
+    else if (chosen.has(target) && saved[only.stream]) music.push({ target, source: only.stream, original: true });
     else if (only.stream !== target) music.push({ target, source: only.stream });
     else continue;
     if (chosen.has(target) && slots.length > 1) musicShared.push({ stream: target, slots });
@@ -188,6 +204,7 @@ export function plannedMusic(plan, id, saved = {}) {
   const stream = slotById(id).music;
   const entry = plan.music.find((m) => m.target === stream);
   if (entry?.file) return { stream, from: null, file: entry.file };
+  if (entry?.original) return { stream, from: entry.source, file: null };
   const source = entry ? entry.source : stream;
   return { stream, ...(saved[source] || { from: source, file: null }) };
 }
@@ -198,7 +215,7 @@ export function appliedMusic(plan, saved = {}, written = plan.music.map((m) => m
   const next = { ...saved };
   for (const entry of plan.music) {
     if (!written.includes(entry.target)) continue;
-    const music = entry.file ? { from: null, file: entry.file } : saved[entry.source] || { from: entry.source, file: null };
+    const music = entry.file ? { from: null, file: entry.file } : entry.original ? { from: entry.source, file: null } : saved[entry.source] || { from: entry.source, file: null };
     if (music.from === entry.target && !music.file) delete next[entry.target];
     else next[entry.target] = music;
   }

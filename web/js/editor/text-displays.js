@@ -2,6 +2,8 @@
 // with the message being edited in its text box. The tables below are what the game code decides
 // (which button shows which character, cup or course); everything drawn comes from Scene/UI.
 import { isBmgStyle } from '../formats/bmg-style.js';
+import { LE_IDS } from '../formats/lecode.js';
+import { PULSAR_IDS } from '../formats/pulsar.js';
 
 
 // BMG escape sequences as the game shows them: inserted characters (group 1), the controller's
@@ -96,6 +98,7 @@ export const DISPLAYS = {
   liveMessage: 'Online race and spectator message',
   awardMessage: 'Award ceremony message',
   channelInstall: 'Mario Kart Channel installation',
+  yesNoPopup: 'Yes/No question window',
   genericWindow: 'Message window (generic preview)',
   genericRaceWindow: 'Race message window (generic preview)',
 };
@@ -162,8 +165,43 @@ bind('Menu', [0xa28], 'channelInstall', ['message_window', 'MessageWindowHalf', 
 bind('Menu', [0xa29, 0xa2a], 'channelInstall', ['message_window', 'YesNoButton', 'text']);
 bind('Menu', [0xa2f], 'channelInstall', title);
 
-export const messagePlacement = (file, id) => MESSAGE_PLACEMENTS.get(`${file}:${id}`) || null;
-export const defaultDisplay = (file, id, _text) => messagePlacement(file, id)?.display || (file === 'Race' ? 'genericRaceWindow' : 'genericWindow');
+// Found in the game code (StaticR.rel, PAL): every message ID loaded right before a call to the page
+// title's setMessage, the instruction bar's, or the Yes/No window's (through the small functions that
+// pick the page's member control first). Licences, options, Wi-Fi, friends, ghosts and the Mario
+// Kart Channel.
+bind('Menu', [0x7df, 0x836, 0x837, 0x898, 0x961, 0xdaf, 0xdb1, ...range(0xfa0, 0xfa3), 0x1004, ...range(0x106d, 0x1070), 0x1102, 0x1103,
+  0x1388, 0x138a, 0x138e, 0x1391, 0x1393, 0x13ba, 0x13bb, 0x145d, 0x177c, 0x189c, 0x19cd, 0x1a2c, 0x1af4, 0x1b59, 0x1b5a, 0x1bbc,
+  0x1c20, 0x1c52, 0x1c84, 0x1ce8, 0x1d4c], 'menuTitle', title);
+bind('Menu', [0x9ca, 0xd20, 0xd21, 0xd22, 0xd26, 0x10d6, 0x10d9, 0x10da, 0x10dd, ...range(0x1108, 0x110b), ...range(0x1112, 0x1117), 0x1126,
+  ...range(0x13c4, 0x13c8), 0x13ca, 0x13cc, 0x1a2e], 'instruction', ['bg', 'MenuObiInstructionText', 'text'], { singleLine: false });
+bind('Menu', [0x805, 0x807, 0x817, 0x819, 0x86e, 0xd8e, 0xd8f, 0xfab, 0x10fe, 0x1104, 0x1461, 0x1cee, 0x1e17], 'yesNoPopup',
+  ['message_window', 'MessageWindowHalf', 'text'], { variant: 'MessageWindowHalfPopup', singleLine: false });
+bind('Menu', [0x80b, 0x80c, 0x81a, 0xfac, 0xfad, 0x10ff, 0x1100], 'yesNoPopup', ['message_window', 'YesNoButton', 'text']);
+// The two answers shown together and a question they answer, for the preview.
+const POPUP_ANSWERS = [[0xfac, 0xfad, 0xfab], [0x10ff, 0x1100, 0x10fe], [0x80b, 0x80c, 0x807], [0x81a, 0x80c, 0x819]];
+
+// Names that mods add under IDs of their own, shown on the cup and course selection:
+// LE-CODE (lecode.js): Common.bmg, cup 0x6800 + cup, track 0x7000 + slot.
+// Pulsar (pulsar.js): its own BMG, cup 0x10000 + cup, track 0x20000 + cup × 4 + position (+ variant << 12).
+// `mod` tells the preview which cup and row it is and where the names next to it are.
+function modPlacement(file, id) {
+  const at = (cupBase, trackBase, cup, row) => ({
+    file, id, display: 'courseSelect', singleLine: true,
+    control: row === undefined ? ['control', 'CourseSelectCup', 'text'] : ['button', 'CourseSelectCourse', 'text'],
+    mod: { file, cupBase, trackBase, cup, row },
+  });
+  if (file === 'Common' && id >= LE_IDS.cup && id < LE_IDS.track) return at(LE_IDS.cup, LE_IDS.track, id - LE_IDS.cup);
+  if (file === 'Common' && id >= LE_IDS.track && id < 0x8000) { const slot = id - LE_IDS.track; return at(LE_IDS.cup, LE_IDS.track, slot >> 2, slot & 3); }
+  if (id >= PULSAR_IDS.cup && id < PULSAR_IDS.track) return at(PULSAR_IDS.cup, PULSAR_IDS.track, id - PULSAR_IDS.cup);
+  if (id >= PULSAR_IDS.track && id < PULSAR_IDS.author) { const track = (id - PULSAR_IDS.track) & 0xfff; return at(PULSAR_IDS.cup, PULSAR_IDS.track, track >> 2, track & 3); }
+  return null;
+}
+
+export const messagePlacement = (file, id) => MESSAGE_PLACEMENTS.get(`${file}:${id}`) || modPlacement(file, id);
+// Messages whose screen is not known show as text only: the game code, not the files, decides
+// where they appear, and a guessed screen would be misleading. The generic windows stay available
+// to choose by hand.
+export const defaultDisplay = (file, id, _text) => messagePlacement(file, id)?.display || 'font';
 
 export const DISPLAY_ARCHIVES = { mainMenu: ['Title.szs'], pressStart: ['Title.szs'], awardMessage: ['Award.szs'], ghostMessage: ['Race.szs'], liveMessage: ['Race.szs'], genericRaceWindow: ['Race.szs'], raceIntro: ['Race.szs'], pauseMenu: ['Race.szs'], afterRaceMenu: ['Race.szs'], raceMessage: ['Race.szs'], raceCountdown: ['Race.szs'], raceStatus: ['Race.szs'], resultPosition: ['Race.szs'], controllerHelp: ['Race.szs'] };
 export const archivesFor = (display) => display === 'font' ? ['Font.szs'] : ['Font.szs', ...(DISPLAY_ARCHIVES[display] || ['MenuSingle.szs'])];
@@ -247,6 +285,21 @@ export function drawDisplay(assets, ctx, display, { file, id, text, lookup, prev
     back(); return;
   }
 
+  if (display === 'yesNoPopup') {
+    // A question over the dimmed page, with its two answers (Yes and No unless the message is one of them).
+    menu(); back();
+    assets.drawControl(ctx, 'message_window', 'BlackBack', null, { anims: ['fade_in@end'] });
+    const isAnswer = binding?.control[1] === 'YesNoButton';
+    const pair = (file === 'Menu' && POPUP_ANSWERS.find((p) => p[0] === id || p[1] === id)) || [0x7d2, 0x7d3, null];
+    const question = isAnswer ? (pair[2] ? menuName(pair[2]) : '') : shown;
+    assets.drawControl(ctx, 'message_window', 'MessageWindowHalf', 'MessageWindowHalfPopup', { text: { text: question } });
+    [pair[0], pair[1]].forEach((msg, row) => {
+      const selected = isAnswer ? file === 'Menu' && msg === id : row === 0;
+      assets.drawControl(ctx, 'message_window', 'YesNoButton', `Option${row}Popup`, { anims: [selected ? 'select@end' : 'free'], text: button(isAnswer && selected ? shown : menuName(msg)) });
+    });
+    return;
+  }
+
   if (display === 'channelInstall') {
     menu();
     assets.drawControl(ctx, 'message_window', 'MessageWindowHalf', 'MessageWindowHalf', { text: { text: previewText && !binding ? shown : menuName(0xa28) } });
@@ -305,14 +358,23 @@ export function drawDisplay(assets, ctx, display, { file, id, text, lookup, prev
     }
     const cupAt = assets.place('control', 'CupSelectNULL', 'CupSelectCupNULL');
     const courseAt = assets.place('control', 'CupSelectNULL', 'CupSelectCourseNULL');
+    // A mod's cup or track: its cup among eight, the names of its neighbours from the same mod
+    // (the game's own names where the mod has none).
+    const mod = binding?.mod;
+    const modCup = mod && mod.row === undefined, first = mod ? mod.cup - mod.cup % 8 : 0;
+    const modName = (msgId) => { const t = lookup(mod.file, msgId); return t == null ? null : sizedGameText(t); };
+    if (mod) { cup = mod.cup % 8; course = mod.row ?? -1; }
+    const cupName = (i) => !mod ? name(0x23f0 + i) : modCup && i === cup ? shown : modName(mod.cupBase + first + i) ?? name(0x23f0 + i);
+    const courseName = (courseId, row) => !mod ? (previewText && !isTitle && !isCup && row === Math.max(0, course) ? shown : name(courseId + offset))
+      : !modCup && row === course ? shown : modName(mod.trackBase + mod.cup * 4 + row) ?? name(courseId);
     const cupButton = (i) => assets.drawControl(ctx, 'control', 'CourseSelectCup', `Button${i}`, {
-      at: cupAt, anims: [i === cup ? 'select@end' : 'free'], text: button(name(0x23f0 + i)), texture: cupTexture(`tt_cup_icon_${CUP_ICONS[i]}_00.tpl`),
+      at: cupAt, anims: [i === cup ? 'select@end' : 'free'], text: button(cupName(i)), texture: cupTexture(`tt_cup_icon_${CUP_ICONS[i]}_00.tpl`),
     });
     // The selected cup is drawn last: its name overlaps the next icons.
     for (let i = 0; i < 8; i++) if (i !== cup) cupButton(i);
     cupButton(cup);
     CUP_COURSES[cup].forEach((courseId, row) => assets.drawControl(ctx, 'button', 'CourseSelectCourse', `Button${row}`, {
-      at: courseAt, anims: [row === Math.max(0, course) ? 'select@end' : 'free'], text: button(previewText && !isTitle && !isCup && row === Math.max(0, course) ? shown : name(courseId + offset)),
+      at: courseAt, anims: [row === Math.max(0, course) ? 'select@end' : 'free'], text: button(courseName(courseId, row)),
     }));
     back();
     return;

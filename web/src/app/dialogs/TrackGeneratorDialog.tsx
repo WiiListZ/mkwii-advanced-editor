@@ -772,7 +772,7 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
                 <div className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-0.5">
                   <Label>Allow tricks on ramps</Label>
                   <Switch checked={params.trickable} onCheckedChange={(v) => setParam("trickable", v)} aria-label="Allow tricks on ramps" />
-                  <p className="col-span-2 m-0 text-[11px] leading-snug text-muted-foreground">Enables the game's trickable collision flag on the road and boost panels. Perform a trick when a crest or ramp takes the kart into the air.</p>
+                  <p className="col-span-2 m-0 text-[11px] leading-snug text-muted-foreground">Puts the game's trickable collision flag on the road only where it throws the kart into the air: the end of a climb or a crest. Flat road and gentle slopes stay without it, as on the game's tracks, so tricks work only off those jumps.</p>
                 </div>
                 {Array.isArray(params.boostPositions) ? <div className="text-xs">{previewTrack?.boosts.length || 0} manually placed boost panels</div> : num("boostPads", "Boost panels", 0, 6, 1, "Automatically placed on the straightest parts. Use the drawing tool to choose their positions.")}
                 <div className="flex flex-wrap gap-1.5"><Button size="sm" variant="outline" onClick={() => chooseTool("boost")}><Zap /> Place on drawing</Button><Button size="sm" variant="ghost" onClick={() => { remember(); setParam("boostPositions", undefined); }}>Auto place</Button><Button size="sm" variant="ghost" onClick={() => { remember(); setParam("boostPositions", []); }}>Remove all</Button></div>

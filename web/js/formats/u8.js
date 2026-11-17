@@ -124,11 +124,23 @@ export function findFile(root, name) {
   return listFiles(root).find((f) => f.path.toLowerCase() === lower || f.path.toLowerCase().endsWith('/' + lower))?.node || null;
 }
 
+// The folder that holds an archive's files: its "." folder (as in Nintendo's archives), or the root
+// itself when the archive has files without one (Pulsar's UIAssets.szs, for example). An empty
+// archive gets a "." folder.
+function filesRoot(root, create = true) {
+  const dot = root.children.find((c) => c.name === '.' && c.children);
+  if (dot) return dot;
+  if (root.children.length) return root;
+  if (!create) return null;
+  const dir = { name: '.', children: [] };
+  root.children.push(dir);
+  return dir;
+}
+
 export function setFile(root, name, data) {
   const existing = findFile(root, name);
   if (existing) { existing.data = data; return; }
-  let dir = root.children.find((c) => c.name === '.' && c.children);
-  if (!dir) { dir = { name: '.', children: [] }; root.children.push(dir); }
+  const dir = filesRoot(root);
   dir.children.push({ name, data });
   dir.children.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -136,8 +148,7 @@ export function setFile(root, name, data) {
 // Adds or replaces a file at a nested path ("effect/wanwan/rk_wanwan.breff"), creating folders.
 export function setFilePath(root, path, data) {
   const parts = path.split('/').filter(Boolean);
-  let dir = root.children.find((c) => c.name === '.' && c.children);
-  if (!dir) { dir = { name: '.', children: [] }; root.children.push(dir); }
+  let dir = filesRoot(root);
   for (const name of parts.slice(0, -1)) {
     let next = dir.children.find((c) => c.children && c.name.toLowerCase() === name.toLowerCase());
     if (!next) {
@@ -156,7 +167,7 @@ export function setFilePath(root, path, data) {
 
 export function deleteFilePath(root, path) {
   const parts = path.split('/').filter(Boolean);
-  let dir = root.children.find((c) => c.name === '.' && c.children);
+  let dir = filesRoot(root, false);
   for (const name of parts.slice(0, -1)) {
     dir = dir?.children.find((c) => c.children && c.name.toLowerCase() === name.toLowerCase());
     if (!dir) return false;

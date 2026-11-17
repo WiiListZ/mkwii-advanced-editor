@@ -102,3 +102,8 @@
 /* Elements created by the 3D viewport outside React */
 .marquee { position: absolute; display: none; border: 1px solid oklch(0.65 0.18 255); background: oklch(0.65 0.18 255 / 15%); pointer-events: none; }
 .titlebar-drag { -webkit-app-region: no-drag; }
+
+/* Notifications stay clickable while a dialog is open: a modal dialog turns pointer events off on
+   the body, and the toaster lives outside the dialog. Clicks on them do not close the dialog (see
+   DialogContent's onInteractOutside). Toasts that are leaving keep sonner's own setting. */
+[data-sonner-toast]:not([data-removed="true"]):not([data-visible="false"]) { pointer-events: auto; }

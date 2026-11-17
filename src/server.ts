@@ -299,7 +299,38 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       const entries = await readdir(filePath, { withFileTypes: true });
       const files = entries.filter((e) => e.isFile() && (!exts.length || exts.some((x) => e.name.toLowerCase().endsWith(x))))
         .map((e) => e.name).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      // ?sizes=1: the size of each file too.
+      if (url.searchParams.get("sizes") === "1") {
+        const sizes: Record<string, number> = {};
+        for (const name of files) sizes[name] = (await stat(join(filePath, name))).size;
+        return json({ files, sizes });
+      }
       return json({ files });
+    }
+
+    case "find-mods": {
+      // A folder chosen as "the mod": the Pulsar packs (<pack>/Binaries/Config.pul), LE-CODE binaries
+      // (rel/lecode-*.bin), Riivolution XML (riivolution/*.xml) and extracted games (a folder with
+      // Race/Course) in it, a few levels down. Large game folders are not searched inside.
+      if (!filePath || !existsSync(filePath)) return json({ error: "Folder not found: " + filePath }, 404);
+      const found = { pulsar: [] as string[], lecode: [] as string[], xml: [] as string[], games: [] as string[] };
+      const skip = new Set(["race", "scene", "sound", "thp", "demo", "boot", "hbm", "movie", "rel", "tracks", "ghosts", "assets", "ctbrstm", "my stuff", "node_modules", ".git"]);
+      const walk = async (dir: string, depth: number): Promise<void> => {
+        let entries: import("node:fs").Dirent[];
+        try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+        const names = new Map(entries.map((e) => [e.name.toLowerCase(), e]));
+        if (names.get("race")?.isDirectory() && existsSync(join(dir, "Race", "Course"))) found.games.push(dir);
+        const binaries = names.get("binaries");
+        if (binaries?.isDirectory() && existsSync(join(dir, binaries.name, "Config.pul"))) found.pulsar.push(join(dir, binaries.name, "Config.pul"));
+        const rel = names.get("rel");
+        if (rel?.isDirectory()) for (const f of await readdir(join(dir, rel.name)).catch(() => [] as string[])) if (/^lecode-[a-z]+\.bin$/i.test(f)) found.lecode.push(join(dir, rel.name, f));
+        const riiv = names.get("riivolution");
+        if (riiv?.isDirectory()) for (const f of await readdir(join(dir, riiv.name)).catch(() => [] as string[])) if (/\.xml$/i.test(f)) found.xml.push(join(dir, riiv.name, f));
+        if (depth >= 4) return;
+        for (const e of entries) if (e.isDirectory() && !skip.has(e.name.toLowerCase()) && !e.name.startsWith(".")) await walk(join(dir, e.name), depth + 1);
+      };
+      await walk(resolve(filePath), 0);
+      return json(found);
     }
 
     case "archive-index": {

@@ -77,14 +77,20 @@ function encodeString(text) {
 
 // Rebuilds the file with new texts ({ id: text }); everything else is kept as it was. With
 // `{ add: true }`, IDs the file does not have yet become new messages, kept in ID order (the game
-// looks messages up by ID); their attributes are zero.
-export function buildBMG(bmg, changes, { add = false } = {}) {
+// looks messages up by ID). A new message gets the attributes most messages of the file have: in
+// Mario Kart Wii the first one chooses the font, and 0 leaves the text box's own font, which in
+// many menus (the course and cup buttons) only has capital letters and digits.
+// `repair`: IDs whose attributes are all zero get those attributes too (names written before).
+export function buildBMG(bmg, changes, { add = false, repair = [] } = {}) {
   const has = new Set(bmg.messages.map((m) => m.id));
   const extra = add ? Object.keys(changes).map(Number).filter((id) => !has.has(id)) : [];
+  const fix = new Set(repair.filter((id) => has.has(id) && bmg.messages.find((m) => m.id === id).attributes.every((x) => x === 0)));
+  // The usual attributes of the other messages: the ones being repaired do not count.
+  const usual = usualAttributes({ ...bmg, messages: bmg.messages.filter((m) => !fix.has(m.id)) });
+  if (fix.size && usual.some((x) => x)) bmg = { ...bmg, messages: bmg.messages.map((m) => (fix.has(m.id) ? { ...m, attributes: usual } : m)), data: null };
   if (extra.length) {
     if (!bmg.sections.some((s) => s.magic === 'MID1')) throw new Error('This BMG has no message IDs: messages cannot be added');
-    const blank = new Uint8Array(bmg.entrySize - 4);
-    const messages = [...bmg.messages, ...extra.map((id) => ({ id, attributes: blank, text: '' }))].sort((a, b) => a.id - b.id);
+    const messages = [...bmg.messages, ...extra.map((id) => ({ id, attributes: usual, text: '' }))].sort((a, b) => a.id - b.id);
     bmg = { ...bmg, messages, data: null };
   }
   const texts = bmg.messages.map((m) => (Object.prototype.hasOwnProperty.call(changes, m.id) ? changes[m.id] : m.text));
@@ -133,6 +139,22 @@ export function buildBMG(bmg, changes, { add = false } = {}) {
   let o = 0x20;
   for (const b of sections) { out.set(b, o); o += b.length; }
   return out;
+}
+
+// The attributes most messages of the file have (all zero for a file without messages).
+export function usualAttributes(bmg) {
+  const counts = new Map();
+  for (const m of bmg.messages) { const k = m.attributes.join(","); counts.set(k, (counts.get(k) || 0) + 1); }
+  let best = null, n = 0;
+  for (const [k, c] of counts) if (c > n) { best = k; n = c; }
+  return best ? Uint8Array.from(best.split(",").map(Number)) : new Uint8Array(Math.max(0, (bmg.entrySize || 8) - 4));
+}
+
+// Messages that a cup editor wrote with all-zero attributes (before new messages took the file's usual
+// ones): `ids` that exist in the file and need repair.
+export function zeroAttributeIds(bmg, isName) {
+  if (!usualAttributes({ ...bmg, messages: bmg.messages.filter((m) => !isName(m.id)) }).some((x) => x)) return [];
+  return bmg.messages.filter((m) => isName(m.id) && m.attributes.every((x) => x === 0)).map((m) => m.id);
 }
 
 // A new BMG (UTF-16, message IDs) from [[id, text]] sorted by ID, laid out like the files Wiimm's

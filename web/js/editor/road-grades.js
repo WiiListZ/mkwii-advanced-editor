@@ -10,7 +10,8 @@ export function smoothRoadGrades(samples, params, clearancePairs = []) {
   const run = Float64Array.from(samples, (s, i) => Math.max(1, Math.hypot(samples[(i + 1) % n][0] - s[0], samples[(i + 1) % n][2] - s[2])));
   const clearance = params.wallHeight + 800;
   const pairs = clearancePairs.map(([i, j]) => y[i] > y[j] ? [i, j] : [j, i]);
-  const curvature = .00005, maxSlope = .28;
+  // Gentle by default: at most a 20% grade (about 11 degrees).
+  const curvature = .00004, maxSlope = .2;
   for (let pass = 0; pass < 12000; pass++) {
     let largest = 0;
     for (let k = 0; k < n; k++) {

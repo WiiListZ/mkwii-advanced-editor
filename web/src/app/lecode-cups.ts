@@ -7,7 +7,7 @@
 import { api } from "../../js/api.js";
 import { SLOTS } from "../../js/data/cups.js";
 import { cupName, trackName } from "../../js/data/pulsar-cups.js";
-import { buildBMG, parseBMG } from "../../js/formats/bmg.js";
+import { buildBMG, parseBMG, zeroAttributeIds } from "../../js/formats/bmg.js";
 import { LE_FIRST_CUSTOM_SLOT, LE_IDS, buildLECode, leTrackFile, parseLECode } from "../../js/formats/lecode.js";
 import { parseTPL } from "../../js/formats/brlyt.js";
 import { decodeTexture, encodeTextureLevels } from "../../js/formats/brres.js";
@@ -144,7 +144,8 @@ export async function leCodeCups(paths: string[]): Promise<ModCups> {
         const own = new Map(bmg.messages.map((m: any) => [m.id, m.text]));
         const local = Object.fromEntries(Object.entries(changes).filter(([id, value]) => own.get(Number(id)) !== value));
         if (!Object.keys(local).length) continue;
-        setFilePath(tree, entry.path, buildBMG(bmg, local, { add: true }));
+        // Names written before with all-zero attributes get the full font as well.
+        setFilePath(tree, entry.path, buildBMG(bmg, local, { add: true, repair: zeroAttributeIds(bmg, (id: number) => id >= LE_IDS.cup && id < 0x8000) }));
         changed = true;
       }
       if (changed) writes.push({ path: `${ui}\\${name}`, data: buildU8(tree), compress: "yaz0", what: name });

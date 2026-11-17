@@ -64,14 +64,15 @@ test("hills and bridge approaches have gradual changes of grade instead of launc
   }
 });
 
-test("ramp collision allows tricks and fall triggers stay far below every drivable surface", () => {
+test("only crests are trickable (Hilly's gentle hills are not), and fall triggers stay far below every drivable surface", () => {
   for (const trickable of [true, false]) {
     const out = generateTrack(preset("Hilly"), { trickable }), kcl = parseKCL(buildKCL(out.verts, out.flags));
     let lowestRoad = Infinity, highestFall = -Infinity, ramps = 0;
+    // The kart does not leave the road on Hilly's hills: no trickable floor (see generated-tricks.test.ts).
     for (let i = 0; i < kcl.count; i++) {
       const type = kcl.flags[i] & 31, ys = [1, 4, 7].map((v) => kcl.verts[i * 9 + v]);
       if ([0, 6].includes(type)) {
-        expect(!!(kcl.flags[i] & 0x2000)).toBe(trickable);
+        expect(kcl.flags[i] & 0x2000).toBe(0);
         if (Math.max(...ys) - Math.min(...ys) > 20) ramps++;
       }
       if ([0, 3, 6].includes(type)) lowestRoad = Math.min(lowestRoad, ...ys);
@@ -85,9 +86,21 @@ test("ramp collision allows tricks and fall triggers stay far below every drivab
 
 test("road width changes the exported model and collision together", () => {
   const points = preset("Oval"), narrow = generateTrack(points, { roadWidth: 2600 }), wide = generateTrack(points, { roadWidth: 3600 });
-  const widths = (out: any) => out.model.tris.filter((t: any) => t.mat === "road").filter((_: any, i: number) => i % 2 === 0).map((t: any) => Math.hypot(t.v[0] - t.v[3], t.v[2] - t.v[5])).sort((a: number, b: number) => a - b);
-  const a = widths(narrow), b = widths(wide);
-  expect(b[Math.floor(b.length / 2)] - a[Math.floor(a.length / 2)]).toBeCloseTo(1000, 1);
+  // The model's road is cut into strips across (each piece's first triangle spans one strip, from
+  // its first edge): a piece's width is the sum of its strips, the same as its collision's.
+  const widths = (out: any) => {
+    const pieces = new Map<number, number>();
+    for (const t of out.model.tris.filter((t: any) => t.mat === "road").filter((_: any, i: number) => i % 2 === 0)) {
+      const key = Math.round(t.uv[1] * 1e6); // the piece: its distance along the road
+      pieces.set(key, (pieces.get(key) || 0) + Math.hypot(t.v[0] - t.v[3], t.v[2] - t.v[5]));
+    }
+    return [...pieces.values()];
+  };
+  const collision = (out: any) => [...out.flags].flatMap((flag: number, i: number) => (flag & 31) === 0 && i % 2 === 0 ? [Math.hypot(out.verts[i * 9] - out.verts[i * 9 + 3], out.verts[i * 9 + 2] - out.verts[i * 9 + 5])] : []);
+  const median = (list: number[]) => list.sort((x, y) => x - y)[Math.floor(list.length / 2)];
+  expect(median(collision(wide)) - median(collision(narrow))).toBeCloseTo(1000, 1);
+  // The model's strips add up to the collision's width.
+  for (const out of [narrow, wide]) expect(Math.abs(median(widths(out)) - median(collision(out)))).toBeLessThan(1);
   for (const out of [narrow, wide]) {
     const rebuilt = parseKCL(buildKCL(out.verts, out.flags));
     for (let i = 0; i < rebuilt.count; i++) if ((rebuilt.flags[i] & 31) === 0) {

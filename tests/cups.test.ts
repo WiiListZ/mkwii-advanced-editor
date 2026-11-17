@@ -115,6 +115,25 @@ describe("arrangement", () => {
     expect(plannedMusic(planArrangement(initialArrangement()), MALL, next).file).toEqual(file);
   });
 
+  test("a position's own music comes back after No music was applied", () => {
+    const silent = { type: "file", path: "", label: "No music", silent: true };
+    const saved: any = appliedMusic(planArrangement(setSlotMusic(initialArrangement(), MOO, silent as any)));
+    expect(saved.n_Farm).toEqual({ from: null, file: silent });
+    // Choosing Moo Moo Meadows' music for its own place again: its original, from the .bak copy.
+    const back = planArrangement(setSlotMusic(initialArrangement(), MOO, { type: "slot", id: MOO }), { saved });
+    expect(back.music).toEqual([{ target: "n_Farm", source: "n_Farm", original: true }]);
+    expect(plannedMusic(back, MOO, saved)).toEqual({ stream: "n_Farm", from: "n_Farm", file: null });
+    expect(appliedMusic(back, saved)).toEqual({});
+    // Without anything applied before, the same choice writes nothing.
+    expect(planArrangement(setSlotMusic(initialArrangement(), MOO, { type: "slot", id: MOO })).music).toEqual([]);
+    // Another position choosing Moo Moo Meadows' music gets its original music, not the silence.
+    const copy = planArrangement(setSlotMusic(initialArrangement(), MALL, { type: "slot", id: MOO }), { saved });
+    expect(copy.music).toEqual([{ target: "n_Shopping32", source: "n_Farm", original: true }]);
+    expect(plannedMusic(copy, MALL, saved).from).toBe("n_Farm");
+    // Music following a moved track still takes what its stream holds now.
+    expect(planArrangement(swapSlots(initialArrangement(), MOO, MALL), { saved }).music.every((m: any) => !m.original)).toBe(true);
+  });
+
   test("races and arenas never mix", () => {
     expect(() => swapSlots(initialArrangement(), LUIGI, BLOCK)).toThrow();
   });

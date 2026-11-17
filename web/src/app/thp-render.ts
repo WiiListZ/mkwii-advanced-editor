@@ -8,10 +8,20 @@ export type Rect = { x: number; y: number; width: number; height: number };
 export type THP = ReturnType<typeof parseTHP>;
 export type MovieSource =
   | { kind: "image"; name: string; bitmap: ImageBitmap }
-  | { kind: "video"; name: string; video: HTMLVideoElement }
+  | { kind: "video"; name: string; video: HTMLVideoElement; start?: number; end?: number }
   | { kind: "thp"; name: string; thp: THP; rect: Rect };
 // One change: `rect` of the movie shows `source`, filled (cropped to keep its proportions) or stretched.
 export type MovieEdit = { rect: Rect; source: MovieSource; fit: "fill" | "stretch" };
+
+// The game's videos of a cup's tracks (thp/course/<cup>.thp): 400 x 576, 480 frames (8 s at 59.94
+// frames a second), and no frame larger than this (the smallest largest frame of the eight, so a
+// custom cup's video fits the memory the game sets aside for them).
+export const COURSE_VIDEO = { width: 400, height: 576, frames: 480, frameBytes: 42848 };
+// A custom cup's video lasts this long unless chosen otherwise (seconds).
+export const CUSTOM_VIDEO_SECONDS = 6;
+// How many frames a video clip takes in a movie playing at `fps`.
+export const clipFrames = (source: MovieSource, fps: number) => source.kind !== "video" ? 0
+  : Math.ceil(((source.end ?? source.video.duration) - (source.start ?? 0)) * fps);
 
 export async function decodeFrame(thp: THP, index: number): Promise<ImageBitmap> {
   const jpeg = thpFrameToJPEG(thpVideoData(thp, index % thp.frames.length));
@@ -38,7 +48,9 @@ async function sourceImage(source: MovieSource, index: number, fps: number): Pro
   if (source.kind === "image") return { image: source.bitmap, rect: { x: 0, y: 0, width: source.bitmap.width, height: source.bitmap.height } };
   if (source.kind === "video") {
     const v = source.video;
-    await seek(v, (index / fps) % Math.max(0.001, v.duration || 0.001));
+    // The clip from start to end, again and again.
+    const start = source.start ?? 0, length = Math.max(0.001, (source.end ?? v.duration ?? 0.001) - start);
+    await seek(v, start + ((index / fps) % length));
     return { image: v, rect: { x: 0, y: 0, width: v.videoWidth, height: v.videoHeight } };
   }
   const bitmap = await decodeFrame(source.thp, index);
@@ -79,7 +91,10 @@ async function encodeFrame(canvas: OffscreenCanvas, width: number, height: numbe
 }
 
 // The movie with the changes in every frame. `progress(done, total)` is called as frames are encoded.
-export async function renderMovie(thp: THP, edits: MovieEdit[], progress?: (done: number, total: number) => void) {
+// frames: a new length (the movie's own frames repeat to fill it); frameBytes: the largest a frame
+// may be, when not the movie's own largest.
+export async function renderMovie(thp: THP, edits: MovieEdit[], progress?: (done: number, total: number) => void, { frames: length, frameBytes }: { frames?: number; frameBytes?: number } = {}) {
+  if (length && length !== thp.frames.length) thp = { ...thp, frames: Array.from({ length }, (_, i) => thp.frames[i % thp.frames.length]) };
   const { width, height } = thp.video;
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext("2d")!;
@@ -90,7 +105,7 @@ export async function renderMovie(thp: THP, edits: MovieEdit[], progress?: (done
     await composeFrame(ctx, thp, i, edits);
     // Room for the video data: the original largest frame minus this frame's header and audio.
     const other = thp.frames[i].parts.reduce((n: number, [, size]: number[], k: number) => (k === videoIndex ? n : n + size), 0);
-    const budget = thp.header.maxBufferSize - 8 - thp.frames[i].parts.length * 4 - other - 31;
+    const budget = (frameBytes ?? thp.header.maxBufferSize) - 8 - thp.frames[i].parts.length * 4 - other - 31;
     const encoded = await encodeFrame(canvas, width, height, budget, Math.min(0.9, quality + 0.02));
     quality = encoded.quality;
     frames.push(encoded.frame);

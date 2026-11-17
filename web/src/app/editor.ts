@@ -1,6 +1,8 @@
 // Editor controller: owns the document, the 3D viewport, file handling, commands and settings.
 // It has no UI of its own: React components subscribe to it and call its methods.
 
+import { ambientSoundOf, ambientSoundSamples } from "../../js/data/ambient-sounds.js";
+import { parseBRSAR } from "../../js/formats/brsar.js";
 import * as THREE from "three";
 import { toast } from "sonner";
 import { api, FILTERS, hasBackend, startupFile, startupCreate, startupDocument, startupGhost, startupView } from "../../js/api.js";
@@ -2123,6 +2125,30 @@ export class Editor {
     this.doc.change(`Edit vertices of ${part.name}`, () => { node.data = next; }, { structural: true });
     this.doc.emit("model");
     await this.assets?.setTrack(this.doc.szs);
+  }
+
+  // Places one of the game's ambient sound emitters (river, waterfall, sea, audience…) at a point;
+  // it gets its own route, as every sound emitter needs one.
+  async addAmbientSound(point: number[]) {
+    const objectId = await dialogs.open("ambientSound", {}) as number | null;
+    if (objectId == null) return;
+    this.ops.add("GOBJ", point, { objectId });
+    toast.success("Sound added", { description: "Its route is selected with it in Routes: stretch it along the place the sound comes from. Save the SZS to keep it." });
+  }
+
+  // Opens Sounds and music on the samples an ambient sound emitter plays (shared by every track).
+  async replaceAmbientSound(objectId: number) {
+    const ambient = ambientSoundOf(objectId), path = this.workspacePath("sound", "revo_kart.brsar");
+    if (!ambient) return;
+    if (!path) return toast.warning("Choose the game folder first", { description: "The sounds are in sound/revo_kart.brsar of the game folder." });
+    try {
+      const file = await api.readPath(path);
+      const found = ambientSoundSamples(parseBRSAR(await api.decodeArchiveBytes(file.data, file.path)), ambient);
+      if (!found) return toast.error("The samples of this sound were not found in revo_kart.brsar");
+      if (!(await dialogs.confirm({ title: `Replace the ${ambient.label.toLowerCase()} sound?`,
+        description: `Its sound is in revo_kart.brsar, which every track shares: replacing it changes the ${ambient.label.toLowerCase()} of every track${found.sharing.length ? `, and ${found.sharing.map((s: any) => s.label.toLowerCase()).join(" and ")}, which use the same samples` : ""}. Sounds and music opens on its ${found.samples.length} sample${found.samples.length === 1 ? "" : "s"} (${found.bank.name}).`, confirmLabel: "Open its samples" }))) return;
+      await dialogs.open("audio", { search: found.bank.name });
+    } catch (e: any) { toast.error("Could not read the sound archive", { description: e.message }); }
   }
 
   // The SCN0 scenes (lights, fog, cameras) stored in the track model.

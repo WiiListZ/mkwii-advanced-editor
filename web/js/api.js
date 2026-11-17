@@ -327,9 +327,22 @@ export const api = {
     return call('copy', { query: { from, to } });
   },
 
+  // The mods in a folder: { pulsar: Config.pul paths, lecode: lecode-*.bin paths, xml: Riivolution
+  // XML paths, games: extracted game folders (with Race/Course) }.
+  async findMods(path) {
+    if (!hasBackend) return { pulsar: [], lecode: [], xml: [], games: [] };
+    return call('find-mods', { query: { path } });
+  },
+
   async listDir(path, extensions = []) {
     if (!hasBackend) return [];
     return (await call('list-dir', { query: { path, ext: extensions.join(',') } })).files;
+  },
+
+  // The files of a folder and their sizes: { files, sizes: { name: bytes } }.
+  async listDirSizes(path, extensions = []) {
+    if (!hasBackend) return { files: [], sizes: {} };
+    return call('list-dir', { query: { path, ext: extensions.join(','), sizes: '1' } });
   },
 
   // animation: '' = default, '-' = none, otherwise the name from modelAnimations().

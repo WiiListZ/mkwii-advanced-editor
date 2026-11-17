@@ -23,32 +23,11 @@ import { dialogs } from "../dialogs-store";
 import { WorkspaceCard } from "../panels/WorkspaceCard";
 import { useEditor } from "../hooks";
 import { cn } from "@/lib/utils";
+import { VirtualRows } from "../virtual-rows";
 import { useActivityNote } from "../discord-activity";
 
-// Every sound is listed (the game has thousands): rows have one height, and only those in sight
-// and a few around them are drawn while the list scrolls.
-const ROW = 44, OVERSCAN = 8;
-function VirtualRows<T>({ items, row }: { items: T[]; row: (item: T) => React.ReactNode }) {
-  const box = React.useRef<HTMLDivElement>(null);
-  const [view, setView] = React.useState({ top: 0, height: 600 });
-  React.useLayoutEffect(() => {
-    const el = box.current;
-    if (!el) return;
-    const measure = () => setView({ top: el.scrollTop, height: el.clientHeight });
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-  // A new search starts at the top of its results.
-  React.useEffect(() => { if (box.current) { box.current.scrollTop = 0; setView((v) => ({ ...v, top: 0 })); } }, [items]);
-  const first = Math.max(0, Math.floor(view.top / ROW) - OVERSCAN), last = Math.min(items.length, Math.ceil((view.top + view.height) / ROW) + OVERSCAN);
-  return <div ref={box} className="min-h-0 flex-1 overflow-y-auto p-1" onScroll={(e) => setView({ top: e.currentTarget.scrollTop, height: e.currentTarget.clientHeight })}>
-    <div className="relative" style={{ height: items.length * ROW }}>
-      <div className="absolute inset-x-0" style={{ top: first * ROW }}>{items.slice(first, last).map(row)}</div>
-    </div>
-  </div>;
-}
+// Every sound is listed (the game has thousands): rows have one height.
+const ROW = 44;
 type Tab = "music" | "sounds";
 interface Item { key: string; label: string; detail: string; kind: "music" | "wave"; path?: string; wave?: any }
 // Decoded audio: Int16 channels, rate, loop and (music) the stereo tracks.
@@ -132,18 +111,20 @@ const seconds = (n: number, rate: number) => `${(n / rate).toFixed(n / rate < 10
 const timestamp = (value: number) => `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
 
 // `file`: a .brstm or .brsar opened from disk. `loose`: a browser-picked or dropped file.
-export function AudioDialog({ file, loose, close }: { file?: string; loose?: { name: string; data: Uint8Array }; close: (v: any) => void }) {
+// search: opens on the sound effects with this search (an ambient sound's bank, for example).
+// musicSearch: opens on the music with this search (a track's stream, from Track settings).
+export function AudioDialog({ file, loose, search, musicSearch, close }: { file?: string; loose?: { name: string; data: Uint8Array }; search?: string; musicSearch?: string; close: (v: any) => void }) {
   useEditor("settings");
   const selectedFile = file || loose?.name || "";
   const looseMusic = /\.brstm$/i.test(selectedFile) ? selectedFile : "", looseArchive = /\.brsar$/i.test(selectedFile) ? selectedFile : "";
   const root = editor.workspace() || (selectedFile ? "loose" : "");
   const strm = selectedFile ? "" : editor.workspacePath("sound", "strm"), brsarPath = file && looseArchive ? file : selectedFile ? "" : editor.workspacePath("sound", "revo_kart.brsar");
-  const [tab, setTab] = React.useState<Tab>(looseArchive ? "sounds" : "music");
+  const [tab, setTab] = React.useState<Tab>((looseArchive || search) && !musicSearch ? "sounds" : "music");
   const [music, setMusic] = React.useState<string[] | null>(null);
   const [archive, setArchive] = React.useState<any>(null);
   const [waves, setWaves] = React.useState<any[] | null>(null);
   const [loading, setLoading] = React.useState("");
-  const [query, setQuery] = React.useState("");
+  const [query, setQuery] = React.useState(musicSearch || search || "");
   const [selected, setSelected] = React.useState<string | null>(null);
   // Audio and loop edits not saved yet: music files by path, and the changed sound archive.
   const [pendingMusic, setPendingMusic] = React.useState<Record<string, Uint8Array>>({});
@@ -239,7 +220,7 @@ export function AudioDialog({ file, loose, close }: { file?: string; loose?: { n
               <div className="shrink-0 border-b px-2.5 py-1.5 text-[11px] text-muted-foreground">
                 {loading || `${filtered.length.toLocaleString()} ${tab === "music" ? "streams" : "sounds"}`}
               </div>
-              <VirtualRows items={filtered} row={(i) => (
+              <VirtualRows items={filtered} rowHeight={ROW} resetKey={`${tab}:${query}`} row={(i) => (
                   <button key={i.key} onClick={() => setSelected(i.key)} style={{ height: ROW }} className={cn("flex w-full cursor-pointer flex-col items-start justify-center rounded px-2 text-left hover:bg-accent/60", i.key === selected && "bg-accent")}>
                     <span className="flex w-full items-center gap-1.5 text-[12.5px]">
                       <span className="min-w-0 flex-1 truncate">{i.label}</span>

@@ -39,6 +39,13 @@ async function readIcons(): Promise<Icons> {
   return {};
 }
 
+// After the icons are written: read them again and update every view that shows them.
+export function forgetCupIcons() {
+  const root = editor.workspace();
+  cache = root ? { root, icons: readIcons().catch(() => ({})) } : null;
+  for (const update of listeners) update();
+}
+
 export function useCupIcons(): Icons {
   const root = editor.workspace();
   const [icons, setIcons] = React.useState<Icons>({});

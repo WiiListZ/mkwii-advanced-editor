@@ -23,7 +23,7 @@ export const MAX_TRACK_SAMPLES = 4096;
 export const DEFAULT_PARAMS = {
   style: 'circuit',
   textureSource: 'game',
-  roadWidth: 3200,
+  roadWidth: 3600,
   offroadWidth: 1400,
   wallHeight: 700,
   step: 400,            // distance between samples along the centerline
@@ -79,7 +79,7 @@ export const TEMPLATES = {
   'Mountain rally': {
     help: 'Up and down on dirt: a narrower road, wide verges, thick woods.',
     points: () => ring(12, 24000, 18000, (t) => 1000 + Math.sin(t * 3) * 900),
-    params: { style: 'rally', roadWidth: 2800, offroadWidth: 2400, wallHeight: 500, itemRows: 2, boostPads: 1, scenery: 'dense', laps: 3 },
+    params: { style: 'rally', roadWidth: 3200, offroadWidth: 2400, wallHeight: 500, itemRows: 2, boostPads: 1, scenery: 'dense', laps: 3 },
   },
   'Desert dunes': {
     help: 'Sand everywhere with one tight turn and palm trees.',
@@ -89,12 +89,12 @@ export const TEMPLATES = {
   'Snow valley': {
     help: 'A snowy road with barriers, going up and down through pines.',
     points: () => ring(12, 26000, 17000, (t) => 800 + Math.sin(t * 2) * 750),
-    params: { style: 'snow', roadWidth: 3200, offroadWidth: 1600, wallHeight: 700, itemRows: 2, boostPads: 1, scenery: 'light', laps: 3 },
+    params: { style: 'snow', roadWidth: 3600, offroadWidth: 1600, wallHeight: 700, itemRows: 2, boostPads: 1, scenery: 'light', laps: 3 },
   },
   'Castle crossing': {
     help: 'Stone paving and a road that crosses itself over a bridge.',
     points: () => PRESETS['Figure eight'](),
-    params: { style: 'castle', roadWidth: 3000, offroadWidth: 1400, wallHeight: 900, itemRows: 2, boostPads: 1, scenery: 'light', laps: 3 },
+    params: { style: 'castle', roadWidth: 3400, offroadWidth: 1400, wallHeight: 900, itemRows: 2, boostPads: 1, scenery: 'light', laps: 3 },
   },
 };
 
@@ -188,7 +188,91 @@ export function scaleLayout(points, factor) {
 //   high enough to drive under, with gentle ramps (the branch that is already higher, or else the
 //   later one in the lap).
 // Returns { samples, length, bridges: [[x, z]], flattened: [[x, z]] }.
-const MAX_SLOPE = 0.4, RAMP_SLOPE = 0.22;
+const MAX_SLOPE = 0.4, RAMP_SLOPE = 0.2;
+// Turns no tighter than this many road widths (radius of the centre line): tighter bends are eased.
+export const MIN_TURN_RADIUS = 1.4;
+// Item boxes' height above the road (GOBJ 0x65).
+export const ITEM_BOX_HEIGHT = 0;
+// Width of the strips the road's model is cut into across (see generateTrack).
+const ROAD_STRIP = 600;
+
+// Eases the bends tighter than `minRadius` (X/Z only). The road turns at each sample by the change
+// of direction between its two segments; a turn sharper than the radius allows gives its excess to
+// the samples beside it, until every turn fits: the bend becomes an arc of that radius, spread over
+// a longer stretch, with the same total turn (the road leaves the bend in the same direction). Each
+// eased bend is rebuilt from its first sample, and the small gap left at its end is spread along it,
+// so the road before and after it stays as drawn, and so does the start line (the samples near 0:
+// a bend right at the start is the starting grid's problem, pointed out by layoutIssues). Returns
+// whether it changed.
+function easeTurns(samples, minRadius) {
+  const n = samples.length, keep = 3;
+  if (n < 12) return false;
+  const x = Float64Array.from(samples, (p) => p[0]), z = Float64Array.from(samples, (p) => p[2]);
+  const len = new Float64Array(n), heading = new Float64Array(n), turn = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    len[i] = Math.hypot(x[j] - x[i], z[j] - z[i]);
+    heading[i] = Math.atan2(z[j] - z[i], x[j] - x[i]);
+  }
+  const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+  for (let i = 0; i < n; i++) turn[i] = wrap(heading[i] - heading[(i - 1 + n) % n]);
+  const before = Float64Array.from(turn);
+  const free = (i) => i >= keep && i < n - keep;
+  let changed = false;
+  for (let pass = 0; pass < 20000; pass++) {
+    let worst = 0;
+    for (let i = keep; i < n - keep; i++) {
+      const limit = (len[i] + len[i - 1]) / 2 / minRadius, excess = Math.abs(turn[i]) - limit;
+      if (excess <= 1e-7) continue;
+      const give = Math.sign(turn[i]) * excess, left = free(i - 1), right = free(i + 1);
+      if (!left && !right) continue;
+      turn[i] -= give;
+      if (left) turn[i - 1] += right ? give / 2 : give;
+      if (right) turn[i + 1] += left ? give / 2 : give;
+      worst = Math.max(worst, excess);
+      changed = true;
+    }
+    if (worst < 1e-6) break;
+  }
+  if (!changed) return false;
+  // Rebuild each eased stretch [a, b] (the samples whose turn changed) from sample a.
+  for (let a = keep; a < n - keep; a++) {
+    if (Math.abs(turn[a] - before[a]) < 1e-9) continue;
+    let b = a;
+    while (b + 1 < n - keep && Math.abs(turn[b + 1] - before[b + 1]) >= 1e-9) b++;
+    let h = heading[a - 1], px = x[a], pz = z[a];
+    const nx = [x[a]], nz = [z[a]];
+    for (let j = a; j <= b; j++) {
+      h += turn[j];
+      px += Math.cos(h) * len[j]; pz += Math.sin(h) * len[j];
+      nx.push(px); nz.push(pz);
+    }
+    // The end of the stretch back onto the road as drawn: the gap spread along the stretch.
+    const ex = nx[nx.length - 1] - x[b + 1], ez = nz[nz.length - 1] - z[b + 1], count = b + 1 - a;
+    for (let j = a + 1; j <= b; j++) {
+      const t = (j - a) / count;
+      x[j] = nx[j - a] - ex * t; z[j] = nz[j - a] - ez * t;
+    }
+    a = b;
+  }
+  for (let i = 0; i < n; i++) { samples[i][0] = x[i]; samples[i][2] = z[i]; }
+  if (!changed) return false;
+  // Even spacing again, from the same first sample (the start line).
+  const distance = [0];
+  for (let i = 1; i <= n; i++) {
+    const a = samples[i - 1], b = samples[i % n];
+    distance.push(distance[i - 1] + Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]));
+  }
+  const total = distance[n], copy = samples.map((s) => [...s]);
+  let j = 1;
+  for (let i = 1; i < n; i++) {
+    const d = (i / n) * total;
+    while (distance[j] < d) j++;
+    const a = copy[j - 1], b = copy[j % n], t = (d - distance[j - 1]) / (distance[j] - distance[j - 1] || 1);
+    samples[i] = a.map((value, c) => value + (b[c] - value) * t);
+  }
+  return true;
+}
 const sampleCache = new Map();
 const copySamples = (result) => ({ ...result, samples: result.samples.map((s) => [...s]), bridges: result.bridges.map((p) => [...p]), crossings: result.crossings.map((p) => [...p]), flattened: result.flattened.map((p) => [...p]) });
 
@@ -234,6 +318,8 @@ export function trackSamples(points, params = {}) {
   P.step = sampleStep;
   if (!n) return { samples: raw, length, bridges: [], crossings: [], flattened: [] };
   const samples = raw.map((s) => [...s]);
+  // Each round leaves smaller gaps to spread: a few rounds bring the bends close to the radius.
+  for (let round = 0; round < 6 && easeTurns(samples, MIN_TURN_RADIUS * P.roadWidth); round++);
   const startGuard = prepareStartGrid(samples, P);
   const run = (i) => Math.hypot(samples[(i + 1) % n][0] - samples[i][0], samples[(i + 1) % n][2] - samples[i][2]) || P.step;
   const flattened = [];
@@ -369,6 +455,35 @@ export function generatedTrackIssues(track) {
 }
 
 // One mark per area, so a long overlap is not drawn as dozens of circles.
+// The segments (frame i to i + 1) where the road throws the kart into the air: the end of a climb
+// or a crest, where the road's slope drops away. The game's trickable flag (0x2000) lets the kart
+// trick whenever it leaves a trickable floor, even over the smallest bump, so the game's own tracks
+// put it only on ramps; a road trickable everywhere allowed tricks at every point. A crest is where
+// the mean slope over the ~1200 units after a point is lower than over the ~1200 before by
+// TRICK_SLOPE_DROP (about 7 degrees: a kart at about 85 units a frame, or faster on a mushroom, leaves the road there); its trickable part is that run-up and the first segment after.
+export const TRICK_SLOPE_DROP = 0.12;
+export function trickSegments(frames, step, closed = true) {
+  const n = frames.length, out = new Set();
+  const segments = closed ? n : n - 1;
+  if (segments < 2) return out;
+  const slope = [];
+  for (let i = 0; i < segments; i++) {
+    const f = frames[i].c, g = frames[(i + 1) % n].c;
+    slope.push((g[1] - f[1]) / Math.max(1, Math.hypot(g[0] - f[0], g[2] - f[2])));
+  }
+  const k = Math.max(1, Math.round(1200 / step));
+  const at = (i) => closed ? slope[((i % segments) + segments) % segments] : slope[Math.max(0, Math.min(segments - 1, i))];
+  const mean = (from, count) => { let sum = 0; for (let j = 0; j < count; j++) sum += at(from + j); return sum / count; };
+  for (let j = closed ? 0 : 1; j < segments; j++) {
+    if (mean(j - k, k) - mean(j, k) < TRICK_SLOPE_DROP) continue;
+    for (let d = -k; d <= 0; d++) {
+      const s = j + d;
+      if (closed) out.add(((s % segments) + segments) % segments); else if (s >= 0) out.add(s);
+    }
+  }
+  return out;
+}
+
 function thin(list, spacing) {
   const out = [];
   for (const p of list) if (!out.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < spacing)) out.push(p);
@@ -502,6 +617,7 @@ export function generateTrack(points, params = {}) {
       face(lowA, highA, highB, 'support', [0, h, 0, 0, 1, 0]);
     }
   };
+  const trickable = P.trickable ? trickSegments(frames, P.step) : new Set();
   let dist = 0;
   for (let i = 0; i < n; i++) {
     const f = frames[i], g = frames[(i + 1) % n];
@@ -510,7 +626,7 @@ export function generateTrack(points, params = {}) {
     dist += Math.hypot(g.c[0] - f.c[0], g.c[1] - f.c[1], g.c[2] - f.c[2]);
     const v1 = dist / P.roadWidth;
     const isBoost = boostSegments.has(i);
-    const roadFlag = (isBoost ? 0x0006 : 0x0000) | (P.trickable ? 0x2000 : 0);
+    const roadFlag = (isBoost ? 0x0006 : 0x0000) | (trickable.has(i) ? 0x2000 : 0);
     const roadMat = isBoost ? 'boost' : i === 0 ? 'startline' : 'road';
     const roadV0 = isBoost ? boostSegments.get(i)[0] : roadMat === 'road' ? v0 : 0, roadV1 = isBoost ? boostSegments.get(i)[1] : roadMat === 'road' ? v1 : .125;
     // A start line on a bend can be a trapezoid. Mapping each triangle to a rectangle
@@ -520,8 +636,25 @@ export function generateTrack(points, params = {}) {
       ((f.L[0] - p[0]) * f.left[0] + (f.L[2] - p[2]) * f.left[1]) / (f.hl + f.hr),
       ((p[0] - f.c[0]) * f.t[0] + (p[2] - f.c[2]) * f.t[1]) / (f.hl + f.hr),
     ]);
-    tri(f.L, f.R, g.R, roadFlag, roadMat, roadMat === 'startline' ? startUV(f.L, f.R, g.R) : [0, roadV0, 1, roadV0, 1, roadV1]);
-    tri(f.L, g.R, g.L, roadFlag, roadMat, roadMat === 'startline' ? startUV(f.L, g.R, g.L) : [0, roadV0, 1, roadV1, 0, roadV1]);
+    if (roadMat === 'road') {
+      // On a bend the road's piece is a trapezoid (its outer edge longer). Two triangles mapped
+      // straight onto the texture bend its lines at their diagonal, so the edge line of the road
+      // zigzags: the model is cut into strips across the road, each nearly a parallelogram. The
+      // collision keeps its two triangles.
+      tri(f.L, f.R, g.R, roadFlag, null);
+      tri(f.L, g.R, g.L, roadFlag, null);
+      const strips = Math.max(1, Math.round((f.hl + f.hr) / ROAD_STRIP));
+      const across = (frame, u) => [0, 1, 2].map((k) => frame.L[k] + (frame.R[k] - frame.L[k]) * u);
+      for (let c = 0; c < strips; c++) {
+        const u0 = c / strips, u1 = (c + 1) / strips;
+        const fa = across(f, u0), fb = across(f, u1), ga = across(g, u0), gb = across(g, u1);
+        face(fa, fb, gb, 'road', [u0, roadV0, u1, roadV0, u1, roadV1]);
+        face(fa, gb, ga, 'road', [u0, roadV0, u1, roadV1, u0, roadV1]);
+      }
+    } else {
+      tri(f.L, f.R, g.R, roadFlag, roadMat, roadMat === 'startline' ? startUV(f.L, f.R, g.R) : [0, roadV0, 1, roadV0, 1, roadV1]);
+      tri(f.L, g.R, g.L, roadFlag, roadMat, roadMat === 'startline' ? startUV(f.L, g.R, g.L) : [0, roadV0, 1, roadV1, 0, roadV1]);
+    }
     if (P.offroadWidth > 0) {
       // Planar mapping keeps grass/sand at a constant scale when a shoulder
       // narrows, rather than stretching a full tile across a tiny inner edge.
@@ -586,7 +719,7 @@ export function generateTrack(points, params = {}) {
 
   // Shortcuts: road with its underside and walls, open where they meet the main road.
   for (const { frames: branch } of shortcuts) {
-    const flag = P.trickable ? 0x2000 : 0;
+    const branchTricks = P.trickable ? trickSegments(branch, P.step, false) : new Set();
     let along = 0;
     const walls = shortcutWalls(frames, branch, P, shortcuts.filter((other) => other.frames !== branch).map((other) => other.frames));
     for (let i = 0; i + 1 < branch.length; i++) {
@@ -597,8 +730,18 @@ export function generateTrack(points, params = {}) {
       if (Math.floor((along + step) / 6000) !== Math.floor(along / 6000) && f.c[1] - depth - groundY > 700
         && !frames.some((other) => other.c[1] < f.c[1] - depth && Math.hypot(other.c[0] - f.c[0], other.c[2] - f.c[2]) < other.half + Math.max(other.ol, other.or) + 350)) support(f.c, f.c[1] - depth);
       along += step;
-      tri(f.L, f.R, g.R, flag, 'road', [0, v0, 1, v0, 1, v1]);
-      tri(f.L, g.R, g.L, flag, 'road', [0, v0, 1, v1, 0, v1]);
+      const flag = branchTricks.has(i) ? 0x2000 : 0;
+      tri(f.L, f.R, g.R, flag, null);
+      tri(f.L, g.R, g.L, flag, null);
+      // The model in strips across, as the main road's (its edge line stays straight on bends).
+      const strips = Math.max(1, Math.round(Math.hypot(f.R[0] - f.L[0], f.R[2] - f.L[2]) / ROAD_STRIP));
+      const across = (frame, u) => [0, 1, 2].map((k) => frame.L[k] + (frame.R[k] - frame.L[k]) * u);
+      for (let c = 0; c < strips; c++) {
+        const s0 = c / strips, s1 = (c + 1) / strips;
+        const fa = across(f, s0), fb = across(f, s1), ga = across(g, s0), gb = across(g, s1);
+        face(fa, fb, gb, 'road', [s0, v0, s1, v0, s1, v1]);
+        face(fa, gb, ga, 'road', [s0, v0, s1, v1, s0, v1]);
+      }
       const lf = lower(f.L), lg = lower(g.L), rf = lower(f.R), rg = lower(g.R);
       face(f.L, g.L, lg, 'foundation', [u0, 0, u1, 0, u1, 1]);
       face(f.L, lg, lf, 'foundation', [u0, 0, u1, 1, u0, 1]);
@@ -790,8 +933,10 @@ export function generateTrack(points, params = {}) {
     const t = ((box.t % 1) + 1) % 1, offset = Math.max(-.9, Math.min(.9, box.offset));
     const at = t * n, i = Math.floor(at), blend = at - i, f = frames[i], g = frames[(i + 1) % n];
     const d = (offset < 0 ? f.hr : f.hl) * offset, e = (offset < 0 ? g.hr : g.hl) * offset;
-    const a = [f.c[0] + f.left[0] * d, f.c[1] + 60, f.c[2] + f.left[1] * d];
-    const b = [g.c[0] + g.left[0] * e, g.c[1] + 60, g.c[2] + g.left[1] * e];
+    // On the road, like Luigi Circuit's, Bowser's Castle's and most of the game's: the game itself
+    // floats the box above its position (an extra 60, as on a few tracks, left them too high).
+    const a = [f.c[0] + f.left[0] * d, f.c[1] + ITEM_BOX_HEIGHT, f.c[2] + f.left[1] * d];
+    const b = [g.c[0] + g.left[0] * e, g.c[1] + ITEM_BOX_HEIGHT, g.c[2] + g.left[1] * e];
     const pos = a.map((v, k) => v + (b[k] - v) * blend);
     kmp.GOBJ.push(make.GOBJ(0x65, pos)); itemBoxes.push({ t, offset, pos });
   }

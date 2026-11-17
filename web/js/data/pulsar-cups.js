@@ -47,6 +47,23 @@ export function addCup(a, name) {
 
 // Cups always have four races. Fill only empty places, after the user has chosen which track to
 // repeat. Copies of saved tracks get a separate identity in Pulsar, while retaining their variants.
+// Pulsar packs are written with an even number of cups. The engine shows custom cups in pairs
+// and fills an odd count with the first cup again, but then loads the wrong archive for every custom
+// track (FormatTrackPath turns the track's ID into an original track's: Race/Course/8.szs, not
+// found, and the game crashes reading the missing course.kmp). A real copy of the first cup (its
+// tracks, names and icon) fills the pair instead.
+export function pairCup(a) {
+  if (a.cups.length % 2 === 0) return a;
+  const next = copy(a);
+  const first = next.cups[0];
+  next.cups.push({ from: first.from, ...(first.name !== undefined ? { name: first.name } : {}), ...(first.icon ? { icon: { ...first.icon } } : {}), pairCopy: true });
+  for (let k = 0; k < 4; k++) {
+    const source = next.tracks[k];
+    next.tracks.push(source.file ? { ...source, file: { ...source.file } } : { ...source, duplicate: true });
+  }
+  return next;
+}
+
 export function fillEmptyTracks(a, sourceIndex) {
   const source = a.tracks[sourceIndex];
   if (!source || (source.from === null && !source.file)) throw new Error('Choose a track already in the pack');
@@ -85,7 +102,7 @@ export function replaceTrack(a, i, path, label, generated = false) {
 
 export function trackChanged(a, i) {
   const t = a.tracks[i];
-  return t.from !== i || t.file || t.duplicate || t.name !== undefined || t.author !== undefined || t.slot !== undefined || t.music !== undefined;
+  return t.from !== i || t.file || t.duplicate || t.name !== undefined || t.author !== undefined || t.slot !== undefined || t.music !== undefined || t.mute !== undefined || t.audio !== undefined || t.video !== undefined;
 }
 export function cupChanged(a, c) {
   const cup = a.cups[c];

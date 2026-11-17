@@ -2,6 +2,7 @@ import * as React from "react";
 import { escapes, fontSizePercent, plainText } from "../../../js/formats/bmg.js";
 import { bmgColour } from "../../../js/formats/bmg-style.js";
 import { drawText } from "../../../js/formats/brfnt.js";
+import { gameText } from "../../../js/editor/text-displays.js";
 import { gameTextAssetsFor } from "../game-text-assets";
 import { CONTROLLER_PREVIEWS, DISPLAYS, archivesFor, defaultDisplay, drawDisplay } from "../../../js/editor/text-displays.js";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -17,17 +18,33 @@ const SCREEN_W = 608 * RESOLUTION, SCREEN_H = 456 * RESOLUTION;
 // One set of game files per Scene/UI folder, kept while the editor runs (parsed layouts, decoded
 // textures and drawn panes are reused by every message).
 
+// Screens chosen by hand, remembered per message ID ("Menu:6900": "menuButton") on this computer.
+const CHOSEN_SCREENS = "gameTextScreens";
+function chosenScreens(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(CHOSEN_SCREENS) || "{}") || {}; } catch { return {}; }
+}
+function chosenScreen(file: string, id: number) {
+  const display = chosenScreens()[`${file}:${id}`];
+  return display && Object.hasOwn(DISPLAYS, display) ? display : "auto";
+}
+function rememberScreen(file: string, id: number, display: string) {
+  const all = chosenScreens();
+  if (display === "auto") delete all[`${file}:${id}`]; else all[`${file}:${id}`] = display;
+  try { localStorage.setItem(CHOSEN_SCREENS, JSON.stringify(all)); } catch { /* storage unavailable */ }
+}
+
 export const DEFAULT_GAME_SCREEN_VH = 30;
 export const MIN_GAME_SCREEN_VH = 18;
 export const MAX_GAME_SCREEN_VH = 65;
 
-export function GameTextPreview({ folder, file, id, font, text, originalText, place, lookup, inGamePreview, onInGamePreviewChange, screenVh = DEFAULT_GAME_SCREEN_VH, onScreenVhChange }: {
-  folder: string; file: string; id: number; font: any; text: string; originalText: string; place: string; lookup: Lookup;
+export function GameTextPreview({ folder, file, id, font, iconFont, text, originalText, place, lookup, inGamePreview, onInGamePreviewChange, screenVh = DEFAULT_GAME_SCREEN_VH, onScreenVhChange }: {
+  folder: string; file: string; id: number; font: any; iconFont?: any; text: string; originalText: string; place: string; lookup: Lookup;
   inGamePreview: boolean; onInGamePreviewChange: (enabled: boolean) => void;
   screenVh?: number; onScreenVhChange?: (vh: number) => void;
 }) {
   const canvas = React.useRef<HTMLCanvasElement>(null);
-  const [choice, setChoice] = React.useState("auto");
+  const [choice, setChoiceState] = React.useState(() => chosenScreen(file, id));
+  const setChoice = (display: string) => { setChoiceState(display); rememberScreen(file, id, display); };
   const [controller, setController] = React.useState("han_con");
   const [result, setResult] = React.useState<{ key: string; state: "screen" | "font" | "missing" }>({ key: "", state: "font" });
   const display = choice === "auto" ? defaultDisplay(file, id, originalText) : choice;
@@ -38,7 +55,7 @@ export function GameTextPreview({ folder, file, id, font, text, originalText, pl
   React.useEffect(() => {
     const c = canvas.current, g = c?.getContext("2d");
     if (!c || !g) return;
-    if (!screenPreview || !folder) { drawMessage(g, c, font, text); setResult({ key: renderKey, state: "font" }); return; }
+    if (!screenPreview || !folder) { drawMessage(g, c, font, text, iconFont); setResult({ key: renderKey, state: "font" }); return; }
     let cancelled = false;
     // While typing, redraw at most once per frame.
     const frame = requestAnimationFrame(async () => {
@@ -46,7 +63,7 @@ export function GameTextPreview({ folder, file, id, font, text, originalText, pl
         const assets = gameTextAssetsFor(folder);
         await assets.load(archivesFor(display));
         if (cancelled) return;
-        if (archivesFor(display).some((name) => !assets.archives.get(name))) { drawMessage(g, c, font, text); setResult({ key: renderKey, state: "missing" }); return; }
+        if (archivesFor(display).some((name) => !assets.archives.get(name))) { drawMessage(g, c, font, text, iconFont); setResult({ key: renderKey, state: "missing" }); return; }
         const off = document.createElement("canvas");
         off.width = SCREEN_W; off.height = SCREEN_H;
         const og = off.getContext("2d")!;
@@ -64,7 +81,7 @@ export function GameTextPreview({ folder, file, id, font, text, originalText, pl
       }
     });
     return () => { cancelled = true; cancelAnimationFrame(frame); };
-  }, [folder, display, file, id, text, lookup, font, inGamePreview, choice, renderKey, controller]);
+  }, [folder, display, file, id, text, lookup, font, iconFont, inGamePreview, choice, renderKey, controller]);
 
   return (
     <div className="shrink-0">
@@ -124,17 +141,19 @@ export function GameTextPreview({ folder, file, id, font, text, originalText, pl
             ? "The game files for this screen are missing or could not be read from Scene\\UI. Showing the font only."
             : state === "font" ? (inGamePreview ? display === "font" ? "No verified game screen for this message ID. Showing the text; choose a layout above to preview it there." : "Choose the game's Scene\\UI folder to see the game screen." : "Game screen preview is off; showing the font only.") : "Drawing…"}
       </div>
-      {state === "screen" && choice !== "auto" && display !== defaultDisplay(file, id, originalText) && <p className="mb-0 mt-1 text-[10.5px] text-muted-foreground">Changing this preview does not move the message to a different game screen.</p>}
+      {inGamePreview && choice !== "auto" && display !== defaultDisplay(file, id, originalText) && <p className="mb-0 mt-1 text-[10.5px] text-muted-foreground">This screen is remembered for this message ID; choose Automatic to forget it. Changing the preview does not move the message to a different game screen.</p>}
       {state === "screen" && display === "controllerMessage" && <p className="mb-0 mt-1 text-[10.5px] text-muted-foreground">The controller is a preview example. In the game it depends on the connected controller; the paused screen appears behind this warning.</p>}
     </div>
   );
 }
 
-function drawMessage(g: CanvasRenderingContext2D, c: HTMLCanvasElement, font: any, text: string) {
-  const width = 608, pad = 22, runs = toRuns(text, "#ffffff"), scale = .6 * fontSizePercent(text) / 100;
+// The text alone with the game's font. Game codes show as the game shows them: button icons from the
+// icon font (tt_kart_extension_font), and sample names and numbers where the game fills them in.
+function drawMessage(g: CanvasRenderingContext2D, c: HTMLCanvasElement, font: any, text: string, iconFont: any = null) {
+  const width = 608, pad = 22, runs = toRuns(text, "#ffffff", !!font), scale = .6 * fontSizePercent(text) / 100;
   const lines = plainText(text).split("\n");
   let size = { width: 0, height: lines.length * 26 };
-  if (font) size = drawText(document.createElement("canvas").getContext("2d")!, font, runs, 0, 0, { scale, maxWidth: width - pad * 2 });
+  if (font) size = drawText(document.createElement("canvas").getContext("2d")!, font, runs, 0, 0, { scale, maxWidth: width - pad * 2, fallback: iconFont });
   else size.height = drawPlainRuns(g, runs, pad, width, 20 * fontSizePercent(text) / 100, false);
   // drawText measures line feeds; a glyph can extend below the last line feed.
   const glyphOverflow = font ? Math.max(0, ((font.cellH || font.height) - (font.lineFeed || font.height)) * scale) : 0;
@@ -142,7 +161,7 @@ function drawMessage(g: CanvasRenderingContext2D, c: HTMLCanvasElement, font: an
   c.width = width; c.height = height;
   g.fillStyle = "#101010";
   g.fillRect(0, 0, width, height);
-  if (font) drawText(g, font, runs, pad, (height - size.height) / 2, { scale, maxWidth: width - pad * 2 });
+  if (font) drawText(g, font, runs, pad, (height - size.height) / 2, { scale, maxWidth: width - pad * 2, fallback: iconFont });
   else {
     drawPlainRuns(g, runs, pad, width, 20 * fontSizePercent(text) / 100, true);
   }
@@ -165,7 +184,8 @@ function drawPlainRuns(g: CanvasRenderingContext2D, runs: { text: string; color:
   return y - pad + line - size;
 }
 
-function toRuns(text: string, color: string) {
+// asGame: game codes become what the game shows (gameText); otherwise a placeholder diamond.
+function toRuns(text: string, color: string, asGame = false) {
   const runs: { text: string; color: string; alpha?: number }[] = [];
   const defaultColor = color;
   let alpha = 1;
@@ -176,6 +196,9 @@ function toRuns(text: string, color: string) {
       const rgba = bmgColour(e.bytes[4] * 256 + e.bytes[5]);
       color = rgba ? `rgb(${rgba[0]},${rgba[1]},${rgba[2]})` : defaultColor;
       alpha = rgba?.[3] === 0 ? 0 : 1;
+    } else if (asGame) {
+      const shown = gameText(text.slice(e.start, e.end));
+      if (shown) runs.push({ text: shown, color, alpha });
     } else if (!(e.bytes[1] === 0 && e.bytes[2] === 0 && e.bytes[3] === 0)) runs.push({ text: "◆", color: "#9aa4b8", alpha });
     last = e.end;
   }
