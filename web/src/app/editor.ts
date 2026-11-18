@@ -1327,8 +1327,11 @@ export class Editor {
       const real = this.assets?.kart;
       const kart = real ? cloneModel(real.template) : new THREE.Mesh(new THREE.BoxGeometry(160, 100, 240).translate(0, 50, 0), new THREE.MeshLambertMaterial({ color: 0xef4444 }));
       kart.userData.chrBinding = real?.chr ? bindCHR(real.chr, kart) : null;
-      kart.userData.boostFlames = this.addBoostFlames(kart, ghost.vehicle >= 18);
-      kart.userData.driftEffects = this.addDriftEffects(kart, ghost.vehicle >= 18);
+      // The vehicle's own size, measured before any effect is added (an effect, even hidden, would
+      // count: the flames reach far behind it, and the drift's sparks were placed behind them).
+      const body = new THREE.Box3().setFromObject(kart);
+      kart.userData.boostFlames = this.addBoostFlames(kart, ghost.vehicle >= 18, body);
+      kart.userData.driftEffects = this.addDriftEffects(kart, ghost.vehicle >= 18, body);
       vp.scene.add(kart);
       this.homeVisible = false;
       this.ghostView = { ghost, drive, kart, check: ghostTrackCheck(ghost, { fileName: this.doc.fileName, laps: this.doc.kmp.STGI?.[0]?.laps ?? null, routeLength: drive.route.length, trackNames: TRACK_NAMES, courseNames: COURSE_NAMES }) };
@@ -1406,8 +1409,7 @@ export class Editor {
   }
 
   // The flames of a mushroom, behind the vehicle: one at the middle of a bike, two on a kart.
-  private addBoostFlames(kart: THREE.Object3D, isBike: boolean) {
-    const box = new THREE.Box3().setFromObject(kart);
+  private addBoostFlames(kart: THREE.Object3D, isBike: boolean, box: THREE.Box3) {
     const back = Number.isFinite(box.min.z) && box.min.z < 0 ? box.min.z : -90;
     const across = Number.isFinite(box.max.x) && box.max.x > 0 ? box.max.x * .4 : 40;
     const flames = new THREE.Group();
@@ -1430,26 +1432,31 @@ export class Editor {
   // A drift's effects at the rear wheels (one on a bike): sparks once a mini-turbo is charged, blue,
   // then orange for a super mini-turbo; light smoke while it is still charging. Shown by showGhostFrame
   // from the path's own drift state; they move only with the frame, so a frame always looks the same.
-  private addDriftEffects(kart: THREE.Object3D, isBike: boolean) {
-    const box = new THREE.Box3().setFromObject(kart);
-    const back = Number.isFinite(box.min.z) && box.min.z < 0 ? box.min.z + 25 : -80;
+  private addDriftEffects(kart: THREE.Object3D, isBike: boolean, box: THREE.Box3) {
+    // At the rear wheels, where they touch the road: a little in from the back of the vehicle.
+    const back = Number.isFinite(box.min.z) && box.min.z < 0 ? box.min.z + Math.min(40, (box.max.z - box.min.z) * .12) : -80;
     const side = Number.isFinite(box.max.x) && box.max.x > 0 ? box.max.x * .75 : 60;
+    const ground = Number.isFinite(box.min.y) ? box.min.y : 0;
     const group = new THREE.Group();
     group.name = "drift-effects";
     // Full colour, not added to what is behind: on a light road added colour turns white.
     const spark = new THREE.MeshBasicMaterial({ color: 0x2f9dff, transparent: true, opacity: .95, depthWrite: false });
-    const glow = new THREE.MeshBasicMaterial({ color: 0x2f9dff, transparent: true, opacity: .55, depthWrite: false });
+    const glow = new THREE.MeshBasicMaterial({ color: 0x2f9dff, transparent: true, opacity: .7, depthWrite: false });
     const smoke = new THREE.MeshBasicMaterial({ color: 0xd9dde2, transparent: true, opacity: .32, depthWrite: false });
-    const sparkShape = new THREE.ConeGeometry(4.5, 80, 5).rotateX(-Math.PI / 2).translate(0, 0, -40);
+    const sparkShape = new THREE.ConeGeometry(6, 110, 5).rotateX(-Math.PI / 2).translate(0, 0, -55);
     const puffShape = new THREE.SphereGeometry(1, 10, 8);
     const wheels: { sparks: THREE.Mesh[]; puffs: THREE.Mesh[]; glow: THREE.Mesh }[] = [];
     for (const x of isBike ? [0] : [-side, side]) {
       const wheel = new THREE.Group();
-      wheel.position.set(x, 8, back);
+      wheel.position.set(x, ground + 8, back);
       const sparks = Array.from({ length: 12 }, () => new THREE.Mesh(sparkShape, spark));
       const puffs = Array.from({ length: 4 }, () => new THREE.Mesh(puffShape, smoke));
       const light = new THREE.Mesh(puffShape, glow);
       light.scale.setScalar(18);
+      // Drawn after the smoke, so the smoke never covers them.
+      light.renderOrder = 2;
+      for (const piece of sparks) piece.renderOrder = 3;
+      for (const piece of puffs) piece.renderOrder = 1;
       wheel.add(light, ...sparks, ...puffs);
       group.add(wheel);
       wheels.push({ sparks, puffs, glow: light });
@@ -1472,20 +1479,24 @@ export class Editor {
     wheels.forEach(({ sparks, puffs, glow: light }, w) => {
       const out = wheels.length > 1 ? (w === 0 ? -1 : 1) : 0;
       light.visible = drift >= 2;
-      light.scale.setScalar(16 + noise(w * 3 + 40) * 8);
+      light.scale.setScalar(16 + noise(w * 3 + 40) * 6);
+      light.position.set(0, 10, 0);
       sparks.forEach((piece, i) => {
         piece.visible = drift >= 2;
         const length = .4 + noise(w * 31 + i) * .9;
         piece.scale.set(1, 1, length);
-        piece.rotation.set(-(.25 + noise(w * 17 + i + 5) * .7), out * .35 + (noise(w * 7 + i + 9) - .5) * 1.1, 0, "YXZ");
+        // Backwards and a little up, out from the wheel (pointing down they went into the road).
+        piece.rotation.set(.12 + noise(w * 17 + i + 5) * .5, out * .35 + (noise(w * 7 + i + 9) - .5) * 1.1, 0, "YXZ");
+        piece.position.set(0, 8, 0);
       });
       puffs.forEach((piece, i) => {
         // Each puff grows and drifts back over 16 frames, one after another.
         const age = ((frame + i * 4) % 16) / 16;
         piece.visible = drift >= 1;
-        piece.scale.setScalar(8 + age * 22);
+        // Lighter and smaller once the sparks show, so they stay in sight.
+        piece.scale.setScalar((drift >= 2 ? 6 : 8) + age * (drift >= 2 ? 14 : 22));
         piece.position.set(out * age * 18, 6 + age * 14, -age * 90);
-        (piece.material as THREE.MeshBasicMaterial).opacity = .32;
+        (piece.material as THREE.MeshBasicMaterial).opacity = drift >= 2 ? .14 : .32;
       });
     });
   }

@@ -8,6 +8,7 @@ import { decodeTexture, TEXTURE_FORMATS } from "../../../js/formats/brres.js";
 import { parseBRLYT, parseBRLAN, parseTPL } from "../../../js/formats/brlyt.js";
 import { parseBRFNT } from "../../../js/formats/brfnt.js";
 import { MenuAssets } from "../../../js/editor/menu-screens.js";
+import { SelectBox } from "@/components/ui/select-box";
 
 export type MenuResourceFormat = "brlyt" | "brlan" | "brfnt" | "tpl";
 
@@ -106,16 +107,16 @@ export function MenuResourceDialog({ tree, filePath, format, close }: {
     {parsed.error ? <p className="rounded-md border border-destructive/40 p-3 text-sm text-destructive">Could not read this file: {parsed.error}</p> : <>
       {showLayout && <div className="flex shrink-0 flex-wrap items-end gap-3 text-xs">
         {format === "brlan" && <label className="flex min-w-48 flex-1 flex-col gap-1">Layout
-          <select className="h-8 rounded-md border bg-background px-2" value={layoutPath} onChange={(event) => setLayoutPath(event.target.value)}>
+          <SelectBox className="h-8 rounded-md border bg-background px-2" value={layoutPath} onChange={(event) => setLayoutPath(event.target.value)}>
             {!layoutPaths.length && <option value="">No BRLYT in this archive</option>}
             {layoutPaths.map((path) => <option key={path} value={path}>{path}</option>)}
-          </select>
+          </SelectBox>
         </label>}
         {format === "brlyt" && !!animationPaths.length && <label className="flex min-w-48 flex-1 flex-col gap-1">Animation
-          <select className="h-8 rounded-md border bg-background px-2" value={animationPath} onChange={(event) => { setAnimationPath(event.target.value); setFrame(0); }}>
+          <SelectBox className="h-8 rounded-md border bg-background px-2" value={animationPath} onChange={(event) => { setAnimationPath(event.target.value); setFrame(0); }}>
             <option value="">None</option>
             {animationPaths.map((path) => <option key={path} value={path}>{path}</option>)}
-          </select>
+          </SelectBox>
         </label>}
         {!!animation?.frames && <>
           <Button size="sm" variant="secondary" onClick={() => setPlaying(!playing)}>{playing ? "Pause" : "Play"}</Button>
@@ -126,9 +127,9 @@ export function MenuResourceDialog({ tree, filePath, format, close }: {
         </>}
       </div>}
       {!!images && images.length > 1 && <label className="flex shrink-0 items-center gap-2 text-xs">{format === "tpl" ? "Texture" : "Font sheet"}
-        <select className="h-8 rounded-md border bg-background px-2" value={imageIndex} onChange={(event) => setImageIndex(Number(event.target.value))}>
+        <SelectBox className="h-8 rounded-md border bg-background px-2" value={imageIndex} onChange={(event) => setImageIndex(Number(event.target.value))}>
           {images.map((_, index) => <option key={index} value={index}>{index + 1} / {images.length}</option>)}
-        </select>
+        </SelectBox>
       </label>}
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto lg:flex-row">
         <div className="flex min-h-64 min-w-0 flex-[2] items-center justify-center overflow-auto rounded-md border bg-[#1a1a1a] p-3">

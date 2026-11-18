@@ -20,6 +20,7 @@ import { TrackStylePicker, TrackTextures } from "./TrackTextures";
 import { TrackGeneratorPreview3D } from "./TrackGeneratorPreview3D";
 import { Hint, InfoTip } from "../common";
 import { cn } from "@/lib/utils";
+import { SelectBox } from "@/components/ui/select-box";
 
 const W = 640, H = 430, PH = 84; // drawing and height profile (canvas pixels)
 const KART = 300; // a kart is about 300 units wide
@@ -801,9 +802,9 @@ export function TrackGeneratorDialog({ hasSzs, close }: { hasSzs: boolean; close
                   <p className="m-0 text-[11px] text-muted-foreground">Checkpoints and routes split there by themselves. Try the result in the game: CPU drivers may take a shortcut differently from what you expect.</p>
                 </div>
                 <label className="flex items-center gap-2 text-xs"><span className="flex-1">Scenery beside the road</span>
-                  <select aria-label="Scenery" value={params.scenery || "none"} onChange={(e) => setParams((p: any) => ({ ...p, scenery: e.target.value }))} className="h-7 rounded-md border bg-background px-1.5 text-xs">
+                  <SelectBox aria-label="Scenery" value={params.scenery || "none"} onChange={(e) => setParams((p: any) => ({ ...p, scenery: e.target.value }))} className="h-7 rounded-md border bg-background px-1.5 text-xs">
                     <option value="none">None</option><option value="light">Some</option><option value="dense">Many</option>
-                  </select></label>
+                  </SelectBox></label>
                 {Array.isArray(params.itemBoxPositions) ? <p className="m-0 text-xs" aria-live="polite">{previewTrack?.itemBoxes.length || 0} manually placed item boxes</p> : num("itemRows", "Item box rows", 0, 8, 1, "Rows of four item boxes across the road, spread around the track.")}
                 <div className="flex flex-wrap gap-1.5"><Button size="sm" variant="outline" onClick={() => chooseTool("items")}><Package /> Place on drawing</Button><Button size="sm" variant="ghost" aria-label="Auto place item boxes" onClick={() => { remember(); setParam("itemBoxPositions", undefined); }}>Auto place</Button><Button size="sm" variant="ghost" aria-label="Remove all item boxes" onClick={() => { remember(); setParam("itemBoxPositions", []); }}>Remove all</Button></div>
                 {num("keyCheckpoints", "Key checkpoints", 0, 10, 1, "Checkpoints that must be crossed in order: they stop drivers from cutting across to finish a lap.")}

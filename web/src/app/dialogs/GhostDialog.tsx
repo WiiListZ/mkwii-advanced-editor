@@ -2,7 +2,7 @@
 // A ghost holds the buttons pressed, not the kart's path, which is what the notes here warn about.
 
 import * as React from "react";
-import { Box, FileUp, Pause, Play, Plus, Save, SkipBack, Trash2, Video, X } from "lucide-react";
+import { Box, ChevronDown, ChevronUp, FileUp, Pause, Play, Plus, Save, SkipBack, Trash2, Video, X } from "lucide-react";
 import { compareGhosts, differenceText } from "../../../js/editor/ghost-compare.js";
 import { ghostPoseAt } from "../../../js/editor/ghost-drive.js";
 import { toast } from "sonner";
@@ -15,6 +15,7 @@ import { buildRKG, CONTROLLERS, COUNTDOWN_FRAMES, COURSE_NAMES, FRAMES_PER_SECON
 import { dialogs } from "../dialogs-store";
 import { editor } from "../editor";
 import { NumberField } from "../number-field";
+import { SelectBox } from "@/components/ui/select-box";
 
 const RKG_FILTER = [{ name: "Ghost file", extensions: ["rkg"] }];
 // path: the .rkg file it is saved to. save and key: for a ghost of a Dolphin save, which save and which
@@ -43,9 +44,9 @@ const characterName = (id: number) => id <= 0x17 ? CHARACTERS[id] : id <= 0x29 ?
 function Pick({ label, value, options, onChange }: { label: string; value: number; options: [number, string][]; onChange: (value: number) => void }) {
   return <label className="flex items-center gap-2 text-xs">
     <span className="w-24 shrink-0 text-muted-foreground">{label}</span>
-    <select aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs">
+    <SelectBox aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs">
       {options.map(([id, text]) => <option key={id} value={id}>{text}</option>)}
-    </select>
+    </SelectBox>
   </label>;
 }
 
@@ -66,15 +67,16 @@ function TimeField({ label, value, onChange }: { label: string; value: any; onCh
 }
 
 // What was pressed, along the race: one lane per button, and the stick as two lines.
-function Timeline({ inputs, frame, total, onSeek }: { inputs: any; frame: number; total: number; onSeek: (frame: number) => void }) {
+const TIMELINE_HEIGHT = 120;
+function Timeline({ inputs, frame, total, onSeek, height = TIMELINE_HEIGHT }: { inputs: any; frame: number; total: number; onSeek: (frame: number) => void; height?: number }) {
   const canvas = React.useRef<HTMLCanvasElement>(null);
   React.useLayoutEffect(() => {
     const c = canvas.current, ctx = c?.getContext("2d");
     if (!c || !ctx) return;
-    const width = c.clientWidth || 600, height = 120, dpr = Math.min(2, devicePixelRatio || 1);
+    const width = c.clientWidth || 600, dpr = Math.min(2, devicePixelRatio || 1);
     c.width = width * dpr; c.height = height * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = "#14181c"; ctx.fillRect(0, 0, width, height);
+    ctx.setTransform(dpr, 0, 0, dpr * height / TIMELINE_HEIGHT, 0, 0);
+    ctx.fillStyle = "#14181c"; ctx.fillRect(0, 0, width, TIMELINE_HEIGHT);
     const scale = width / total;
     const lanes: [string, number, string][] = [["Accel", 1, "#4ade80"], ["Brake", 2, "#fbbf24"], ["Item", 4, "#38bdf8"]];
     lanes.forEach(([, mask, color], lane) => {
@@ -101,15 +103,48 @@ function Timeline({ inputs, frame, total, onSeek }: { inputs: any; frame: number
       ctx.stroke();
     };
     stick(4, "#fb7185"); stick(0, "#e5e7eb");
-  }, [inputs, total]);
+  }, [inputs, total, height]);
   const seek = (e: React.PointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     onSeek(Math.max(0, Math.min(total - 1, Math.round((e.clientX - rect.left) / rect.width * total))));
   };
-  return <div className="relative h-[120px] w-full cursor-pointer touch-none overflow-hidden rounded border"
+  return <div className="relative w-full shrink-0 cursor-pointer touch-none overflow-hidden rounded border" style={{ height }}
     onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); seek(e); }} onPointerMove={(e) => { if (e.buttons & 1) seek(e); }}>
-    <canvas ref={canvas} aria-label="Ghost inputs over time" className="block h-[120px] w-full" />
+    <canvas ref={canvas} aria-label="Ghost inputs over time" className="block w-full" style={{ height }} />
     <div className="pointer-events-none absolute inset-y-0 w-px bg-white" style={{ left: `${frame / total * 100}%` }} data-ghost-playhead />
+  </div>;
+}
+
+const TIMELINE_MIN = 60, TIMELINE_MAX = 260;
+function useTimelineLayout(where: string) {
+  const key = `mkwii-ghost-timeline:${where}`;
+  const [layout, setLayout] = React.useState<{ hidden: boolean; height: number }>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(key) || "null");
+      if (saved && typeof saved.hidden === "boolean" && Number.isFinite(saved.height)) return { hidden: saved.hidden, height: Math.max(TIMELINE_MIN, Math.min(TIMELINE_MAX, saved.height)) };
+    } catch { /* first use */ }
+    return { hidden: false, height: TIMELINE_HEIGHT };
+  });
+  const change = React.useCallback((patch: Partial<{ hidden: boolean; height: number }>) => setLayout((current) => {
+    const next = { ...current, ...patch };
+    next.height = Math.max(TIMELINE_MIN, Math.min(TIMELINE_MAX, Math.round(next.height)));
+    try { localStorage.setItem(key, JSON.stringify(next)); } catch { /* not kept */ }
+    return next;
+  }), [key]);
+  return [layout, change] as const;
+}
+
+// Drag handle that makes the timeline taller or shorter; double-click restores its height.
+// `up`: the timeline grows when the handle is dragged up (it sits above it, as in the 3D window).
+function TimelineHandle({ up, onResize, onReset }: { up: boolean; onResize: (delta: number) => void; onReset: () => void }) {
+  const start = React.useRef<number | null>(null);
+  return <div role="separator" aria-orientation="horizontal" aria-label="Resize the timeline" title="Drag to resize the timeline (double-click to reset)"
+    className="group flex h-2 shrink-0 cursor-row-resize touch-none select-none items-center justify-center" data-ghost-timeline-handle
+    onPointerDown={(e) => { if (e.button !== 0) return; start.current = e.clientY; e.currentTarget.setPointerCapture(e.pointerId); e.preventDefault(); }}
+    onPointerMove={(e) => { if (start.current === null) return; const delta = e.clientY - start.current; if (delta) { start.current = e.clientY; onResize(up ? -delta : delta); } }}
+    onPointerUp={(e) => { start.current = null; e.currentTarget.releasePointerCapture(e.pointerId); }}
+    onDoubleClick={onReset}>
+    <div className="h-1 w-12 rounded-full bg-border transition-colors group-hover:bg-primary/60" />
   </div>;
 }
 
@@ -175,11 +210,17 @@ function GhostPreview({ ghost, onFrame, inline = true }: { ghost: any; onFrame?:
     return () => { window.removeEventListener("keydown", down, true); window.removeEventListener("keyup", up, true); };
   }, [inline]);
   const size = 76, center = size / 2, reach = size / 2 - 9;
-  return <section ref={section} className="flex flex-col gap-2" data-ghost-preview data-frame={shown} data-playing={playing}>
+  const [saved, setLayout] = useTimelineLayout(inline ? "editor" : "3d");
+  // Only the 3D window hides the timeline (there it covers the track); the editor always shows it.
+  const layout = inline ? { ...saved, hidden: false } : saved;
+  const clockText = clock < 0 ? `Start in ${Math.ceil((COUNTDOWN_FRAMES - shown) / 60)}` : time(clock);
+  const lapText = `${finished ? "Finished" : clock < 0 ? "Countdown" : `Lap ${lap} of ${ghost.laps}`} · frame ${shown}`;
+  const handle = <TimelineHandle up={!inline} onResize={(delta) => setLayout({ height: layout.height + delta })} onReset={() => setLayout({ height: TIMELINE_HEIGHT })} />;
+  return <section ref={section} className="flex flex-col gap-2" data-ghost-preview data-frame={shown} data-playing={playing} data-timeline={layout.hidden ? "hidden" : "shown"}>
     {inline && <div className="flex items-center gap-2"><span className="flex-1 text-xs font-semibold">Preview</span>
       <Button size="sm" variant="secondary" className="h-7 gap-1 px-2 text-xs" title="Opens the track in its own window, showing only this ghost" onClick={() => editor.openGhostPreview(ghost)}><Box className="size-3.5" /> Watch in 3D (beta)</Button>
     </div>}
-    <div className="flex flex-wrap items-center gap-4">
+    {!layout.hidden && <><div className="flex flex-wrap items-center gap-4">
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-label="Stick" className="shrink-0">
         <circle cx={center} cy={center} r={center - 1} fill="#14181c" stroke="currentColor" strokeOpacity={.3} />
         <line x1={center} y1={4} x2={center} y2={size - 4} stroke="currentColor" strokeOpacity={.15} />
@@ -193,20 +234,31 @@ function GhostPreview({ ghost, onFrame, inline = true }: { ghost: any; onFrame?:
         <Lamp on={!!held.trick} label={held.trick ? `Trick ${held.trick}` : "Trick"} color="#c084fc" />
       </div>
       <div className="ml-auto text-right">
-        <div className="font-mono text-lg tabular-nums leading-none" data-ghost-clock>{clock < 0 ? `Start in ${Math.ceil((COUNTDOWN_FRAMES - shown) / 60)}` : time(clock)}</div>
-        <div className="mt-1 text-[11px] text-muted-foreground">{finished ? "Finished" : clock < 0 ? "Countdown" : `Lap ${lap} of ${ghost.laps}`} · frame {shown}</div>
+        <div className="font-mono text-lg tabular-nums leading-none" data-ghost-clock>{clockText}</div>
+        <div className="mt-1 text-[11px] text-muted-foreground">{lapText}</div>
       </div>
     </div>
-    <Timeline inputs={ghost.inputs} frame={shown} total={total} onSeek={seek} />
+    <div className="flex flex-col">
+      {!inline && handle}
+      <Timeline inputs={ghost.inputs} frame={shown} total={total} onSeek={seek} height={layout.height} />
+      {inline && handle}
+    </div></>}
     <div className="flex flex-wrap items-center gap-1.5">
       <Button size="sm" variant="secondary" className="h-7 gap-1 px-2 text-xs" title="Space" onClick={togglePlay} aria-label={playing ? "Pause" : "Play"}>{playing ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}{playing ? "Pause" : "Play"}</Button>
       <Button size="icon-sm" variant="ghost" aria-label="To the start" title="To the start" onClick={() => seek(0)}><SkipBack /></Button>
       <Button size="icon-sm" variant="ghost" aria-label="Previous frame" title="Previous frame" onClick={() => seek(Math.max(0, shown - 1))}>‹</Button>
       <Button size="icon-sm" variant="ghost" aria-label="Next frame" title="Next frame" onClick={() => seek(Math.min(total - 1, shown + 1))}>›</Button>
       <label className="ml-1 flex items-center gap-1 text-[11px] text-muted-foreground">Speed
-        <select aria-label="Preview speed" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} className="h-7 rounded-md border bg-background px-1 text-[11px]">
+        <SelectBox aria-label="Preview speed" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} className="h-7 rounded-md border bg-background px-1 text-[11px]">
           {[.25, .5, 1, 2, 4].map((value) => <option key={value} value={value}>{value}×</option>)}
-        </select></label>
+        </SelectBox></label>
+      {!inline && <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" aria-pressed={!layout.hidden} title={layout.hidden ? "Show the stick, the buttons and the timeline" : "Hide the stick, the buttons and the timeline: only these controls stay"} onClick={() => setLayout({ hidden: !layout.hidden })} data-ghost-timeline-toggle>
+        {layout.hidden ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}{layout.hidden ? "Show timeline" : "Hide timeline"}
+      </Button>}
+      {layout.hidden && <div className="ml-auto flex items-baseline gap-2 text-right">
+        <span className="font-mono text-sm tabular-nums" data-ghost-clock>{clockText}</span>
+        <span className="text-[11px] text-muted-foreground">{lapText}</span>
+      </div>}
     </div>
     {inline && <p className="text-[11px] text-muted-foreground">From the top: accelerate, brake or drift, item, trick; below, the stick (left and right in red, up and down in white). This plays what the driver pressed. Watch in 3D shows it on the track: the file holds no positions, so the path is worked out from these inputs with Kinoko, as the game drives it, when the game's files are in the game folder; otherwise it is approximate.</p>}
   </section>;
@@ -279,10 +331,10 @@ function GhostCompare({ ghost, label, sources }: { ghost: any; label: string; so
   return <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-1" data-ghost-compare>
     <div className="flex flex-wrap items-center gap-1.5">
       <span className="text-xs text-muted-foreground">Compare with</span>
-      <select aria-label="Ghost to compare with" value={choices.find((item: any) => item.text === other?.label)?.id || ""} onChange={(e) => void pick(e.target.value)} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs">
+      <SelectBox aria-label="Ghost to compare with" value={choices.find((item: any) => item.text === other?.label)?.id || ""} onChange={(e) => void pick(e.target.value)} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs">
         <option value="">Choose a ghost…</option>
         {choices.map((item: any) => <option key={item.id} value={item.id}>{item.text}</option>)}
-      </select>
+      </SelectBox>
       <Button size="sm" variant="secondary" className="h-7 px-2 text-xs" onClick={openOther}><FileUp /> Open .rkg…</Button>
     </div>
     {!result ? <p className="text-xs text-muted-foreground">Choose a second ghost to see the lap times and inputs of both. Ghosts of the same track are listed first.</p> : <>
@@ -384,9 +436,9 @@ function InputTable({ inputs, onChange }: { inputs: any; onChange: (inputs: any)
       <label className="flex items-center gap-1 text-[11px]">Left–right <input type="range" aria-label={`Left to right on entry ${i}`} min={0} max={14} value={(entry.state >> 4) & 15} onChange={(e) => update(i, { state: (Number(e.target.value) << 4) | (entry.state & 15) })} className="w-20" /></label>
       <label className="flex items-center gap-1 text-[11px]">Down–up <input type="range" aria-label={`Down to up on entry ${i}`} min={0} max={14} value={entry.state & 15} onChange={(e) => update(i, { state: (entry.state & 0xF0) | Number(e.target.value) })} className="w-20" /></label>
     </>;
-    return (i: number) => <select aria-label={`Trick on entry ${i}`} value={entry.state & 0x70} onChange={(e) => update(i, { state: Number(e.target.value) })} className="h-6 rounded border bg-background text-[11px]">
+    return (i: number) => <SelectBox aria-label={`Trick on entry ${i}`} value={entry.state & 0x70} onChange={(e) => update(i, { state: Number(e.target.value) })} className="h-6 rounded border bg-background text-[11px]">
       {[[0, "None"], [0x10, "Up"], [0x20, "Down"], [0x30, "Left"], [0x40, "Right"]].map(([value, text]) => <option key={value} value={value}>{text}</option>)}
-    </select>;
+    </SelectBox>;
   };
   return <div className="flex min-h-0 flex-col gap-1.5">
     <div className="flex flex-wrap items-center gap-1">

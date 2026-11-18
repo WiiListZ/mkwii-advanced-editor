@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { buildPrimitive, PRIMITIVE_DEFAULTS, PRIMITIVE_MAX_TRIANGLES, PRIMITIVE_SHAPES } from "../../../js/editor/primitives.js";
 import { editor } from "../editor";
+import { SelectBox } from "@/components/ui/select-box";
 
 type Field = { key: string; label: string; min: number; max: number; step: number; shapes?: string[] };
 const SIZE: Field[] = [
@@ -145,9 +146,9 @@ export function PrimitiveDialog({ close }: { close: (value: any) => void }) {
           <div className="text-xs font-semibold">On the track</div>
           <label className="flex items-center gap-2 text-xs"><span className="w-32 shrink-0 text-muted-foreground">Colour</span><input type="color" aria-label="Colour" value={color} onChange={(e) => setColor(e.target.value)} className="h-7 w-12 cursor-pointer rounded border bg-transparent p-0.5" /></label>
           <label className="flex items-center gap-2 text-xs"><span className="w-32 shrink-0 text-muted-foreground">Collision</span>
-            <select aria-label="Collision" value={collision} onChange={(e) => setCollision(e.target.value)} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs">
+            <SelectBox aria-label="Collision" value={collision} onChange={(e) => setCollision(e.target.value)} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs">
               {COLLISIONS.map(([id, text]) => <option key={id} value={id}>{text}</option>)}
-            </select></label>
+            </SelectBox></label>
           {collision === "none" && <p className="text-[11px] text-muted-foreground">Without collision karts drive through it.</p>}
         </section>
       </div>

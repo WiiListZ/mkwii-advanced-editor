@@ -7,6 +7,14 @@ import { join, resolve, sep } from "node:path";
 import { kartArchiveName } from "../web/js/editor/kart-archives.js";
 import { buildRKG, inputFrames, parseRKG, timeText } from "../web/js/formats/rkg.js";
 
+// Chooses an option of the app's drop-down list (SelectBox): opens it and clicks the option by its value.
+async function chooseOption(page: any, selector: string, value: string) {
+  await page.click(selector);
+  await page.waitForFunction((v: string) => [...document.querySelectorAll('[role="option"]')].some((o) => o.getAttribute("data-value") === v), { timeout: 10000 }, value);
+  await page.evaluate((v: string) => { ([...document.querySelectorAll('[role="option"]')].find((o) => o.getAttribute("data-value") === v) as HTMLElement).click(); }, value);
+  await page.waitForFunction((s: string, v: string) => document.querySelector(s)?.getAttribute("data-value") === v, { timeout: 10000 }, selector, value);
+}
+
 const game = process.env.MKWII_GAME_DIR;
 if (!game || !existsSync(join(game, "Race", "TimeAttack", "ghost1", "ghost1_comp_00.rkg"))) {
   console.log("MKWII_GAME_DIR not set (or no staff ghosts): skipped");
@@ -74,7 +82,7 @@ try {
     return { frame: Number(root.dataset.frame), clock: root.querySelector("[data-ghost-clock]")!.textContent, accelerate: root.querySelector('[data-lamp="Accel"]')!.getAttribute("data-on") };
   });
   if ((await preview()).frame !== 0 || !(await preview()).clock?.startsWith("Start in 4")) throw new Error(`The preview should start at the countdown: ${JSON.stringify(await preview())}`);
-  await page.select('[aria-label="Preview speed"]', "4");
+  await chooseOption(page, '[aria-label="Preview speed"]', "4");
   await page.click('[aria-label="Play"]');
   await page.waitForFunction(() => Number(document.querySelector<HTMLElement>("[data-ghost-preview]")!.dataset.frame) > 300, { timeout: 20000 });
   await page.click('[aria-label="Pause"]');
@@ -152,7 +160,7 @@ try {
   const start = await kart();
   await new Promise((done) => setTimeout(done, 1200));
   if (shot) await preview3D.screenshot({ path: `${shot}-3d-start.png` });
-  await preview3D.select('[aria-label="Preview speed"]', "4");
+  await chooseOption(preview3D, '[aria-label="Preview speed"]', "4");
   await preview3D.click('[aria-label="Play"]');
   await preview3D.waitForFunction(() => Number(document.querySelector<HTMLElement>("[data-ghost-preview]")!.dataset.frame) > 700, { timeout: 60000 });
   await preview3D.click('[aria-label="Pause"]');
@@ -284,7 +292,7 @@ try {
     await page.keyboard.press("Enter");
   };
   await type("Finish time seconds", "07");
-  await page.select('[aria-label="Vehicle"]', "22");
+  await chooseOption(page, '[aria-label="Vehicle"]', "22");
   await clickButton("Save");
   await page.waitForFunction(() => !document.body.textContent?.includes("· not saved") && document.body.textContent?.includes("Ghost saved"));
   const saved = parseRKG(new Uint8Array(readFileSync(copy)));
@@ -317,9 +325,12 @@ try {
   await page.waitForSelector('[aria-label="Finish time seconds"]');
   await clickButton("Compare");
   await page.waitForSelector("[data-ghost-compare]");
-  const choice = await page.evaluate(() => [...document.querySelectorAll<HTMLOptionElement>('[aria-label="Ghost to compare with"] option')].find((o) => o.textContent?.includes("Luigi Circuit 1-11-111"))?.value);
+  await page.click('[aria-label="Ghost to compare with"]');
+  await page.waitForSelector('[role="option"]');
+  const choice = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.textContent?.includes("Luigi Circuit 1-11-111"))?.getAttribute("data-value"));
+  await page.keyboard.press("Escape");
   if (!choice) throw new Error("The recorded ghost is not offered for comparing");
-  await page.select('[aria-label="Ghost to compare with"]', choice);
+  await chooseOption(page, '[aria-label="Ghost to compare with"]', choice);
   await page.waitForSelector("[data-compare-total]");
   const compared = await page.evaluate(() => ({ total: Number(document.querySelector("[data-compare-total]")!.getAttribute("data-compare-total")), laps: document.querySelectorAll("[data-compare-lap]").length, note: document.querySelector("[data-compare-inputs]")!.textContent }));
   // 1:11.111 against the staff ghost's own time.
@@ -431,7 +442,7 @@ try {
   await page.evaluate(async (track) => { await (window as any).app.openPath(track); }, join(game, "Race", "Course", "beginner_course.szs"));
   await page.evaluate(() => { void (window as any).app.cmd("trackGhosts"); });
   await page.waitForSelector("[data-ghost-slot]");
-  const position = await page.$eval('[aria-label="Position"]', (el: any) => Number(el.value));
+  const position = await page.$eval('[aria-label="Position"]', (el: any) => Number(el.getAttribute("data-value")));
   if (position !== 8) throw new Error(`The open track's position was not found: ${position}`);
   if (await page.evaluate(() => document.querySelectorAll("[data-ghost-slot]").length) !== 1) throw new Error("Only the copied ghost should be listed for this position");
   // Its preview: the window of the ghost in this slot, on the track being edited.

@@ -21,6 +21,7 @@ import { ColorInput, NumberInput, TYPE_LIMITS } from "./EffectsDialog";
 import { ColumnHandle, useColumnWidths } from "../resizable";
 import { HistoryBar, useEditHistory, useHistoryKeys } from "../edit-history";
 import { cn } from "@/lib/utils";
+import { SelectBox } from "@/components/ui/select-box";
 
 export const isParamFile = (path: string, data: Uint8Array) => /\.(bin|bcp|bsp|kmg|krt|krm)$/i.test(path) && data.length > 0;
 export const isLightingFile = (path: string, data: Uint8Array) => /\.(blight|blmap)$/i.test(path) && data.length > 0;
@@ -207,11 +208,11 @@ export function ParamsDialog({ tree: archiveTree, archiveName: givenName, initia
                             <p className="m-0 text-[11px] leading-snug text-muted-foreground">{f.help}</p>
                           </div>
                           {f.options ? (
-                            <select aria-label={f.label} value={value} onChange={(e) => attempt(`${entries[entry]}: ${f.label}`, () => writeStat(data!, entry, f, Number(e.target.value)))}
+                            <SelectBox aria-label={f.label} value={value} onChange={(e) => attempt(`${entries[entry]}: ${f.label}`, () => writeStat(data!, entry, f, Number(e.target.value)))}
                               className="h-7 rounded-md border bg-background px-1.5 text-xs">
                               {!f.options.some(([v]: any) => v === value) && <option value={value}>{value}</option>}
                               {f.options.map(([v, label]: any) => <option key={v} value={v}>{label}</option>)}
-                            </select>
+                            </SelectBox>
                           ) : <NumberInput label={f.label} value={value} integer={f.type === "u32"} min={TYPE_LIMITS[f.type]?.[0]} max={TYPE_LIMITS[f.type]?.[1]} onCommit={(n) => attempt(`${entries[entry]}: ${f.label}`, () => writeStat(data!, entry, f, n))} />}
                         </div>
                       );
@@ -247,7 +248,7 @@ export function ParamsDialog({ tree: archiveTree, archiveName: givenName, initia
                 {bin.layout && (
                   <div className="flex flex-wrap items-end gap-2 border-y py-2">
                     <label className="flex flex-col gap-0.5 text-[11px] text-muted-foreground">Read as
-                      <select aria-label="Value type" value={bin.layout.type} onChange={(e) => setLayout({ type: e.target.value })} className="h-7 rounded-md border bg-background px-1.5 text-xs text-foreground">
+                      <SelectBox aria-label="Value type" value={bin.layout.type} onChange={(e) => setLayout({ type: e.target.value })} className="h-7 rounded-md border bg-background px-1.5 text-xs text-foreground">
                         <option value="auto">Automatic</option>
                         <option value="f32">Decimal (f32)</option>
                         <option value="s32">Whole, signed (s32)</option>
@@ -255,7 +256,7 @@ export function ParamsDialog({ tree: archiveTree, archiveName: givenName, initia
                         <option value="s16">Whole, signed (s16)</option>
                         <option value="u16">Whole (u16)</option>
                         <option value="u8">Byte (u8)</option>
-                      </select>
+                      </SelectBox>
                     </label>
                     <label className="flex w-24 flex-col gap-0.5 text-[11px] text-muted-foreground">Header bytes
                       <NumberInput label="Header bytes" integer min={0} max={data!.length} value={bin.layout.header} onCommit={(n) => setLayout({ header: n })} />
@@ -298,12 +299,12 @@ export function ParamsDialog({ tree: archiveTree, archiveName: givenName, initia
                       })()
                       : f.options ? (() => {
                         const value = readBinValue(data!, f.at, f.type);
-                        return <select aria-label={`${binRow.label}: ${f.label}`} value={value} title={f.options.find(([v]: any) => v === value)?.[1]}
+                        return <SelectBox aria-label={`${binRow.label}: ${f.label}`} value={value} title={f.options.find(([v]: any) => v === value)?.[1]}
                           onChange={(e) => attempt(`${binRow.label}: ${f.label}`, () => writeBinValue(data!, f.at, f.type as keyof typeof BIN_TYPES, Number(e.target.value)))}
                           className="h-7 w-full min-w-0 rounded-md border bg-background px-1.5 text-xs">
                           {!f.options.some(([v]: any) => v === value) && <option value={value}>{value}</option>}
                           {f.options.map(([v, label]: any) => <option key={v} value={v}>{label}</option>)}
-                        </select>;
+                        </SelectBox>;
                       })()
                       : <NumberInput label={`${binRow.label}: ${f.label}`} value={readBinValue(data!, f.at, f.type)} integer={f.type !== "f32"}
                           min={(BIN_LIMITS as any)[f.type]?.[0]} max={(BIN_LIMITS as any)[f.type]?.[1]}

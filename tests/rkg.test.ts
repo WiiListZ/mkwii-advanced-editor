@@ -332,8 +332,9 @@ test("the item button uses up to three mushrooms, each with a boost, and the lap
   const again = press(1000, 1060);
   expect(ghostPoseAt(again, 1140).boost).toBeGreaterThan(0);
   expect(ghostPoseAt(again, 1150).boost).toBe(0);
-  // The view behind widens with it.
-  expect(ghostCamera(ghostPoseAt(one, 1040), "chase").fov).toBeGreaterThan(ghostCamera(ghostPoseAt(one, 999), "chase").fov);
+  // The view behind does not move with it: same distance and width as without a boost.
+  const boosting = ghostPoseAt(one, 1040), still = { ...boosting, boost: 0 };
+  expect(ghostCamera(boosting, "chase")).toEqual(ghostCamera(still, "chase"));
 });
 
 test("two ghosts are compared lap by lap and input by input", () => {

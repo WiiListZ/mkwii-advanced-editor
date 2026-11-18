@@ -8,6 +8,7 @@ import { ObjectPreview } from "./ObjectPreview";
 import { TexturePainter } from "./TexturePainter";
 import { dialogs } from "../dialogs-store";
 import { replaceBRRESTexture } from "../../../js/formats/brres.js";
+import { SelectBox } from "@/components/ui/select-box";
 
 const SOURCE: Record<string, string> = {
   track: "This track", common: "Common.szs", library: "Tracks library",
@@ -61,10 +62,10 @@ export function ObjectAppearanceDialog({ objectId, close }: { objectId: number; 
                 </Button>
                 {resource.textures.length > 0 && (
                   <div className="flex gap-1">
-                    <select aria-label={`Texture in ${resource.name}`} className="min-w-0 flex-1 rounded-md border bg-background px-2 text-[11px]"
+                    <SelectBox aria-label={`Texture in ${resource.name}`} className="min-w-0 flex-1 rounded-md border bg-background px-2 text-[11px]"
                       value={texture} onChange={(e) => setChosen((old) => ({ ...old, [resource.name]: e.target.value }))}>
                       {resource.textures.map((t: any) => <option key={t.name} value={t.name}>{t.name} · {t.width}×{t.height}{/^lm_/i.test(t.name) ? " · light map" : ""}</option>)}
-                    </select>
+                    </SelectBox>
                     <Button size="sm" variant="outline" disabled={!supported} onClick={() => editor.replaceObjectTexture(objectId, resource.name, texture)}>PNG…</Button>
                   </div>
                 )}

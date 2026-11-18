@@ -16,6 +16,7 @@ import { useEditor } from "../hooks";
 import { hex, type CollisionShapeKind } from "../editor";
 import { Hint, InfoTip, SectionTitle } from "../common";
 import { cn } from "@/lib/utils";
+import { SelectBox } from "@/components/ui/select-box";
 
 type Mode = "show" | "paint";
 
@@ -175,9 +176,9 @@ export function CollisionPanel() {
                   {selectedTris.length === 1 ? `Triangle #${selectedTri + 1}` : `${selectedTris.length} triangles selected`}
                 </div>
                 <label className="block space-y-1.5 text-[11px] text-muted-foreground">Surface type{selectedTris.length > 1 ? " for selection" : ""}
-                  <select className="h-8 w-full rounded-md border bg-background px-2 text-xs text-foreground" value={kcl.flags[selectedTri] & 31} onChange={(e) => ed.editCollisionType(Number(e.target.value))}>
+                  <SelectBox className="h-8 w-full rounded-md border bg-background px-2 text-xs text-foreground" value={kcl.flags[selectedTri] & 31} onChange={(e) => ed.editCollisionType(Number(e.target.value))}>
                     {KCL_TYPES.map((type: any) => <option key={type.id} value={type.id}>{type.name}</option>)}
-                  </select>
+                  </SelectBox>
                 </label>
                 {selectedTris.length > 1 && new Set(selectedTris.map((tri) => kcl.flags[tri] & 31)).size > 1 && <p className="m-0 text-[11px] text-muted-foreground">Mixed surface types. Choosing one applies it to all selected triangles.</p>}
                 <div className="grid grid-cols-3 gap-1 [&_button]:gap-1 [&_button]:px-1 [&_button]:text-[11px] [&_svg]:size-3.5">
@@ -209,9 +210,9 @@ export function CollisionPanel() {
 
         <CollisionSection icon={Plus} title="Create collision" description={drawing ? "Drawing in the 3D view" : "Draw triangles, walls and other shapes"} open={createOpen} onOpenChange={setCreateOpen}>
           <label className="mb-3 block space-y-1.5 text-[11px] text-muted-foreground">Surface of new shapes
-            <select className="h-8 w-full rounded-md border bg-background px-2 text-xs text-foreground" value={p.type} onChange={(e) => ed.setPaint({ type: Number(e.target.value) })}>
+            <SelectBox className="h-8 w-full rounded-md border bg-background px-2 text-xs text-foreground" value={p.type} onChange={(e) => ed.setPaint({ type: Number(e.target.value) })}>
               {KCL_TYPES.map((type: any) => <option key={type.id} value={type.id}>{type.name}</option>)}
-            </select>
+            </SelectBox>
           </label>
           <ShapeOptions />
         </CollisionSection>

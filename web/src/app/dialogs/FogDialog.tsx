@@ -12,6 +12,7 @@ import { listFiles } from "../../../js/formats/u8.js";
 import { InfoTip } from "../common";
 import { editor } from "../editor";
 import { NumberField } from "../number-field";
+import { SelectBox } from "@/components/ui/select-box";
 
 const FOG_PATH = "posteffect/posteffect.bfg";
 const WIDTH = 640, HEIGHT = 360;
@@ -90,9 +91,9 @@ export function FogDialog({ close }: { close: (value: any) => void }) {
           <span data-fog-help="Settings"><InfoTip title="Fog settings" text={FOG_HELP.settings} /></span>
           {entries.map((_, i) => <Button key={i} size="sm" variant={current === i ? "secondary" : "ghost"} className="h-7 flex-1 px-2 text-xs" aria-pressed={current === i} onClick={() => setCurrent(i)}>Fog {i}</Button>)}
         </div>
-        <Row label="Kind" help={FOG_HELP.kind}><select aria-label="Fog kind" value={entry.type} onChange={(e) => edit({ type: Number(e.target.value) })} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs">
+        <Row label="Kind" help={FOG_HELP.kind}><SelectBox aria-label="Fog kind" value={entry.type} onChange={(e) => edit({ type: Number(e.target.value) })} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs">
           {FOG_TYPES.map(([id, name]: any) => <option key={id} value={id}>{name}</option>)}
-        </select></Row>
+        </SelectBox></Row>
         <p className="m-0 text-[11px] leading-snug text-muted-foreground" data-fog-kind-help>{(FOG_KIND_HELP as any)[entry.type] ?? ""}</p>
         <Row label="Colour" help={FOG_HELP.colour}><input type="color" aria-label="Fog colour" value={toHex(entry.color)} disabled={!entry.type} onChange={(e) => edit({ color: fromHex(e.target.value) })} className="h-7 w-14 cursor-pointer rounded border bg-background" /></Row>
         <Row label="Starts at" help={FOG_HELP.start}><NumberField commit aria-label="Fog start" value={entry.start} disabled={!entry.type} onValue={(start: number) => edit({ start })} className="h-7 min-w-0 flex-1 px-1.5 text-xs" /></Row>

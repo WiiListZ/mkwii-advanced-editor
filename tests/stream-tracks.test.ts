@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 // @ts-ignore Shared editor code used by the frontend.
-import { replaceTrack, withoutTrack, withTrack, withTrackMix } from "../web/js/editor/stream-tracks.js";
+import { endTrack, loopTrack, replaceTrack, seamlessLoopStart, seamlessStreamLoop, withoutTrack, withTrack, withTrackMix } from "../web/js/editor/stream-tracks.js";
 // @ts-ignore Shared editor code used by the frontend.
 import { mixTracks, panGains } from "../web/js/editor/audio.js";
 // @ts-ignore Shared data used by the frontend.
@@ -109,4 +109,38 @@ test("the preview places each track as the game does: volume, and pan with its c
   const half = mixTracks({ ...clip, tracks: [{ volume: 64, pan: 64, channels: [0, 1] }] });
   expect(half[0][0]).toBeCloseTo(0.5 * 64 / 127, 3);
   expect(half[1][0]).toBeCloseTo(0.25 * 64 / 127, 3);
+});
+
+test("a track's own loop repeats its part to the end of the music, other tracks untouched", () => {
+  const ramp = (length: number, add: number) => Int16Array.from({ length }, (_, i) => i + add);
+  const clip = { sampleRate: 32000, loop: true, loopStart: 2, channels: [ramp(20, 0), ramp(20, 1000), ramp(20, 5000), ramp(20, 6000)], tracks: [{ volume: 127, pan: 64, channels: [0, 1] }, { volume: 127, pan: 64, channels: [2, 3] }], trackType: 1 };
+  const looped = loopTrack(clip, 1, 4, 8);
+  expect([...looped.channels[2]]).toEqual([5000, 5001, 5002, 5003, 5004, 5005, 5006, 5007, 5004, 5005, 5006, 5007, 5004, 5005, 5006, 5007, 5004, 5005, 5006, 5007]);
+  expect(looped.channels[3][9]).toBe(6005);
+  expect(looped.channels[0]).toBe(clip.channels[0]);
+  expect(() => loopTrack(clip, 0, 8, 8)).toThrow();
+  // The music's loop start for it to go on without a jump: whole repeats of 4 samples before the end.
+  const start = seamlessLoopStart(20, 4, 4, 2)!;
+  expect(start).toBe(4);
+  expect((20 - start) % 4).toBe(0);
+  expect(seamlessLoopStart(20, 4, 4, 13)).toBe(12);
+  expect(seamlessLoopStart(20, 10, 16, 0)).toBeNull();
+  // At the stream's end it continues as from its loop start.
+  const at = (i: number) => looped.channels[2][i];
+  expect(at(19) + 1 === at(12) || at(12) === at(4)).toBe(true);
+  // Without a loop: its audio to the end chosen, then silence.
+  const ended = endTrack(clip, 1, 6);
+  expect([...ended.channels[2].slice(4, 9)]).toEqual([5004, 5005, 0, 0, 0]);
+  expect(ended.channels[3][19]).toBe(0);
+  expect(ended.channels[1]).toBe(clip.channels[1]);
+});
+
+test("the music's loop start without a jump is where its end goes on best", () => {
+  // A tone of 400 samples per cycle that starts again at sample 12345 (a whole number of cycles
+  // before the end): a start chosen a little off is moved back onto it, or onto a cycle like it.
+  const rate = 32000, length = 12345 + 400 * 40;
+  const tone = Int16Array.from({ length }, (_, i) => Math.round(Math.sin(2 * Math.PI * (i < 12345 ? i * 1.7 : i - 12345) / 400) * 10000 * (i < 12345 ? .3 : 1)));
+  const start = seamlessStreamLoop([tone, tone], 12345 + 4000 + 137, rate);
+  expect((length - start) % 400).toBe(0);
+  expect(Math.abs(start - (12345 + 4137))).toBeLessThan(400);
 });

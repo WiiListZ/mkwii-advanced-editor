@@ -703,7 +703,7 @@ export function ghostCamera(pose, view) {
   const [x, , z] = pose.position, y = pose.focusY ?? pose.position[1], [fx, fz] = pose.view || pose.forward;
   if (view === 'above') return { position: [x, y + 6000, z - 200], target: [x, y, z], fov: 50 };
   if (view === 'side') return { position: [x - fz * 1400, y + 350, z + fx * 1400], target: [x, y + 100, z], fov: 45 };
-  // Behind, a boost pulls the view back and widens it.
-  const boost = pose.boost || 0, back = 900 + boost * 120;
-  return { position: [x - fx * back, y + 380, z - fz * back], target: [x + fx * 300, y + 130, z + fz * 300], fov: 62 + boost * 10 };
+  // Behind, always at the same distance and angle: a boost does not move the view.
+  const back = 900;
+  return { position: [x - fx * back, y + 380, z - fz * back], target: [x + fx * 300, y + 130, z + fz * 300], fov: 62 };
 }

@@ -12,6 +12,7 @@ import { COURSE_NAMES, ghostForSlot, parseRKG, timeText } from "../../../js/form
 import { dialogs } from "../dialogs-store";
 import { editor } from "../editor";
 import { ghostSummary, RKG_FILTER } from "./GhostRecordDialog";
+import { SelectBox } from "@/components/ui/select-box";
 
 const STAFF_TYPE_NAMES: Record<number, string> = { 0x25: "Staff ghost", 0x26: "Expert staff ghost" };
 
@@ -85,9 +86,9 @@ export function TrackGhostsDialog({ close }: { close: (value: any) => void }) {
     </div>
     <label className="flex shrink-0 items-center gap-2 text-xs">
       <span className="w-24 shrink-0 text-muted-foreground">Position</span>
-      <select aria-label="Position" value={track} onChange={(e) => { setChoosing(null); setTrack(Number(e.target.value)); }} className="h-8 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs">
+      <SelectBox aria-label="Position" value={track} onChange={(e) => { setChoosing(null); setTrack(Number(e.target.value)); }} className="h-8 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs">
         {COURSE_NAMES.map((name: string, id: number) => <option key={id} value={id}>{name}</option>)}
-      </select>
+      </SelectBox>
     </label>
     {detected < 0 && <p className="shrink-0 text-[11px] text-muted-foreground">{editor.doc.fileName} is not named after a position of the game: choose the one where you play it.</p>}
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">

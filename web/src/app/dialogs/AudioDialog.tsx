@@ -13,7 +13,7 @@ import { api, FILTERS } from "../../../js/api.js";
 import { buildBRSTM, decodeBRSTM, parseBRSTM, setBRSTMLoop, setBRSTMTrackMix } from "../../../js/formats/brstm.js";
 import { listWaves, parseBRSAR, readWave, replaceWave, setBRSARSoundProperties, setStreamRoom, streamSound, streamTrackCount } from "../../../js/formats/brsar.js";
 import { MAX_CHANNELS, MAX_TRACKS, musicTriggers, SOUND_TRIGGER, trackPlays } from "../../../js/data/music-tracks.js";
-import { replaceTrack, withoutTrack, withTrack } from "../../../js/editor/stream-tracks.js";
+import { endTrack, loopTrack, replaceTrack, seamlessLoopStart, seamlessStreamLoop, withoutTrack, withTrack } from "../../../js/editor/stream-tracks.js";
 import { encodeFLAC, encodeWAV, isolateTrack, mixTracks, musicLabel, panGains, toFloat32, toInt16 } from "../../../js/editor/audio.js";
 import { encodeOggOpus } from "../../../js/editor/ogg-opus.js";
 import { AAC_RATE, aacSupported, encodeAIFF, encodeM4A, encodeMP3, mp3Rate } from "../../../js/editor/audio-export.js";
@@ -25,6 +25,7 @@ import { useEditor } from "../hooks";
 import { cn } from "@/lib/utils";
 import { VirtualRows } from "../virtual-rows";
 import { useActivityNote } from "../discord-activity";
+import { SelectBox } from "@/components/ui/select-box";
 
 // Every sound is listed (the game has thousands): rows have one height.
 const ROW = 44;
@@ -92,7 +93,9 @@ function drawWaveform(canvas: HTMLCanvasElement, samples: Float32Array, loopAt?:
   }
 }
 
-function TrackWaveform({ clip, index, elapsed, active, onPlay }: { clip: Clip; index: number; elapsed: number; active: boolean; onPlay: (at: number) => void }) {
+const panText = (pan: number) => pan === 64 ? "middle" : pan < 64 ? `L ${64 - pan}` : `R ${pan - 64}`;
+
+function TrackWaveform({ clip, index, elapsed, active, onPlay, part }: { clip: Clip; index: number; elapsed: number; active: boolean; onPlay: (at: number) => void; part?: [number, number] | null }) {
   const canvas = React.useRef<HTMLCanvasElement>(null);
   const duration = clip.channels[0].length / clip.sampleRate;
   React.useEffect(() => {
@@ -102,6 +105,7 @@ function TrackWaveform({ clip, index, elapsed, active, onPlay }: { clip: Clip; i
     <button type="button" className="relative block h-9 w-full cursor-pointer overflow-hidden rounded-sm bg-black/40 text-left" title={`Play track ${index + 1} from position`} aria-label={`Seek and play track ${index + 1}`}
       onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); onPlay((event.clientX - rect.left) / rect.width * duration); }}>
       <canvas ref={canvas} className="h-full w-full" aria-hidden="true" />
+      {part && part[1] > part[0] && <span className="pointer-events-none absolute inset-y-0 border-x border-dashed border-foreground/70 bg-foreground/10" data-track-loop-part style={{ left: `${Math.max(0, part[0] / duration * 100)}%`, width: `${Math.max(0, Math.min(duration, part[1]) - part[0]) / duration * 100}%` }} />}
       {active && <span className="pointer-events-none absolute inset-y-0 w-px bg-primary" style={{ left: `${Math.min(100, elapsed / duration * 100)}%` }} />}
     </button>
   );
@@ -270,6 +274,8 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
   const [loopPreview, setLoopPreview] = React.useState(true);
   const [loopEnabled, setLoopEnabled] = React.useState(false);
   const [loopStartText, setLoopStartText] = React.useState("0");
+  // The music's loop start moved a little, to where its end goes on without a jump (see seamlessStreamLoop).
+  const [loopSeamless, setLoopSeamless] = React.useState(false);
   const [busy, setBusy] = React.useState("");
   const [hasBackup, setHasBackup] = React.useState(false);
   const source = React.useRef<AudioBufferSourceNode | null>(null);
@@ -304,11 +310,11 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
         const data = await musicBytes();
         const s = parseBRSTM(data);
         const c = { sampleRate: s.sampleRate, channels: decodeBRSTM(s), loop: s.loop, loopStart: s.loopStart, tracks: s.tracks, trackType: s.trackType };
-        if (!cancelled) { setClip(c); setLoopEnabled(c.loop); setLoopStartText(String(c.loopStart / c.sampleRate)); }
+        if (!cancelled) { setClip(c); setLoopEnabled(c.loop); setLoopStartText(String(c.loopStart / c.sampleRate)); setLoopSeamless(false); }
         setHasBackup(!sourceBytes && await api.exists(item.path + ".bak"));
       } else {
         const c = readWave(archive, item.wave);
-        if (!cancelled) { setClip(c); setLoopEnabled(c.loop); setLoopStartText(String(c.loopStart / c.sampleRate)); }
+        if (!cancelled) { setClip(c); setLoopEnabled(c.loop); setLoopStartText(String(c.loopStart / c.sampleRate)); setLoopSeamless(false); }
         setHasBackup(!!brsarPath && await api.exists(brsarPath + ".bak"));
       }
     })().catch((e) => !cancelled && setError(e.message));
@@ -404,6 +410,33 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
     setPlayingTrack(trackIndex);
   };
   // A track's volume or pan while it plays: heard at once.
+  // Each track's volume and pan as moved (written when the slider is let go). The music's own
+  // Volume and Pan move every track by as much (with one track: that track's).
+  const [mix, setMix] = React.useState<{ volume: number; pan: number }[]>([]);
+  React.useEffect(() => { setMix(clip ? tracksOf(clip).map((t) => ({ volume: t.volume, pan: t.pan })) : []); }, [clip]);
+  const applyMix = async (indices: number[], next = mix) => {
+    if (!clip) return;
+    const tracks = tracksOf(clip);
+    const changed = indices.filter((i) => next[i] && (next[i].volume !== tracks[i].volume || next[i].pan !== tracks[i].pan));
+    if (!changed.length) return;
+    try {
+      // In the header only, when the file keeps them; else written again with them.
+      if (clip.trackType === 1) {
+        let bytes = await musicBytes();
+        for (const i of changed) bytes = setBRSTMTrackMix(bytes, i, next[i].volume, next[i].pan);
+        mixOnly.current = bytes;
+        onReplaceMusic(bytes);
+      } else onReplaceMusic(buildBRSTM({ channels: clip.channels, sampleRate: clip.sampleRate, loop: clip.loop, loopStart: clip.loopStart, tracks: tracks.map((t, i) => changed.includes(i) ? { ...t, ...next[i] } : t), trackType: 1 }));
+    } catch (e: any) { toast.error("Could not change the volume or pan", { description: e.message }); }
+  };
+  const masterMix = React.useRef<{ volume: number; pan: number }[] | null>(null);
+  const moveAll = (key: "volume" | "pan", value: number) => {
+    const delta = value - (mix[0]?.[key] ?? value);
+    const next = mix.map((m) => ({ ...m, [key]: Math.max(0, Math.min(127, m[key] + delta)) }));
+    masterMix.current = next;
+    setMix(next);
+    next.forEach((m, i) => liveMix(i, m));
+  };
   const liveMix = (index: number, mix: { volume: number; pan: number }) => {
     const entry = live.current.get(index);
     if (!entry || !clip) return;
@@ -423,7 +456,7 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
   };
 
   const loopStartSample = clip ? Math.round(Number(loopStartText) * clip.sampleRate) : 0;
-  const loopChanged = !!clip && (loopEnabled !== clip.loop || loopStartSample !== clip.loopStart);
+  const loopChanged = !!clip && (loopEnabled !== clip.loop || (loopEnabled && (loopStartSample !== clip.loopStart || loopSeamless)));
   const applyLoop = async () => {
     if (!clip || item.kind !== "music") return;
     if (!Number.isFinite(Number(loopStartText)) || loopStartSample < 0 || loopStartSample >= clip.channels[0].length) {
@@ -432,9 +465,11 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
     }
     setBusy("Updating loop…");
     try {
+      const start = loopEnabled && loopSeamless ? seamlessStreamLoop(clip.channels, loopStartSample, clip.sampleRate) : loopStartSample;
       const bytes = await musicBytes();
-      onReplaceMusic(setBRSTMLoop(bytes, loopEnabled, loopStartSample));
-      toast.success("Loop updated", { description: "Save to write the BRSTM file." });
+      onReplaceMusic(setBRSTMLoop(bytes, loopEnabled, start));
+      setLoopSeamless(false);
+      toast.success("Loop updated", { description: `${!loopEnabled ? "The music plays once and stops." : start !== loopStartSample ? `It starts again from ${seconds(start, clip.sampleRate)} (moved from ${seconds(loopStartSample, clip.sampleRate)}, where the end goes on without a jump).` : `It starts again from ${seconds(start, clip.sampleRate)}.`} Save to write the BRSTM file.` });
     } catch (e: any) { toast.error("Could not update the loop", { description: e.message }); }
     finally { setBusy(""); }
   };
@@ -569,7 +604,23 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
             </label>
             <Button size="icon-sm" variant="ghost" title="Set loop start to the playback position" aria-label="Set loop start to playhead" onClick={() => setLoopStartText(Math.min(elapsed, (clip.channels[0].length - 1) / clip.sampleRate).toFixed(6))}><LocateFixed /></Button>
             <span className="self-center text-[11px] text-muted-foreground">End: {seconds(clip.channels[0].length, clip.sampleRate)}</span>
-            <Button size="sm" variant="secondary" disabled={!loopChanged || !!busy} onClick={applyLoop}><Check /> Apply loop</Button>
+            {loopEnabled && <label className="flex h-8 cursor-pointer items-center gap-1.5 px-1 text-[11px] text-muted-foreground" title="Apply moves the loop start a little (at most half a second) to where the end of the music goes on best into it, so the music does not jump when it starts again">
+              <input type="checkbox" className="accent-primary" checked={loopSeamless} onChange={(e) => setLoopSeamless(e.target.checked)} /> Loops without a jump
+            </label>}
+            {loopChanged && <Button size="sm" variant="secondary" disabled={!!busy} onClick={applyLoop}><Check /> Apply loop</Button>}
+          </div>}
+          {item.kind === "music" && mix.length > 0 && <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground" data-music-mix>
+            {(["volume", "pan"] as const).map((key) => <label key={key} className="flex items-center gap-1.5" title={mix.length > 1 ? `${key === "volume" ? "Volume" : "Pan"} of every track: each moves by as much` : `${key === "volume" ? "Volume" : "Pan"} of the music (its track 1)`}>
+              {key === "pan" ? <MoveHorizontal className="size-3.5" aria-hidden="true" />
+                : (() => { const v = mix[0]?.volume ?? 127, Icon = v === 0 ? VolumeX : v < 43 ? Volume : v < 86 ? Volume1 : Volume2; return <Icon className="size-3.5" aria-hidden="true" />; })()}
+              <span>{key === "volume" ? "Volume" : "Pan"}</span>
+              <input type="range" min="0" max="127" step="1" aria-label={`Music ${key}`} value={mix[0]?.[key] ?? 64} className="w-28 cursor-pointer accent-primary"
+                onChange={(e) => moveAll(key, Number(e.currentTarget.value))}
+                onPointerUp={() => { void applyMix(mix.map((_, i) => i), masterMix.current ?? mix); masterMix.current = null; }}
+                onKeyUp={() => { void applyMix(mix.map((_, i) => i), masterMix.current ?? mix); masterMix.current = null; }} />
+              <span className="w-12 tabular-nums">{key === "pan" ? panText(mix[0]?.pan ?? 64) : mix[0]?.volume}</span>
+            </label>)}
+            {mix.length > 1 && <span>every track</span>}
           </div>}
           <div className="flex flex-wrap items-center gap-1.5">
             {playing && playingTrack === null ? <Button size="sm" onClick={stop}><Square /> Stop</Button> : <Button size="sm" onClick={() => play()}><Play /> Play mix</Button>}
@@ -589,7 +640,7 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
           </div>
           {item.kind === "music" && <TracksSection item={item} clip={clip} archive={archive} busy={busy} setBusy={setBusy} elapsed={elapsed}
             playing={playing} playingTrack={playingTrack} play={play} stop={stop} setElapsed={setElapsed} exportAs={exportAs} liveMix={liveMix}
-            musicBytes={musicBytes} onReplaceMusic={onReplaceMusic} onMixOnly={(bytes) => { mixOnly.current = bytes; onReplaceMusic(bytes); }} onArchiveChange={onArchiveChange} onPaintTrigger={onPaintTrigger} />}
+            mix={mix} setMix={setMix} applyMix={(index) => applyMix([index])} onReplaceMusic={onReplaceMusic} onArchiveChange={onArchiveChange} onPaintTrigger={onPaintTrigger} />}
           {item.wave?.kind === "Sound" && archive && <SoundProperties archive={archive} index={Number(item.wave.key.slice(1))} onChange={(next) => onArchiveChange(next, item.key)} />}
           <p className="m-0 text-[11px] leading-relaxed text-muted-foreground">
             {item.kind === "music"
@@ -608,11 +659,12 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
 
 // A music's tracks: each played, replaced, exported, mixed or taken out on its own, new ones added up
 // to what the game can play (see music-tracks.js), and when the game plays each.
-function TracksSection({ item, clip, archive, busy, setBusy, elapsed, playing, playingTrack, play, stop, setElapsed, exportAs, liveMix, musicBytes, onReplaceMusic, onMixOnly, onArchiveChange, onPaintTrigger }: {
+function TracksSection({ item, clip, archive, busy, setBusy, elapsed, playing, playingTrack, play, stop, setElapsed, exportAs, liveMix, mix, setMix, applyMix, onReplaceMusic, onArchiveChange, onPaintTrigger }: {
   item: Item; clip: Clip; archive: any; busy: string; setBusy: (text: string) => void; elapsed: number; playing: boolean; playingTrack: number | null;
   play: (track?: number | null, from?: number) => Promise<void>; stop: () => void; setElapsed: (at: number) => void; exportAs: (format: ExportFormat, track?: number | null) => Promise<void>;
-  liveMix: (index: number, mix: { volume: number; pan: number }) => void; onMixOnly: (bytes: Uint8Array) => void;
-  musicBytes: () => Promise<Uint8Array>; onReplaceMusic: (bytes: Uint8Array | null) => void; onArchiveChange: (archive: any, key: string) => void; onPaintTrigger: (variant: number) => void;
+  liveMix: (index: number, mix: { volume: number; pan: number }) => void;
+  mix: { volume: number; pan: number }[]; setMix: React.Dispatch<React.SetStateAction<{ volume: number; pan: number }[]>>; applyMix: (index: number) => void;
+  onReplaceMusic: (bytes: Uint8Array | null) => void; onArchiveChange: (archive: any, key: string) => void; onPaintTrigger: (variant: number) => void;
 }) {
   const tracks = clip.tracks?.length ? clip.tracks : [{ volume: 127, pan: 64, channels: clip.channels.map((_, i) => i) }];
   const file = item.path || item.detail;
@@ -621,8 +673,6 @@ function TracksSection({ item, clip, archive, busy, setBusy, elapsed, playing, p
   const room = sound ? { tracks: streamTrackCount(sound.stream), channels: sound.stream.channels } : null;
   const canAdd = tracks.length < MAX_TRACKS && clip.channels.length + 2 <= MAX_CHANNELS;
   const canPaint = !!editor.doc.kcl;
-  const [mix, setMix] = React.useState(tracks.map((t) => ({ volume: t.volume, pan: t.pan })));
-  React.useEffect(() => { setMix(tracks.map((t) => ({ volume: t.volume, pan: t.pan }))); }, [clip]);
 
   const write = (next: any) => onReplaceMusic(buildBRSTM({ channels: next.channels, sampleRate: next.sampleRate, loop: next.loop, loopStart: next.loopStart, tracks: next.tracks, trackType: next.trackType }));
   const audio = async (title: string, description: string) => {
@@ -665,15 +715,6 @@ function TracksSection({ item, clip, archive, busy, setBusy, elapsed, playing, p
     try { stop(); write(withoutTrack(clip, index)); } catch (e: any) { toast.error("Could not take out the track", { description: e.message }); }
     setBusy("");
   };
-  const applyMix = async (index: number) => {
-    const { volume, pan } = mix[index];
-    if (volume === tracks[index].volume && pan === tracks[index].pan) return;
-    try {
-      // In the header only, when the file keeps them; else written again with them.
-      if (clip.trackType === 1) onMixOnly(setBRSTMTrackMix(await musicBytes(), index, volume, pan));
-      else write({ ...clip, tracks: tracks.map((t, i) => i === index ? { ...t, volume, pan } : t), trackType: 1 });
-    } catch (e: any) { toast.error("Could not change the track", { description: e.message }); }
-  };
   // When a track plays, in words, when no Sound Trigger list says it.
   const plainly = (index: number) => {
     const when = trackPlays(file, index);
@@ -681,7 +722,56 @@ function TracksSection({ item, clip, archive, busy, setBusy, elapsed, playing, p
     if (!when.variants.length) return when.unsaid.length ? `not documented: ${triggers!.course}'s music changes on Sound Triggers ${when.unsaid.map((v: any) => v.variant).join(", ")}, but which track each plays is not known.` : "never: no Sound Trigger of this course plays it.";
     return null;
   };
-  const panText = (pan: number) => pan === 64 ? "middle" : pan < 64 ? `L ${64 - pan}` : `R ${pan - 64}`;
+  // A track's own loop (seconds): its part from `from` to `to` repeats up to the end of the music.
+  // `fit`: the music's loop start moves so that the track goes on without a jump when it loops.
+  // `on` false: no loop of its own, the track plays up to `to` and is then silent.
+  const rate = clip.sampleRate, total = clip.channels[0].length, end = total / rate;
+  const round = (v: number) => Math.round(v * 1000) / 1000;
+  type TrackLoop = { on: boolean; from: string; to: string; fit: boolean };
+  const [loops, setLoops] = React.useState<Record<number, TrackLoop>>({});
+  React.useEffect(() => { setLoops({}); }, [clip]);
+  const loopOf = (index: number): TrackLoop => loops[index] || { on: true, from: String(round(clip.loop ? clip.loopStart / rate : 0)), to: String(round(end)), fit: true };
+  const setLoop = (index: number, patch: Partial<TrackLoop>) => setLoops((l) => ({ ...l, [index]: { ...loopOf(index), ...patch } }));
+  const loopSamples = (index: number) => {
+    // Seconds are shown to the millisecond: an end typed at the music's length, rounded up, is its end.
+    const l = loopOf(index), from = Math.round(Number(l.from) * rate), typed = Math.round(Number(l.to) * rate);
+    const to = typed > total && typed <= total + rate / 1000 ? total : typed;
+    if (!l.on) return l.to.trim() !== "" && Number.isFinite(to) && to > 0 && to <= total ? { from: 0, to } : null;
+    return l.from.trim() !== "" && l.to.trim() !== "" && Number.isFinite(from) && Number.isFinite(to) && from >= 0 && to > from && to <= total ? { from, to } : null;
+  };
+  // Whether Apply would change the track: a loop other than the music's own (from its loop start to
+  // its end, nothing to repeat), or no loop of its own ending before the end of the music.
+  const loopEdited = (index: number) => {
+    const p = loopSamples(index), l = loopOf(index);
+    if (!loops[index] || !p) return !!loops[index];
+    if (!l.on) return p.to < total;
+    return !(p.to === total && p.from === (clip.loop ? clip.loopStart : 0));
+  };
+  const newLoopStart = (index: number) => { const p = loopSamples(index), l = loopOf(index); return p && l.on && l.fit ? seamlessLoopStart(total, p.from, p.to - p.from, clip.loopStart) : null; };
+  const applyTrackLoop = (index: number) => {
+    const part = loopSamples(index), l = loopOf(index);
+    if (!part) { toast.error(l.on ? "The track's loop must start before it ends, within the music" : "The track's end must be within the music"); return; }
+    if (!l.on) {
+      setBusy("Ending the track…");
+      try {
+        stop();
+        write(endTrack(clip, index, part.to));
+        toast.success(`Track ${index + 1} does not loop`, { description: `It plays to ${seconds(part.to, rate)}, then it is silent to the end of the music. Save to write it into the game files.` });
+      } catch (e: any) { toast.error("Could not change the track", { description: e.message }); }
+      setBusy("");
+      return;
+    }
+    const start = newLoopStart(index);
+    if (l.fit && start === null) { toast.error("The track's loop is longer than what follows its start", { description: "Choose a shorter part, or untick Loops without a jump." }); return; }
+    setBusy("Looping the track…");
+    try {
+      stop();
+      const next = loopTrack(clip, index, part.from, part.to);
+      write(start !== null ? { ...next, loop: true, loopStart: start } : next);
+      toast.success(`Track ${index + 1} loops`, { description: `From ${seconds(part.from, rate)} to ${seconds(part.to, rate)}, repeated to the end of the music${start !== null ? `; the music loops from ${seconds(start, rate)}` : ""}. Save to write it into the game files.` });
+    } catch (e: any) { toast.error("Could not loop the track", { description: e.message }); }
+    setBusy("");
+  };
 
   return <div className="border-t pt-3" data-music-tracks>
     <div className="mb-1 flex flex-wrap items-center gap-2">
@@ -728,7 +818,30 @@ function TracksSection({ item, clip, archive, busy, setBusy, elapsed, playing, p
                 {canPaint && <button type="button" className="cursor-pointer text-muted-foreground hover:text-foreground" aria-label={`Paint Sound Trigger variant ${v.variant}`} title={`Paint Sound Trigger variant ${v.variant} on the open track's collision, where this should start`} onClick={() => onPaintTrigger(v.variant)}><Paintbrush className="size-3" /></button>}
               </span>)}
           </div>
-          <TrackWaveform clip={clip} index={index} elapsed={elapsed} active={on} onPlay={(at) => { setElapsed(at); void play(index, at); }} />
+          {(() => {
+            const l = loopOf(index), part = loopSamples(index), start = newLoopStart(index);
+            const at = (key: "from" | "to") => <Button size="icon-sm" variant="ghost" disabled={!on} title={on ? `Set the ${key === "from" ? "start" : "end"} of this track's loop to the playback position` : `Play track ${index + 1} to set the ${key === "from" ? "start" : "end"} of its loop where it plays`} aria-label={`Track ${index + 1} loop ${key === "from" ? "start" : "end"} at the playback position`} onClick={() => setLoop(index, { [key]: String(round(elapsed)) })}><LocateFixed /></Button>;
+            const field = (key: "from" | "to", label: string) => <label className="flex items-center gap-1">
+              <span>{label}</span>
+              <Input aria-label={`Track ${index + 1} loop ${key === "from" ? "start" : "end"} in seconds`} type="number" min="0" max={round(end)} step="0.001" value={l[key]} onChange={(e) => setLoop(index, { [key]: e.target.value })} onKeyDown={(e) => e.stopPropagation()} className="h-7 w-20 text-xs" />
+              {at(key)}
+            </label>;
+            return <div className="flex flex-col gap-1 text-[11px] text-muted-foreground" data-track-loop={index + 1}>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <label className="flex cursor-pointer items-center gap-1.5 text-foreground" title="Off: this track does not repeat a part of its own; it plays to the end you choose, then it is silent">
+                  <input type="checkbox" className="accent-primary" aria-label={`Track ${index + 1} loops`} checked={l.on} onChange={(e) => setLoop(index, { on: e.target.checked })} /><Repeat className="size-3.5" aria-hidden="true" /> Loop of this track
+                </label>
+                {l.on && field("from", "From (s)")}
+                {field("to", l.on ? "to" : "Ends at (s)")}
+                {l.on && <label className="flex cursor-pointer items-center gap-1.5" title="Moves the music's loop start so that, when the music starts again, this track goes on without a jump (the music's loop then lasts whole repeats of this track's)">
+                  <input type="checkbox" className="accent-primary" checked={l.fit} onChange={(e) => setLoop(index, { fit: e.target.checked })} /> Loops without a jump
+                </label>}
+                {loopEdited(index) && <Button size="sm" variant="secondary" disabled={!part || !!busy} onClick={() => applyTrackLoop(index)}><Check /> {l.on ? "Apply loop" : "Apply"}</Button>}
+              </div>
+              <span>{!l.on ? (part ? `Without a loop of its own: the track plays to ${seconds(part.to, rate)}, then it is silent to the end of the music. ${clip.loop ? `The music itself still starts again from ${seconds(clip.loopStart, rate)}, every track with it: untick Loop in file above for the music to play once and stop.` : "The music's loop is off: it plays once and stops."}` : "The end must be within the music.") : !part ? "The loop must start before it ends, within the music." : `The game loops the whole music, every track together${clip.loop ? `, from ${seconds(clip.loopStart, rate)} to its end` : " (its loop is off)"}. Apply repeats this part of the track up to the end of the music${l.fit ? start === null ? "; it is longer than what follows its start, so it cannot loop without a jump." : start === clip.loopStart && clip.loop ? ", and it goes on without a jump at the music's loop." : `, and moves the music's loop start to ${seconds(start, rate)} so it goes on without a jump${tracks.length > 1 ? " (the other tracks jump back there too)" : ""}.` : "."}`}</span>
+            </div>;
+          })()}
+          <TrackWaveform clip={clip} index={index} elapsed={elapsed} active={on} part={loops[index] && loopSamples(index) ? [loopSamples(index)!.from / rate, loopSamples(index)!.to / rate] : null} onPlay={(at) => { setElapsed(at); void play(index, at); }} />
         </div>;
       })}
     </div>
@@ -752,12 +865,12 @@ function SoundProperties({ archive, index, onChange }: { archive: any; index: nu
     <p className="m-0 text-right text-[11px] tabular-nums text-muted-foreground">{sound.volume}</p>
     {row("Priority", "When too many sounds play, those with a lower priority stop first (0 to 127; most use 64)", <input type="range" min={0} max={127} defaultValue={sound.priority} key={`p${index}:${sound.priority}`} onPointerUp={(e) => set({ priority: Number(e.currentTarget.value) })} className="min-w-0 flex-1" />)}
     <p className="m-0 text-right text-[11px] tabular-nums text-muted-foreground">{sound.priority}</p>
-    {row("Player", "The group of sounds it plays in, each with its own limit of sounds at once", <select aria-label="Player" value={sound.player} onChange={(e) => set({ player: Number(e.target.value) })} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1 text-xs">
+    {row("Player", "The group of sounds it plays in, each with its own limit of sounds at once", <SelectBox aria-label="Player" value={sound.player} onChange={(e) => set({ player: Number(e.target.value) })} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1 text-xs">
       {archive.players.map((p: any, i: number) => <option key={i} value={i}>{p.name} · up to {p.playableSounds}</option>)}
-    </select>)}
-    {row("Pan", "How the sound is placed between the speakers", <select aria-label="Pan mode" value={sound.panMode} onChange={(e) => set({ panMode: Number(e.target.value) })} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1 text-xs">
+    </SelectBox>)}
+    {row("Pan", "How the sound is placed between the speakers", <SelectBox aria-label="Pan mode" value={sound.panMode} onChange={(e) => set({ panMode: Number(e.target.value) })} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1 text-xs">
       <option value={0}>Balance</option><option value={1}>Dual</option>
-    </select>)}
+    </SelectBox>)}
     {row("Wii Remote filter", "Filter of the sound on the Wii Remote speaker (0 to 127)", <input type="number" min={0} max={127} defaultValue={sound.remoteFilter} key={`r${index}:${sound.remoteFilter}`} onBlur={(e) => set({ remoteFilter: Math.max(0, Math.min(127, Math.round(Number(e.currentTarget.value) || 0))) })} className="h-7 w-20 rounded-md border bg-background px-1 text-xs" />)}
     <p className="m-0 text-[11px] text-muted-foreground">These settings belong to this sound only. Save writes them with the archive.</p>
   </div>;

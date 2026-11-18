@@ -27,6 +27,7 @@ import { parseBRRES } from "../../../js/formats/brres.js";
 import { listFiles } from "../../../js/formats/u8.js";
 import { editor } from "../editor";
 import { useEditor } from "../hooks";
+import { SelectBox } from "@/components/ui/select-box";
 
 const toHex = (rgba: number[]) => "#" + rgba.slice(0, 3).map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("");
 const fromHex = (hex: string, alpha = 1) => [...[1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)), Math.round(alpha * 255)];
@@ -66,9 +67,9 @@ export function MaterialsDialog({ close }: { close: (value: any) => void }) {
     catch (e: any) { toast.error("Could not change the material", { description: e.message }); }
   };
   const select = (value: number, options: any[], label: string, onChange: (value: number) => void) =>
-    <Row label={label}><select aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs">
+    <Row label={label}><SelectBox aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs">
       {options.map(([id, text]) => <option key={id} value={id}>{text}</option>)}
-    </select></Row>;
+    </SelectBox></Row>;
 
   return <div className="flex h-full min-h-0 flex-col gap-3">
     <div className="flex shrink-0 items-start gap-2">
@@ -80,9 +81,9 @@ export function MaterialsDialog({ close }: { close: (value: any) => void }) {
     </div>
     <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[280px_minmax(0,1fr)]">
       <div className="flex min-h-0 flex-col gap-1.5">
-        <select aria-label="Model file" value={path} onChange={(e) => { setPath(e.target.value); setName(""); }} className="h-8 rounded-md border bg-background px-1.5 text-xs">
+        <SelectBox aria-label="Model file" value={path} onChange={(e) => { setPath(e.target.value); setName(""); }} className="h-8 rounded-md border bg-background px-1.5 text-xs">
           {files.map((f: any) => <option key={f.path} value={f.path}>{f.path}</option>)}
-        </select>
+        </SelectBox>
         <input aria-label="Filter materials" placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} className="h-8 rounded-md border bg-background px-2 text-xs" />
         <div className="min-h-0 flex-1 overflow-y-auto border">
           {shown.map((e: any) => <button key={`${e.model}/${e.material.name}`} type="button" onClick={() => setName(e.material.name)}

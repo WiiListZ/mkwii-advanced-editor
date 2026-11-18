@@ -9,6 +9,14 @@ import { readMapColours, MAP_LAYOUT } from "../web/js/formats/map-layout.js";
 import { findFile, parseU8 } from "../web/js/formats/u8.js";
 import { yaz0Decompress } from "../web/js/formats/yaz0.js";
 
+// Chooses an option of the app's drop-down list (SelectBox): opens it and clicks the option by its value.
+async function chooseOption(page: any, selector: string, value: string) {
+  await page.click(selector);
+  await page.waitForFunction((v: string) => [...document.querySelectorAll('[role="option"]')].some((o) => o.getAttribute("data-value") === v), { timeout: 10000 }, value);
+  await page.evaluate((v: string) => { ([...document.querySelectorAll('[role="option"]')].find((o) => o.getAttribute("data-value") === v) as HTMLElement).click(); }, value);
+  await page.waitForFunction((s: string, v: string) => document.querySelector(s)?.getAttribute("data-value") === v, { timeout: 10000 }, selector, value);
+}
+
 const game = process.env.MKWII_GAME_DIR;
 if (!game || !existsSync(join(game, "Race", "Common.szs"))) {
   console.log("MKWII_GAME_DIR not set (or no Race/Common.szs): skipped");
@@ -144,13 +152,13 @@ try {
   }
   const kindLine = () => page.evaluate(() => document.querySelector("[data-fog-kind-help]")!.textContent);
   if (!(await kindLine())?.includes("no fog")) throw new Error(`Kind line: ${await kindLine()}`);
-  await page.select('[aria-label="Fog kind"]', "4");
+  await chooseOption(page, '[aria-label="Fog kind"]', "4");
   await page.waitForFunction(() => document.querySelector("[data-fog-kind-help]")!.textContent?.includes("The usual one"));
-  await page.select('[aria-label="Fog kind"]', "0");
+  await chooseOption(page, '[aria-label="Fog kind"]', "0");
   const clear = await picture();
   if (!(clear.sum > 5)) throw new Error(`The fog preview is empty: ${JSON.stringify(clear)}`);
   if (shot) await page.screenshot({ path: `${shot}-fog-before.png` });
-  await page.select('[aria-label="Fog kind"]', "1");
+  await chooseOption(page, '[aria-label="Fog kind"]', "1");
   await page.evaluate(() => {
     const color = document.querySelector<HTMLInputElement>('[aria-label="Fog colour"]')!;
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(color, "#ff0000");
@@ -183,7 +191,7 @@ try {
   if (written.label !== "Fog" || written.type !== 1 || written.end !== 5000 || written.red !== 255 || written.green !== 0 || written.size < 112) throw new Error(`Fog not written: ${JSON.stringify(written)}`);
   // Opened again it reads what was written.
   await open("fog", '[aria-label="The track with this fog"]');
-  const reread = await page.evaluate(() => ({ kind: document.querySelector<HTMLSelectElement>('[aria-label="Fog kind"]')!.value, end: document.querySelector<HTMLInputElement>('[aria-label="Fog end"]')!.value, colour: document.querySelector<HTMLInputElement>('[aria-label="Fog colour"]')!.value }));
+  const reread = await page.evaluate(() => ({ kind: document.querySelector('[aria-label="Fog kind"]')!.getAttribute("data-value"), end: document.querySelector<HTMLInputElement>('[aria-label="Fog end"]')!.value, colour: document.querySelector<HTMLInputElement>('[aria-label="Fog colour"]')!.value }));
   if (reread.kind !== "1" || reread.end !== "5000" || reread.colour !== "#ff0000") throw new Error(`Fog read back wrong: ${JSON.stringify(reread)}`);
   await clickButton("Cancel");
   await closed();
@@ -267,7 +275,7 @@ try {
   // Materials: a change goes into the model, with a step back in the main window.
   await open("materials", '[aria-label="Faces shown"]');
   if (shot) await page.screenshot({ path: `${shot}-materials.png` });
-  await page.select('[aria-label="Faces shown"]', "0");
+  await chooseOption(page, '[aria-label="Faces shown"]', "0");
   await page.waitForFunction(() => (window as any).app.doc.undoStack.at(-1)?.label?.startsWith("Faces shown"));
   await clickButton("Done");
   await closed();
@@ -277,7 +285,7 @@ try {
   // Primitive: the preview draws, values move it, and placing adds it to the model with collision.
   await open("primitive", "[data-primitive-preview] canvas");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent?.trim() === "Ramp")?.click());
-  await page.select('[role="dialog"] select[aria-label="Collision"]', "0");
+  await chooseOption(page, '[role="dialog"] [aria-label="Collision"]', "0");
   await new Promise((done) => setTimeout(done, 300));
   if (shot) await page.screenshot({ path: `${shot}-primitive.png` });
   const before = await page.evaluate(() => ({ count: (window as any).app.doc.kcl.count, history: (window as any).app.doc.undoStack.length }));
@@ -349,7 +357,7 @@ try {
   await page.waitForFunction(() => !document.querySelector('[role="dialog"]')?.getAnimations({ subtree: true }).some((a) => a.playState === "running"));
   await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find((t) => t.textContent?.includes("Race"))?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })));
   await page.waitForSelector('[aria-label="Scenery"]');
-  await page.select('[aria-label="Scenery"]', "light");
+  await chooseOption(page, '[aria-label="Scenery"]', "light");
   await clickButton("Draw a shortcut (beta)");
   await new Promise((done) => setTimeout(done, 300));
   // The road is the light shape on the drawing: find it going in from two sides.

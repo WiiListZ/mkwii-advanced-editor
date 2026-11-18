@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { api } from "../../../js/api.js";
 import { DIRECT_FORMATS, maxTextureLevels, parseBRRES, TEXTURE_FORMATS, textureLevelsSize, textureRGBA, writeTEX0 } from "../../../js/formats/brres.js";
+import { SelectBox } from "@/components/ui/select-box";
 
 const FORMAT_NOTES: Record<number, string> = {
   0: "4-bit grey", 1: "8-bit grey", 2: "4-bit grey and alpha", 3: "8-bit grey and alpha", 4: "16-bit colour, no alpha",
@@ -72,9 +73,9 @@ export function TextureFormatDialog({ brres, name, close }: { brres: Uint8Array;
   };
   const select = (label: string, value: number, options: [number, string][], onChange: (v: number) => void) => <label className="flex items-center gap-2 text-xs">
     <span className="w-28 shrink-0">{label}</span>
-    <select aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs">
+    <SelectBox aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs">
       {options.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
-    </select>
+    </SelectBox>
   </label>;
 
   return <div className="flex flex-col gap-3" data-texture-format onKeyDown={(e) => e.stopPropagation()}>

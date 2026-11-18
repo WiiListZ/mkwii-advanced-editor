@@ -10,6 +10,7 @@ import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { NumberField } from "../number-field";
 import { parseBRRES, partsSharingVertices, setBRRESVertexValues, textureRGBA } from "../../../js/formats/brres.js";
+import { SelectBox } from "@/components/ui/select-box";
 
 const VIEW = 420;
 
@@ -137,7 +138,7 @@ export function VertexEditorDialog({ brres, modelName, partName, close }: { brre
         <p className="m-0 text-[11px] text-muted-foreground">Drag points to move them; drag on empty space to select several (Shift adds). Right-drag moves the view, wheel zooms. The dashed square is the texture once (0 to 1).</p>
       </div>
       <div className="flex min-h-0 flex-col gap-2 overflow-y-auto text-xs">
-        {sets.length > 1 && <label className="flex items-center gap-2">Set <select aria-label="Texture coordinate set" value={set} onChange={(e) => { setSet(Number(e.target.value)); setSelected(new Set()); }} className="h-7 rounded border bg-background px-1">{sets.map((s) => <option key={s} value={s}>{s}</option>)}</select></label>}
+        {sets.length > 1 && <label className="flex items-center gap-2">Set <SelectBox aria-label="Texture coordinate set" value={set} onChange={(e) => { setSet(Number(e.target.value)); setSelected(new Set()); }} className="h-7 rounded border bg-background px-1">{sets.map((s) => <option key={s} value={s}>{s}</option>)}</SelectBox></label>}
         <div>{selected.size} of {entries.length} selected · texture {texture?.name ?? "none"}</div>
         {one >= 0 && <div className="flex items-center gap-1.5">U <NumberField commit aria-label="U" value={uv(one)[0]} onValue={(u) => write("uv", arrayId, new Map([[one, [u, uv(one)[1]]]]))} className="h-7 w-24 text-xs" />
           V <NumberField commit aria-label="V" value={uv(one)[1]} onValue={(v) => write("uv", arrayId, new Map([[one, [uv(one)[0], v]]]))} className="h-7 w-24 text-xs" /></div>}
