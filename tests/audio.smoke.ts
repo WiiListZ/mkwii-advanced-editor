@@ -136,7 +136,8 @@ try {
   console.log("music replacement prepared");
   // A second track for Moo Moo Meadows' music, which the game plays with one: it says so, and makes room.
   await page.waitForFunction(() => document.querySelector("[data-music-room]")?.textContent?.includes("the game plays 1"), { timeout: 60000 });
-  if (!(await page.$eval('[data-music-track="1"] [data-music-track-plays]', (e) => e.textContent || "")).includes("all the time")) throw new Error("A single-track music does not say it plays all the time");
+  // Track 1 is the music itself: only the tracks after it are listed.
+  if (await page.$('[data-music-track="1"]') || !(await page.$("[data-music-no-added]"))) throw new Error("A single-track music lists its main track again");
   await click("Add a track…");
   await page.waitForFunction(() => document.body.innerText.includes("revo_kart.brsar is changed to play 2"));
   await click("Use it", '[role="dialog"] button', true);

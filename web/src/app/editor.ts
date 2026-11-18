@@ -2,6 +2,7 @@
 // It has no UI of its own: React components subscribe to it and call its methods.
 
 import { ambientSoundOf, ambientSoundSamples } from "../../js/data/ambient-sounds.js";
+import { effectObjectOf, objectEffectFiles } from "../../js/data/effect-objects.js";
 import { parseBRSAR } from "../../js/formats/brsar.js";
 import * as THREE from "three";
 import { toast } from "sonner";
@@ -27,6 +28,7 @@ import { kartArchiveName } from "../../js/editor/kart-archives.js";
 import { applyCHRFrame, bindCHR, cloneModel } from "../../js/editor/brresmodel.js";
 import { primitiveOBJ } from "../../js/editor/primitives.js";
 import { parseKCL, buildKCL, patchKCLFlags } from "../../js/formats/kcl.js";
+import { GATE_TYPES, gateAcross, gatePair } from "../../js/editor/trigger-gate.js";
 import { parseOBJ, kclToOBJ, modelToOBJ } from "../../js/formats/obj.js";
 import { clearBRRESPolygon, isBRRES, parseBRRES, polygonPieces, resetPieceMemory, replaceBRRESTexture, restBRRESPartsOnPoint, setCHR0Loop, transformBRRESPart, translateBRRESPart } from "../../js/formats/brres.js";
 import { BrresModelBuilder, mainModel } from "../../js/editor/brresmodel.js";
@@ -79,7 +81,10 @@ export const DEFAULT_SETTINGS = {
 export type CollisionShapeKind = keyof typeof COLLISION_SHAPES;
 export interface CollisionShapeState { kind: CollisionShapeKind; height: number; segments: number }
 
-export interface PaintState { type: number; variant: number; shadow: number; brush: "single" | "radius" | "fill" | "plane"; radius: number; showAll: boolean }
+// gate: Sound and Effect Triggers (GATE_TYPES) go in as a new upright gate across the road where it is
+// clicked, instead of painting the road's own triangles (see trigger-gate.js). gateBack: with it, a
+// second gate for karts going back, with backVariant (what was there before the gate).
+export interface PaintState { type: number; variant: number; shadow: number; brush: "single" | "radius" | "fill" | "plane"; radius: number; showAll: boolean; gate: boolean; gateBack: boolean; backVariant: number }
 type ModelCopySource = { modelName: string; partName: string; pieceIndex: number; center: number[]; size: number[]; triangles: number[]; choiceKey: string; data?: Uint8Array; collision?: ReturnType<typeof snapshotCollision> };
 
 const MODEL_FILE = /\.(obj|fbx|gltf|glb|dae|stl|ply|blend)$/i;
@@ -155,6 +160,9 @@ export class Editor {
   customObjectDocumentationName = "";
   commonPath: string | null = null;
   library: { folder: string; tracks: number; models: number; loading: boolean; error?: string } | null = null;
+  // Every archive of the tracks folder with the files it holds (from the library's index): where an
+  // effect's files can be copied from.
+  trackArchives: { archive: string; name: string; label: string; files: Set<string> }[] = [];
   trackFiles: { folder: string; files: string[] } | null = null; // .szs of the tracks folder, for the track switcher
   private trackRefreshBusy = false;
   private trackRefreshTimer: ReturnType<typeof setInterval> | null = null;
@@ -189,7 +197,9 @@ export class Editor {
   issues: any[] = [];
   // "Don't show this again" in the save check window: saving stops no more until the editor is closed.
   skipSaveCheck = false;
-  paint: PaintState = { type: 0, variant: 0, shadow: 0, brush: "single", radius: 600, showAll: false };
+  paint: PaintState = { type: 0, variant: 0, shadow: 0, brush: "single", radius: 600, showAll: false, gate: true, gateBack: true, backVariant: 0 };
+  // A paint stroke that places a trigger gate (once, where it starts) instead of painting.
+  private gateStroke: { placed: boolean } | null = null;
   collisionDraft: number[][] = [];
   collisionShape: CollisionShapeState = { kind: "triangle", height: 1000, segments: 16 };
   geometrySelection: any = null;
@@ -275,9 +285,16 @@ export class Editor {
     vp.on("place", ({ point, shift }: any) => this.placeAt(point, shift));
     vp.on("drop-object", ({ objectId, point }: any) => this.ops.add("GOBJ", point, { objectId }));
     vp.on("collision-point", (point: number[]) => this.addCollisionPoint(point));
-    vp.on("paint-start", () => { this.doc.beginEdit(); this.painted = new Set(); });
-    vp.on("paint", (g: any) => this.paintAt(g));
+    vp.on("paint-start", () => {
+      if (this.paintsGate) { this.gateStroke = { placed: false }; return; }
+      this.doc.beginEdit(); this.painted = new Set();
+    });
+    vp.on("paint", (g: any) => {
+      if (this.gateStroke) { if (!this.gateStroke.placed) { this.gateStroke.placed = true; this.addTriggerGate(g.point); } return; }
+      this.paintAt(g);
+    });
     vp.on("paint-end", () => {
+      if (this.gateStroke) { this.gateStroke = null; return; }
       if (this.painted?.size) {
         this.doc.kclFlagsChanged = true;
         this.doc.endEdit("Paint collision");
@@ -1888,6 +1905,9 @@ export class Editor {
     await this.refreshTrackFiles();
     try {
       const index = await api.archiveIndex(folder);
+      this.trackArchives = [...index.archives]
+        .sort((a: any, b: any) => Number(/_d\.(szs|wlz|wbz|wu8)$/i.test(a.name)) - Number(/_d\.(szs|wlz|wbz|wu8)$/i.test(b.name)))
+        .map((a: any) => ({ archive: `${folder}\\${a.name}`, name: a.name, label: trackLabel(a.name), files: new Set<string>(a.files.map((p: string) => p.toLowerCase())) }));
       const byName = new Map<string, any>();
       const SKIP = /^(course_model|vrcorn_model|map_model|course|course_d)$/i;
       // Single-player archives first, so the _d copies are used only for models found nowhere else.
@@ -2145,6 +2165,44 @@ export class Editor {
     if (objectId == null) return;
     this.ops.add("GOBJ", point, { objectId });
     toast.success("Sound added", { description: "Its route is selected with it in Routes: stretch it along the place the sound comes from. Save the SZS to keep it." });
+  }
+
+  // Where an object type's effect files are: already in this track, in a track of the tracks folder
+  // (the first that has them all, single-player archives first), or nowhere (null).
+  effectSource(objectId: number): { inTrack: boolean; archive?: string; label?: string } | null {
+    const files = objectEffectFiles(objectId);
+    if (!files.length) return null;
+    if (this.doc.szs && files.every((p: string) => findFile(this.doc.szs, p))) return { inTrack: true };
+    const found = this.trackArchives.find((a) => files.every((p: string) => a.files.has(p.toLowerCase())));
+    return found ? { inTrack: false, archive: found.archive, label: found.label } : null;
+  }
+
+  // Places one of the game's effect objects (embers, snow, leaves, a torch flame, waterfalls…) at a
+  // point, or where the track is clicked next (Add › Effect…). Its effect files come into the track
+  // from the track of the game folder that has them.
+  async addEffect(at?: number[]) {
+    if (!this.doc.szs) return toast.error("Open a track archive (.szs) first");
+    const objectId = await dialogs.open("addEffect", {}) as number | null;
+    if (objectId == null) return;
+    const effect = effectObjectOf(objectId), source = this.effectSource(objectId);
+    if (!effect || !source) return toast.error("The files of this effect were not found in the game folder");
+    const point = at || await this.pickPoint(`Click on the track where the ${effect.label.toLowerCase()} go · Esc for the centre of the view`) || this.viewport?.viewCenterPoint() || [0, 0, 0];
+    try {
+      if (!source.inTrack) {
+        const files = objectEffectFiles(objectId).filter((p: string) => !findFile(this.doc.szs, p));
+        const read = await this.withBusy(`Copying ${effect.label.toLowerCase()} from ${source.label}…`, () => Promise.all(files.map(async (p: string) => ({ path: p, data: await api.readArchiveFile(source.archive!, p) }))));
+        for (const f of read) this.doc.changeArchiveFile(`Effect files of ${effect.label}`, f.path, f.data);
+      }
+      this.ops.add("GOBJ", point, { objectId });
+      toast.success(`${effect.label} added`, { description: `${source.inTrack ? "Its files were already in this track." : `Its files were copied from ${source.label}.`} Move it like any object; Edit this effect… in the Inspector changes how it looks. Save the SZS to keep it.` });
+    } catch (e: any) { toast.error("Could not add the effect", { description: e.message }); }
+  }
+
+  // Opens the effects editor on an object's effect (its files in this track).
+  editObjectEffect(objectId: number) {
+    const files = objectEffectFiles(objectId).filter((p: string) => this.doc.szs && findFile(this.doc.szs, p));
+    if (!files.length) return toast.warning("This object's effect files are not in the track", { description: "Add them with Add an effect here…, or from another track with File › SZS contents." });
+    void dialogs.open("effects", { initialPath: files.find((p: string) => /\.breff$/i.test(p)) || files[0] });
   }
 
   // Opens Sounds and music on the samples an ambient sound emitter plays (shared by every track).
@@ -3104,6 +3162,51 @@ export class Editor {
   stopTool() { this.viewport?.setTool(null); }
 
   get paintFlag() { return makeFlag(this.paint.type, this.paint.variant, this.paint.shadow); }
+  // Whether the brush places a gate across the road (a trigger type, with the gate choice on).
+  get paintsGate() { return GATE_TYPES.has(this.paint.type) && this.paint.gate; }
+
+  // The way karts go at a point: along the nearest enemy route, else the way the camera looks.
+  private travelDirection(point: number[]): [number, number] {
+    let best: [number, number] | null = null, bestDistance = Infinity;
+    for (const group of this.doc.kmp.ENPT || []) {
+      const points = group.points || [];
+      points.forEach((p: any, i: number) => {
+        const distance = Math.hypot(p.pos[0] - point[0], p.pos[2] - point[2]);
+        if (distance >= bestDistance || points.length < 2) return;
+        const a = points[Math.max(0, i - 1)].pos, b = points[Math.min(points.length - 1, i + 1)].pos;
+        if (a === b) return;
+        bestDistance = distance; best = [b[0] - a[0], b[2] - a[2]];
+      });
+    }
+    if (best && bestDistance < 6000) return best;
+    const look = new THREE.Vector3();
+    this.viewport.camera.getWorldDirection(look);
+    return [look.x, look.z];
+  }
+
+  // A trigger gate where the road was clicked: an upright rectangle across the road (wall to wall),
+  // facing the karts, with the brush's type and variant; with gateBack, just before it one facing
+  // ahead with backVariant, for karts going back. The road keeps its own collision.
+  addTriggerGate(point: number[]) {
+    const kcl = this.doc.kcl, vp = this.viewport;
+    if (!kcl || !vp) return;
+    const groundAt = (x: number, y: number, z: number) => {
+      const g = vp.groundBelow(x, y, z);
+      return g ? { y: g.y, normalY: g.normalY, type: g.tri >= 0 ? kcl.flags[g.tri] & 0x1f : 0 } : null;
+    };
+    const gate = gateAcross(point, this.travelDirection(point), groundAt);
+    const { type, variant, shadow, gateBack, backVariant } = this.paint, count = kcl.count;
+    const tris = gatePair(gate, variant, gateBack ? backVariant : null);
+    const verts = new Float32Array((count + tris.length) * 9), flags = new Uint16Array(count + tris.length);
+    verts.set(kcl.verts.subarray(0, count * 9));
+    flags.set(kcl.flags.subarray(0, count));
+    tris.forEach((t: { tri: number[]; variant: number }, i: number) => { verts.set(t.tri, (count + i) * 9); flags[count + i] = makeFlag(type, t.variant, shadow); });
+    const next = parseKCL(buildKCL(verts, flags));
+    const name = (KCL_TYPES as any[]).find((t) => t.id === type)?.name || "Trigger";
+    this.doc.change(`Add ${name} gate`, () => { this.doc.setKCL(next, true); }, { structural: false });
+    const back = gateBack ? ` Going back, karts cross a gate with variant ${backVariant} just before it.` : "";
+    toast.success(`${name} gate added (variant ${variant})`, { description: `${Math.round(gate.width)} units wide, across the road, facing the karts: they drive through it, and the road stays road.${back} Select it with Select triangles to move or delete it.` });
+  }
   setPaint(patch: Partial<PaintState>) { Object.assign(this.paint, patch); this.bump("ui"); }
 
   private paintAt(g: any) {

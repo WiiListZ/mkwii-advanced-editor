@@ -4,6 +4,23 @@
 // raycasts use a BVH, the camera is damped and the scene is only redrawn when something changes.
 
 import * as THREE from 'three';
+
+// The collision's colours over the model are drawn where the depth-only pass (kclDepth) left the
+// collision's depth: the same surface, so the test must pass exactly. With the logarithmic depth
+// buffer each fragment writes its own depth, which polygon offset does not move, and two shader
+// programs may compute it a hair apart: some pixels then fail and show the road through, in grains
+// fading along the triangles. These materials put their depth a hair nearer (about 0.01% of the
+// distance), so they always pass; the stencil still lets one surface colour each pixel.
+function nearerDepth(material) {
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace('#include <logdepthbuf_fragment>', `#include <logdepthbuf_fragment>
+#if defined( USE_LOGDEPTHBUF ) && defined( USE_LOGDEPTHBUF_EXT )
+	gl_FragDepthEXT = max( 0.0, gl_FragDepthEXT - 1e-5 );
+#endif`);
+  };
+  material.customProgramCacheKey = () => 'kcl-nearer-depth';
+  return material;
+}
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
@@ -599,6 +616,7 @@ export class Viewport extends EventTarget {
       vertexColors: true, side: THREE.DoubleSide, transparent: this.kclOpacity < 1, opacity: this.kclOpacity,
       polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1, depthWrite: this.kclOpacity >= 1, forceSinglePass: true,
     }));
+    nearerDepth(this.kclMesh.material);
     this.kclMesh.renderOrder = -1;
     this.refreshKCLColors();
     this.kclGroup.add(this.kclMesh);
@@ -618,7 +636,7 @@ export class Viewport extends EventTarget {
     this.kclDepth = depth;
     this.kclGroup.add(depth);
     if (this.kclWireframe || this.paintShowTriangles) {
-      const wire = new THREE.LineSegments(new THREE.WireframeGeometry(geom), new THREE.LineBasicMaterial({ color: 0x0b0d12, transparent: true, opacity: 0.4, depthWrite: false }));
+      const wire = new THREE.LineSegments(new THREE.WireframeGeometry(geom), nearerDepth(new THREE.LineBasicMaterial({ color: 0x0b0d12, transparent: true, opacity: 0.4, depthWrite: false })));
       this.kclWire = wire;
       this.kclGroup.add(wire);
     }
@@ -1674,6 +1692,16 @@ export class Viewport extends EventTarget {
     const p = new THREE.Vector3();
     if (this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), p)) return { point: p.toArray(), tri: -1 };
     return null;
+  }
+
+  // The collision right below a point (looking down from a little above it): where it is, its
+  // triangle and how flat it is. For trigger gates, which follow the road's edges.
+  groundBelow(x, y, z, range = 1500) {
+    if (!this.kclMesh) return null;
+    const ray = new THREE.Raycaster(new THREE.Vector3(x, y + range / 2, z), new THREE.Vector3(0, -1, 0), 0, range);
+    const hit = ray.intersectObject(this.kclMesh, false).find((h) => Math.abs(h.face?.normal?.y ?? 1) > 0.2);
+    if (!hit) return null;
+    return { y: hit.point.y, tri: this.kclTriMap[sourceTriangle(hit)], normalY: Math.abs(hit.face?.normal?.y ?? 1) };
   }
 
   updateCursor() {

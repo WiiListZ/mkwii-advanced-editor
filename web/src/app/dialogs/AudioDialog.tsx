@@ -411,7 +411,7 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
   };
   // A track's volume or pan while it plays: heard at once.
   // Each track's volume and pan as moved (written when the slider is let go). The music's own
-  // Volume and Pan move every track by as much (with one track: that track's).
+  // Volume and Pan are its main track's (track 1); its other tracks have their own, below.
   const [mix, setMix] = React.useState<{ volume: number; pan: number }[]>([]);
   React.useEffect(() => { setMix(clip ? tracksOf(clip).map((t) => ({ volume: t.volume, pan: t.pan })) : []); }, [clip]);
   const applyMix = async (indices: number[], next = mix) => {
@@ -430,12 +430,11 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
     } catch (e: any) { toast.error("Could not change the volume or pan", { description: e.message }); }
   };
   const masterMix = React.useRef<{ volume: number; pan: number }[] | null>(null);
-  const moveAll = (key: "volume" | "pan", value: number) => {
-    const delta = value - (mix[0]?.[key] ?? value);
-    const next = mix.map((m) => ({ ...m, [key]: Math.max(0, Math.min(127, m[key] + delta)) }));
+  const moveMain = (key: "volume" | "pan", value: number) => {
+    const next = mix.map((m, i) => (i === 0 ? { ...m, [key]: value } : m));
     masterMix.current = next;
     setMix(next);
-    next.forEach((m, i) => liveMix(i, m));
+    liveMix(0, next[0]);
   };
   const liveMix = (index: number, mix: { volume: number; pan: number }) => {
     const entry = live.current.get(index);
@@ -610,17 +609,17 @@ function SoundPanel({ item, archive, pending, brsarPath, sourceBytes, onReplaceM
             {loopChanged && <Button size="sm" variant="secondary" disabled={!!busy} onClick={applyLoop}><Check /> Apply loop</Button>}
           </div>}
           {item.kind === "music" && mix.length > 0 && <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground" data-music-mix>
-            {(["volume", "pan"] as const).map((key) => <label key={key} className="flex items-center gap-1.5" title={mix.length > 1 ? `${key === "volume" ? "Volume" : "Pan"} of every track: each moves by as much` : `${key === "volume" ? "Volume" : "Pan"} of the music (its track 1)`}>
+            {(["volume", "pan"] as const).map((key) => <label key={key} className="flex items-center gap-1.5" title={mix.length > 1 ? `${key === "volume" ? "Volume" : "Pan"} of the main track (track 1); the other tracks have their own below` : `${key === "volume" ? "Volume" : "Pan"} of the music`}>
               {key === "pan" ? <MoveHorizontal className="size-3.5" aria-hidden="true" />
                 : (() => { const v = mix[0]?.volume ?? 127, Icon = v === 0 ? VolumeX : v < 43 ? Volume : v < 86 ? Volume1 : Volume2; return <Icon className="size-3.5" aria-hidden="true" />; })()}
               <span>{key === "volume" ? "Volume" : "Pan"}</span>
               <input type="range" min="0" max="127" step="1" aria-label={`Music ${key}`} value={mix[0]?.[key] ?? 64} className="w-28 cursor-pointer accent-primary"
-                onChange={(e) => moveAll(key, Number(e.currentTarget.value))}
-                onPointerUp={() => { void applyMix(mix.map((_, i) => i), masterMix.current ?? mix); masterMix.current = null; }}
-                onKeyUp={() => { void applyMix(mix.map((_, i) => i), masterMix.current ?? mix); masterMix.current = null; }} />
+                onChange={(e) => moveMain(key, Number(e.currentTarget.value))}
+                onPointerUp={() => { void applyMix([0], masterMix.current ?? mix); masterMix.current = null; }}
+                onKeyUp={() => { void applyMix([0], masterMix.current ?? mix); masterMix.current = null; }} />
               <span className="w-12 tabular-nums">{key === "pan" ? panText(mix[0]?.pan ?? 64) : mix[0]?.volume}</span>
             </label>)}
-            {mix.length > 1 && <span>every track</span>}
+            {mix.length > 1 && <span>main track</span>}
           </div>}
           <div className="flex flex-wrap items-center gap-1.5">
             {playing && playingTrack === null ? <Button size="sm" onClick={stop}><Square /> Stop</Button> : <Button size="sm" onClick={() => play()}><Play /> Play mix</Button>}
@@ -734,8 +733,10 @@ function TracksSection({ item, clip, archive, busy, setBusy, elapsed, playing, p
   const setLoop = (index: number, patch: Partial<TrackLoop>) => setLoops((l) => ({ ...l, [index]: { ...loopOf(index), ...patch } }));
   const loopSamples = (index: number) => {
     // Seconds are shown to the millisecond: an end typed at the music's length, rounded up, is its end.
-    const l = loopOf(index), from = Math.round(Number(l.from) * rate), typed = Math.round(Number(l.to) * rate);
-    const to = typed > total && typed <= total + rate / 1000 ? total : typed;
+    // Likewise a start within a millisecond of the music's loop start is that start.
+    const l = loopOf(index), typedFrom = Math.round(Number(l.from) * rate), typed = Math.round(Number(l.to) * rate);
+    const to = Math.abs(typed - total) <= rate / 1000 ? total : typed;
+    const from = clip.loop && Math.abs(typedFrom - clip.loopStart) <= rate / 1000 ? clip.loopStart : typedFrom;
     if (!l.on) return l.to.trim() !== "" && Number.isFinite(to) && to > 0 && to <= total ? { from: 0, to } : null;
     return l.from.trim() !== "" && l.to.trim() !== "" && Number.isFinite(from) && Number.isFinite(to) && from >= 0 && to > from && to <= total ? { from, to } : null;
   };
@@ -776,7 +777,7 @@ function TracksSection({ item, clip, archive, busy, setBusy, elapsed, playing, p
   return <div className="border-t pt-3" data-music-tracks>
     <div className="mb-1 flex flex-wrap items-center gap-2">
       <div className="text-xs font-medium">Tracks</div>
-      <span className="text-[11px] text-muted-foreground" data-music-room>{tracks.length} of up to {MAX_TRACKS}{room ? ` · the game plays ${room.tracks} of this music (revo_kart.brsar)` : ""}</span>
+      <span className="text-[11px] text-muted-foreground" data-music-room>the main track above{tracks.length > 1 ? ` and ${tracks.length - 1} more` : ""} · up to {MAX_TRACKS} in all{room ? ` · the game plays ${room.tracks} of this music (revo_kart.brsar)` : ""}</span>
       <div className="flex-1" />
       <Button size="sm" variant="ghost" title="A tutorial: tracks, when the game plays each, and Sound Triggers" onClick={() => dialogs.open("help", { tab: "tutorials", tutorial: "music-tracks" })}><BookOpen /> How it works</Button>
       <Button size="sm" variant="secondary" disabled={!canAdd || !!busy} title={canAdd ? "Add a track of your own audio to this music" : `The game plays at most ${MAX_TRACKS} tracks (${MAX_CHANNELS} channels) of a music`} onClick={add}><Plus /> Add a track…</Button>
@@ -785,8 +786,22 @@ function TracksSection({ item, clip, archive, busy, setBusy, elapsed, playing, p
       {triggers ? `In ${triggers.course}'s position the game turns these tracks up and down when a kart drives over Sound Trigger collision (KCL type 0x18); what each variant does is fixed by the game for this position. Paint it where the music should change.`
         : "The game changes no tracks of this music: every track plays all the time, mixed together. Only some positions change tracks as a kart drives: Toad's Factory, Wario's Gold Mine, Koopa Cape, Dry Dry Ruins, Moonview Highway and Bowser's Castle."}
     </p>
+    {triggers && (() => {
+      // When the main track (above) plays, as the added tracks below say it for themselves.
+      const when = trackPlays(file, 0), text = plainly(0);
+      return <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[11px]" data-music-track-plays="1">
+        <span className="text-muted-foreground">The main track plays</span>
+        {text ? <span className="text-muted-foreground">{text}</span>
+          : when.variants.map((v: any) => <span key={v.variant} className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5">
+            on Sound Trigger {v.variant}: {v.text}
+            {canPaint && <button type="button" className="cursor-pointer text-muted-foreground hover:text-foreground" aria-label={`Paint Sound Trigger variant ${v.variant}`} title={`Paint Sound Trigger variant ${v.variant} on the open track's collision, where this should start`} onClick={() => onPaintTrigger(v.variant)}><Paintbrush className="size-3" /></button>}
+          </span>)}
+      </div>;
+    })()}
+    {tracks.length === 1 && <p className="m-0 text-[11px] text-muted-foreground" data-music-no-added>Only the main track, above. <b className="font-medium">Add a track…</b> adds audio of your own, played with it.</p>}
     <div className="space-y-1.5">
       {tracks.map((track, index) => {
+        if (index === 0) return null;
         const when = trackPlays(file, index), text = plainly(index), on = playing && playingTrack === index;
         return <div key={index} className="flex flex-col gap-1.5 rounded border px-2 py-1.5" data-music-track={index + 1}>
           <div className="flex flex-wrap items-center gap-1.5">

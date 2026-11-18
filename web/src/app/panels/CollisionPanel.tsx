@@ -17,6 +17,7 @@ import { hex, type CollisionShapeKind } from "../editor";
 import { Hint, InfoTip, SectionTitle } from "../common";
 import { cn } from "@/lib/utils";
 import { SelectBox } from "@/components/ui/select-box";
+import { GATE_TYPES } from "../../../js/editor/trigger-gate.js";
 
 type Mode = "show" | "paint";
 
@@ -301,8 +302,27 @@ export function CollisionPanel() {
           <Label className="flex items-center gap-1">Shadow <InfoTip text={KCL_FIELD_HELP.shadow} /></Label>
           <NumberField aria-label="Shadow" value={p.shadow} min={0} max={7} integer onValue={(n) => ed.setPaint({ shadow: n })} />
         </div>
+        {GATE_TYPES.has(p.type) && <div className="mt-3 space-y-1.5 rounded-lg border bg-muted/20 p-2.5 text-[11px] leading-relaxed" data-paint-gate>
+          <label className="flex cursor-pointer items-center gap-2 text-xs font-medium">
+            <input type="checkbox" className="accent-primary" aria-label="Gate across the road" checked={p.gate} onChange={(e) => ed.setPaint({ gate: e.target.checked })} /> Gate across the road
+          </label>
+          <p className="m-0 text-muted-foreground">{p.gate
+            ? `A click on the road adds an upright gate across it, wall to wall and facing the karts, that they drive through: the game reacts as they cross it, and the road stays road. Select it with Select triangles to move or delete it.`
+            : `The brush paints the triangles themselves: they stop being road (or wall), and karts drive through a ${current.name} rather than on it, so they may fall through the road there.`}</p>
+          {p.gate && <div className="space-y-1.5 border-t pt-2" data-paint-gate-back>
+            <div className="flex items-center gap-2">
+              <label className="flex cursor-pointer items-center gap-2 text-xs font-medium">
+                <input type="checkbox" className="accent-primary" aria-label="Going back" checked={p.gateBack} onChange={(e) => ed.setPaint({ gateBack: e.target.checked })} /> Going back: variant
+              </label>
+              <NumberField aria-label="Going back variant" className="w-16" value={p.backVariant} min={0} max={7} integer disabled={!p.gateBack} onValue={(n) => ed.setPaint({ backVariant: n })} />
+            </div>
+            <p className="m-0 text-muted-foreground">{p.gateBack
+              ? `Just before the gate, a second one facing ahead with variant ${p.backVariant}, crossed by karts driving back: it brings back what was there before (usually 0, the track's own). Nintendo's tracks pair their gates the same way.`
+              : `Only the gate facing the karts: driving back through it does nothing, so what it set stays.`}</p>
+          </div>}
+        </div>}
         <div className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-          {painting ? <p className="m-0 border-l-2 pl-2"><span className="font-medium text-foreground">Painting {current.name}.</span> Click or drag on the collision. Esc stops.</p>
+          {painting ? <p className="m-0 border-l-2 pl-2"><span className="font-medium text-foreground">{ed.paintsGate ? `Adding ${current.name} gates.` : `Painting ${current.name}.`}</span> {ed.paintsGate ? "Click on the road where karts should cross it." : "Click or drag on the collision."} Esc stops.</p>
             : <Button size="sm" className="w-full" onClick={() => ed.startPainting()}><Paintbrush /> Start painting</Button>}
         </div>
         <p className="mt-2 font-mono text-[10px] text-muted-foreground">Flag {hex(ed.paintFlag)}</p>

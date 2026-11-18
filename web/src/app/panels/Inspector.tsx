@@ -1,7 +1,7 @@
 import * as React from "react";
 import {
   ArrowDownToLine, ArrowRight, BrickWall, ChevronRight, ClipboardPaste, Compass, Copy, Crosshair, ImagePlus, Lightbulb, MoveHorizontal, Paintbrush, Plus, Settings2, StretchHorizontal, Trash2, X,
-  Volume2,
+  Volume2, Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,7 @@ import { settingDisplayValue, settingGuidance, settingStoredValue } from "../../
 import { DocumentationStatus } from "./ObjectDocumentationView";
 import { routeForObject, routeRequired } from "../../../js/data/route-objects.js";
 import { ambientSoundOf } from "../../../js/data/ambient-sounds.js";
+import { objectEffectFiles } from "../../../js/data/effect-objects.js";
 import { findFile } from "../../../js/formats/u8.js";
 import { SLOTS, slotPlace } from "../../../js/data/cups.js";
 import { THP_LAYOUTS } from "../../../js/formats/thp.js";
@@ -283,6 +284,8 @@ export function Inspector() {
         {infos.some((info: any) => info.kind === "GOBJ") && <Hint title="Generate collision" text={infos.length > 1 ? "Add static collision for the models of the selected objects to the course KCL. It will not move with them." : "Add a static copy of this object's model to the course KCL. It will not move with the object."}><Button size="sm" variant="secondary" disabled={!d.szs} onClick={() => ed.generateCollisionForSelection()}><BrickWall /> Generate collision…</Button></Hint>}
         {infos.some((info: any) => info.kind === "GOBJ") && <RemoveSelectionCollision />}
         {infos.length === 1 && infos[0].kind === "GOBJ" && <Hint title="Add a sound here" text="Place one of the game's ambient sounds (river, waterfall, sea, audience…) where this object is."><Button size="sm" variant="secondary" onClick={() => void ed.addAmbientSound([...infos[0].item.pos])}><Volume2 /> Add a sound here…</Button></Hint>}
+        {infos.length === 1 && infos[0].kind === "GOBJ" && <Hint title="Add an effect here" text="Place one of the game's particle effects (embers, snow, leaves, a torch flame, waterfalls, fireworks…) where this object is. Its files come from the track of the game folder that has them."><Button size="sm" variant="secondary" disabled={!d.szs} onClick={() => void ed.addEffect([...infos[0].item.pos])}><Sparkles /> Add an effect here…</Button></Hint>}
+        {infos.length === 1 && infos[0].kind === "GOBJ" && objectEffectFiles(infos[0].item.objectId).length > 0 && <Hint title="Edit this effect" text="Opens the effects editor on this object's effect: its emitters, particles, colours and textures. Every object of this type in the track uses it."><Button size="sm" variant="secondary" onClick={() => ed.editObjectEffect(infos[0].item.objectId)}><Sparkles /> Edit this effect…</Button></Hint>}
         {infos.length === 1 && infos[0].kind === "GOBJ" && ambientSoundOf(infos[0].item.objectId) && <Hint title="Replace its sound" text="Opens Sounds and music on the samples this emitter plays. They are shared by every track."><Button size="sm" variant="secondary" onClick={() => void ed.replaceAmbientSound(infos[0].item.objectId)}><Volume2 /> Replace its sound…</Button></Hint>}
         <Hint title="Delete" text="Remove the selection. Indices that pointed to it are updated." shortcut="Ctrl+X"><Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => ed.cmd("delete")}><Trash2 /> Delete</Button></Hint>
       </div>
@@ -522,6 +525,8 @@ function ModelInspector() {
         <Button size="sm" variant="secondary" title="Positions and texture coordinates of this part, value by value" onClick={() => void ed.editTrackVertices(selected.modelName, selected.partIndex)}>Vertices and UVs…</Button>
         <Button size="sm" variant="secondary" title="Place one of the game's ambient sounds (river, waterfall, sea, audience…) at this part" disabled={!selected.min || !selected.max}
           onClick={() => void ed.addAmbientSound([0, 1, 2].map((c) => (selected.min[c] + selected.max[c]) / 2))}><Volume2 /> Add a sound here…</Button>
+        <Button size="sm" variant="secondary" title="Place one of the game's particle effects (embers, snow, leaves, a torch flame, waterfalls, fireworks…) at this part" disabled={!selected.min || !selected.max}
+          onClick={() => void ed.addEffect([0, 1, 2].map((c) => (selected.min[c] + selected.max[c]) / 2))}><Sparkles /> Add an effect here…</Button>
         <Button size="sm" variant="ghost" className="text-destructive" onClick={() => ed.cmd("delete")}><Trash2 /> Delete</Button>
       </div>
       <Separator />

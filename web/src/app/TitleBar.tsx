@@ -47,6 +47,9 @@ export function AddMenuItems({ Item, Separator }: { Item: any; Separator: any })
       <Item onSelect={() => ed.cmd("gameObjects")}>
         <KIND_ICON.GOBJ /> Object from a track or my 3D model…
       </Item>
+      <Item onSelect={() => { void ed.addEffect(); }} disabled={!ed.doc.szs}>
+        <Sparkles /> Effect (embers, snow, leaves, waterfalls…)…
+      </Item>
       <Separator />
       <Item onSelect={() => ed.cmd("modelParts")}>
         <Box className="text-amber-400" /> Model part from the game…
