@@ -115,6 +115,18 @@ try {
   await new Promise((done) => setTimeout(done, 150));
   if (await playingHere() !== "false") throw new Error("Space in a field played the preview");
   await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  // The arrows step one frame, ten with Shift, but not inside a field.
+  const arrowFrom = (await preview()).frame;
+  await page.keyboard.press("ArrowRight");
+  if ((await preview()).frame !== arrowFrom + 1) throw new Error("→ did not step one frame");
+  await page.keyboard.down("Shift");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.up("Shift");
+  if ((await preview()).frame !== arrowFrom - 9) throw new Error("Shift+← did not step back ten frames");
+  await page.focus('[aria-label="Finish time seconds"]');
+  await page.keyboard.press("ArrowRight");
+  if ((await preview()).frame !== arrowFrom - 9) throw new Error("→ in a field stepped the preview");
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
   console.log("ok  preview plays, pauses and seeks on a real ghost");
 
   // Watch in 3D asks for the track's window, with the ghost, for the ghost's own position.
@@ -189,6 +201,12 @@ try {
   if (await playing3D() !== "true") throw new Error("Holding Space should toggle once");
   await preview3D.keyboard.press("Space");
   await new Promise((done) => setTimeout(done, 200));
+  // The arrows step frame by frame in the 3D window too, also with a button focused.
+  await preview3D.click('[aria-label="Previous frame"]');
+  const arrow3D = await frame3D();
+  await preview3D.keyboard.press("ArrowRight");
+  await preview3D.keyboard.press("ArrowRight");
+  if (await frame3D() !== arrow3D + 2) throw new Error("→ did not step the 3D preview");
   if (Math.hypot(moved[0] - start[0], moved[2] - start[2]) < 500) throw new Error(`The kart did not move: ${start} -> ${moved}`);
   // As in a Time Trial, the track's item boxes are not there, though the track holds them.
   const boxes = await preview3D.evaluate(() => {

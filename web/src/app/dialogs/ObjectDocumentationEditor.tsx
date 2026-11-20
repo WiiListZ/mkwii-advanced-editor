@@ -8,6 +8,7 @@ import { CircleAlert, CircleCheck, CircleHelp, RotateCcw, Save, WrapText, X } fr
 import { Button } from "@/components/ui/button";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { defaultDocumentation, parseObjectDocumentation } from "../../../js/data/object-documentation.js";
+import { defaultCollisionDocumentation, parseCollisionDocumentation } from "../../../js/data/collision-documentation.js";
 import { jsonErrorAt, jsonTokens } from "../../../js/editor/json-highlight.js";
 import { ObjectDocumentationVisual } from "./ObjectDocumentationVisual";
 import { editor } from "../editor";
@@ -40,9 +41,9 @@ function where(text: string, message: string) {
 
 export function ObjectDocumentationEditor({ close }: { close: (v: any) => void }) {
   // The default documentation in use (shipped, or downloaded from the object-info repository).
-  const DEFAULT_TEXT = React.useMemo(() => JSON.stringify(defaultDocumentation().json, null, 2), []);
-  const initial = React.useMemo(() => editor.usesCustomObjectDocumentation
-    ? JSON.stringify({ version: 1, objects: editor.customObjectDocumentation }, null, 2) : DEFAULT_TEXT, [DEFAULT_TEXT]);
+  // Objects and collisions (collision-documentation.js) in one JSON, as Export JSON… writes it.
+  const DEFAULT_TEXT = React.useMemo(() => JSON.stringify({ ...defaultDocumentation().json, collisions: defaultCollisionDocumentation().json }, null, 2), []);
+  const initial = React.useMemo(() => editor.usesCustomDocumentation ? JSON.stringify(editor.documentationJson(), null, 2) : DEFAULT_TEXT, [DEFAULT_TEXT]);
   const [text, setText] = React.useState(initial);
   const [view, setView] = React.useState<"visual" | "raw">("visual");
   const area = React.useRef<HTMLTextAreaElement>(null);
@@ -62,11 +63,16 @@ export function ObjectDocumentationEditor({ close }: { close: (v: any) => void }
       const at = where(text, e.message);
       return { ok: false as const, message: `Not valid JSON${at ? ` (line ${at.line}, column ${at.column})` : ""}: ${e.message}`, at };
     }
-    try { return { ok: true as const, objects: parseObjectDocumentation(json) }; } catch (e: any) { return { ok: false as const, message: e.message, at: null }; }
+    try {
+      const collisions = json?.collisions !== undefined ? parseCollisionDocumentation(json.collisions) : null;
+      return { ok: true as const, objects: parseObjectDocumentation(json), collisions, collisionsJson: json?.collisions ?? null };
+    } catch (e: any) { return { ok: false as const, message: e.message, at: null }; }
   }, [text]);
   // Restore default with a JSON of the person's in use also counts as a change to save.
-  const dirty = text !== initial || (editor.usesCustomObjectDocumentation && text === DEFAULT_TEXT);
-  const isDefault = check.ok && same({ ...check.objects }, { ...defaultDocumentation().objects });
+  const dirty = text !== initial || (editor.usesCustomDocumentation && text === DEFAULT_TEXT);
+  const objectsDefault = check.ok && same({ ...check.objects }, { ...defaultDocumentation().objects });
+  const collisionsDefault = check.ok && (!check.collisionsJson || same(check.collisionsJson, defaultCollisionDocumentation().json));
+  const isDefault = objectsDefault && collisionsDefault;
 
   const leave = async () => {
     if (dirty && !(await dialogs.confirm({ title: "Close without saving?", description: "The changes to the documentation JSON will be lost.", confirmLabel: "Close without saving", destructive: true }))) return;
@@ -74,8 +80,10 @@ export function ObjectDocumentationEditor({ close }: { close: (v: any) => void }
   };
   const save = async () => {
     if (!check.ok) return;
-    if (isDefault) editor.useObjectDocumentation(null);
-    else editor.useObjectDocumentation(check.objects, "JSON edited in the editor");
+    const collisions = collisionsDefault ? null : check.collisionsJson;
+    if (collisions || editor.customCollisionJson) editor.useCollisionDocumentation(collisions);
+    if (!objectsDefault) editor.useObjectDocumentation(check.objects, "JSON edited in the editor");
+    else if (editor.usesCustomObjectDocumentation) editor.useObjectDocumentation(null);
     close(true);
   };
   const goTo = (line: number, column: number) => {
@@ -105,7 +113,7 @@ export function ObjectDocumentationEditor({ close }: { close: (v: any) => void }
         <div className="min-w-0 flex-1">
           <DialogTitle className="text-base">Edit the object documentation</DialogTitle>
           <DialogDescription className="text-xs">
-            {editor.usesCustomObjectDocumentation ? `In use: ${editor.customObjectDocumentationName || "your JSON"}.` : "In use: the editor's default documentation."} Save uses this JSON for every object, in place of the default documentation; <b>Restore default</b> brings the editor's own back at any time.
+            {editor.usesCustomDocumentation ? `In use: ${editor.customObjectDocumentationName || "your JSON"}.` : "In use: the editor's default documentation."} Save uses this JSON for every object and, in its "collisions" part, for the surfaces of the collision, in place of the default documentation; <b>Restore default</b> brings the editor's own back at any time.
           </DialogDescription>
         </div>
         <Button size="sm" variant="ghost" onClick={() => void dialogs.open("help", { tab: "objectDocs" })}><CircleHelp /> JSON format</Button>
@@ -141,7 +149,7 @@ export function ObjectDocumentationEditor({ close }: { close: (v: any) => void }
         <div className={cn("flex min-w-0 flex-1 items-start gap-1.5 text-xs", check.ok ? "text-muted-foreground" : "text-destructive")} role="status" data-json-check>
           {check.ok ? <CircleCheck className="mt-px size-3.5 shrink-0" /> : <CircleAlert className="mt-px size-3.5 shrink-0" />}
           <span className="min-w-0">
-            {check.ok ? `Valid: ${Object.keys(check.objects).length} objects${isDefault ? " (the default documentation)" : ""}.` : check.message}
+            {check.ok ? `Valid: ${Object.keys(check.objects).length} objects${check.collisions ? `, ${Object.keys(check.collisions).length} collision types` : ""}${isDefault ? " (the default documentation)" : ""}.` : check.message}
             {!check.ok && check.at && <button type="button" className="ml-1.5 cursor-pointer underline underline-offset-2" onClick={() => goTo(check.at!.line, check.at!.column)}>Go there</button>}
           </span>
         </div>

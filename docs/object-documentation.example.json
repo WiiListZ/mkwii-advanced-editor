@@ -50,5 +50,19 @@
         }
       }
     }
+  },
+  "collisions": {
+    "0x18": {
+      "notes": "An entry here completes the editor's own Sound Trigger documentation.",
+      "tracks": {
+        "my_course": {
+          "label": "My track",
+          "variants": {
+            "0": { "label": "Normal music" },
+            "1": { "label": "Cave music", "description": "Where the road goes into the cave." }
+          }
+        }
+      }
+    }
   }
 }

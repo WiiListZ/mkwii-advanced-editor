@@ -16,6 +16,7 @@ import { SECTION_LABEL } from "../editor";
 import { Hint, KIND_COLOR, KIND_ICON, ColorDot } from "../common";
 import { contextActions } from "../context-actions";
 import { cn } from "@/lib/utils";
+import { primitiveName, primitiveOfPart } from "../../../js/editor/primitive-store.js";
 
 const ORDER = ["KTPT", "ENPT", "ITPT", "CKPT", "GOBJ", "POTI", "AREA", "CAME", "JGPT", "CNPT", "MSPT"];
 const GROUPED = ["ENPT", "ITPT", "CKPT", "POTI"];
@@ -32,6 +33,7 @@ export function Outliner() {
   const vp = ed.viewport;
   const brres = ed.doc.szs && ed.assets?.brres(ed.doc.szs, "course_model.brres");
   const model = brres ? mainModel(brres, "course") : null;
+  const primitives = ed.primitiveStore();
   const f = filter.trim().toLowerCase();
   const match = (t: string) => !f || t.toLowerCase().includes(f);
   const toggle = (key: string) => setExpanded((s) => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; });
@@ -145,7 +147,8 @@ export function Outliner() {
                   const groupKey = `MODEL_PART_${index}`;
                   const draw = model.draws.find((d: any) => d.object === index);
                   const material = draw && model.materials[draw.material]?.name;
-                  const groupName = /kinoko/i.test(material || "") ? "Mushrooms" : material || obj.name;
+                  const primitive = primitiveOfPart(primitives, model.name, obj.name);
+                  const groupName = primitive ? primitiveName(primitive) : /kinoko/i.test(material || "") ? "Mushrooms" : material || obj.name;
                   const text = `${groupName} · ${obj.name}`;
                   const open = expanded.has(groupKey) || !!f;
                   const pieces = open ? polygonPieces(obj).pieces : [];

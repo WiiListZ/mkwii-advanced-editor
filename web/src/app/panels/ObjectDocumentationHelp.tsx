@@ -25,6 +25,18 @@ const SKELETON = `{
   }
 }`;
 
+const COLLISION_SKELETON = `"collisions": {
+  "0x18": {
+    "label": "…",
+    "description": "…",
+    "notes": "…",
+    "variants": { "0": { "label": "…", "description": "…" } },
+    "tracks": {
+      "water_course": { "label": "…", "variants": { "3": { "label": "…" } } }
+    }
+  }
+}`;
+
 const Code = ({ children }: { children: string }) => (
   <pre className="m-0 overflow-x-auto rounded-md border bg-muted/30 p-3 font-mono text-[11.5px] leading-relaxed">{children}</pre>
 );
@@ -98,11 +110,30 @@ export function ObjectDocumentationHelp() {
         </div>
       </section>
 
+      <section className="flex flex-col gap-1.5" data-collision-docs-help>
+        <h3 className="m-0 text-sm font-semibold">Collisions</h3>
+        <p className="m-0 text-muted-foreground">
+          The same file can document the surfaces of the collision in a <code className="font-mono text-[12px]">"collisions"</code> part, beside
+          <code className="font-mono text-[12px]"> "objects"</code> (a file with only collisions leaves the objects' documentation as it is). The Collision tab
+          shows it for the selected collision and in the lists of variants. Your entries complete the editor's own (collision-documentation.json): their
+          fields replace its fields, their variants are added to its variants.
+        </p>
+        <Code>{COLLISION_SKELETON}</Code>
+        <div className="flex flex-col divide-y rounded-lg border">
+          <Field name='"0x18" or "24"' rule="surface type">The surface type, 0x00 to 0x1F, in hexadecimal or decimal.</Field>
+          <Field name="label" rule="up to 120 characters">The name of the surface.</Field>
+          <Field name="description" rule="up to 2000 characters">What the surface does.</Field>
+          <Field name="notes" rule="up to 2000 characters">A remark shown under the description.</Field>
+          <Field name="variants" rule='keys "0" to "7"'>What each variant does on every track: <code className="font-mono text-[12px]">label</code> (required, up to 120) and <code className="font-mono text-[12px]">description</code>.</Field>
+          <Field name="tracks" rule="course file names">What the variants do on one course, by its file name without .szs (water_course for Koopa Cape): <code className="font-mono text-[12px]">label</code> (the course's name), <code className="font-mono text-[12px]">notes</code> and <code className="font-mono text-[12px]">variants</code> as above. These replace the general variants on that course.</Field>
+        </div>
+      </section>
+
       <section className="flex flex-col gap-1.5">
         <h3 className="m-0 text-sm font-semibold">Rules</h3>
         <ul className="m-0 list-disc pl-5 text-muted-foreground">
           <li><code className="font-mono text-[12px]">"version"</code> must be 1.</li>
-          <li>From 1 to 1000 objects per file, and the file at most 2 MB.</li>
+          <li>From 1 to 1000 objects per file (none when the file has only "collisions"), and the file at most 2 MB.</li>
           <li>Every object needs at least one field; every text must be non-empty.</li>
           <li>min, max and the option values must be whole numbers inside the stored range (0–65535, or −32768–32767 when signed), with min not above max.</li>
           <li>Other fields are ignored. If anything is wrong the whole file is refused and the message says where.</li>

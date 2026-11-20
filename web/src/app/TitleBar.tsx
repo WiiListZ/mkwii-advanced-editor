@@ -54,6 +54,9 @@ export function AddMenuItems({ Item, Separator }: { Item: any; Separator: any })
       <Item onSelect={() => ed.cmd("modelParts")}>
         <Box className="text-amber-400" /> Model part from the game…
       </Item>
+      <Item onSelect={() => ed.cmd("primitive")} disabled={!ed.doc.szs}>
+        <Shapes className="text-amber-400" /> Primitive model (beta)…
+      </Item>
       <Separator />
       <Item onSelect={() => ed.ops.addGroup("ENPT")}><KIND_ICON.ENPT /> New enemy route group</Item>
       <Item onSelect={() => ed.ops.addGroup("ITPT")}><KIND_ICON.ITPT /> New item route group</Item>

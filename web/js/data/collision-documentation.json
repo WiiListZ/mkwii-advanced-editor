@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "collisions": {
+    "0x18": {
+      "label": "Sound Trigger",
+      "description": "Invisible collision that karts drive through, not on. As a kart crosses it, the game changes the track's sound to the variant's: which music tracks play, echo, ambience. What each variant does depends on the course whose music plays.",
+      "notes": "In the game's tracks Sound Triggers are upright one-sided gates across the road, in pairs about 200 units apart: first a gate facing ahead with the variant karts get back when driving back, then a gate facing the karts with the new variant. Painted onto the road's own triangles, the road stops being road there.",
+      "tracks": {
+        "factory_course": {
+          "label": "Toad's Factory",
+          "variants": {
+            "0": { "label": "No sound effects", "description": "Factory entrance." },
+            "1": { "label": "Hydraulic press area" },
+            "2": { "label": "Shipping dock area" },
+            "3": { "label": "Quiet siren and echo", "description": "Curved conveyor area." },
+            "4": { "label": "Loud siren and echo", "description": "Steam room." },
+            "5": { "label": "Music starts again", "description": "With the audience cheering." },
+            "6": { "label": "No sound effects", "description": "Bulldozer area." },
+            "7": { "label": "Audience cheering", "description": "The default." }
+          }
+        },
+        "truck_course": {
+          "label": "Wario's Gold Mine",
+          "variants": {
+            "0": { "label": "No echo", "description": "The default." },
+            "1": { "label": "Weak echo" },
+            "2": { "label": "Moderate echo" },
+            "3": { "label": "Strong echo" }
+          }
+        },
+        "water_course": {
+          "label": "Koopa Cape",
+          "variants": {
+            "0": { "label": "No sound effects" },
+            "1": { "label": "Weak echo" },
+            "2": { "label": "Strong echo", "description": "Whatever music plays." },
+            "3": { "label": "Underwater music" },
+            "4": { "label": "Water ambience", "description": "Whatever music plays." },
+            "5": { "label": "Normal music, strongest echo" },
+            "6": { "label": "Riverside music" }
+          }
+        },
+        "desert_course": {
+          "label": "Dry Dry Ruins",
+          "variants": {
+            "0": { "label": "Normal music" },
+            "1": { "label": "Indoors music", "description": "Where the bats come from the sides." },
+            "2": { "label": "Indoors music", "description": "Where the half-pipes are." },
+            "3": { "label": "Indoors music", "description": "Where the Pokeys are." }
+          }
+        },
+        "ridgehighway_course": {
+          "label": "Moonview Highway",
+          "variants": {
+            "0": { "label": "Default music", "description": "No city ambience." },
+            "1": { "label": "Adds the flute", "description": "Weak city ambience." }
+          }
+        },
+        "koopa_course": {
+          "label": "Bowser's Castle",
+          "variants": {
+            "4": { "label": "Adds drums and echo" },
+            "6": { "label": "Adds drums without echo" },
+            "7": { "label": "Back to the normal music" }
+          }
+        }
+      }
+    },
+    "0x1A": {
+      "label": "Effect Trigger",
+      "description": "Invisible collision that karts pass through: the game starts or stops one of the track's effects as they do. The variant chooses the effect.",
+      "notes": "The game's tracks use upright gates across the road and flat planes (over water, sand or a jump), not the road itself. What each variant does on each track is not documented here yet."
+    },
+    "0x11": {
+      "label": "Cannon Activator",
+      "description": "Touching it shoots the kart out of a cannon. The variant is the cannon target it flies to: its number in the Cannons section."
+    },
+    "0x10": {
+      "label": "Fall Boundary",
+      "description": "Touching it counts as falling: Lakitu picks the kart up and puts it back on the track at a respawn point (Respawns section)."
+    },
+    "0x0A": {
+      "label": "Solid Fall (sand/lava)",
+      "description": "Karts can drive on it but sink: like a Fall Boundary, they are put back at a respawn point."
+    },
+    "0x07": {
+      "label": "Boost Ramp",
+      "description": "Boosts the kart and launches it: the player can trick in the air.",
+      "notes": "Other surfaces can also allow a trick when driven off: the Trickable flag of the collision, shown with its settings."
+    },
+    "0x06": {
+      "label": "Boost Panel",
+      "description": "Gives a speed boost to karts driving over it, as a mushroom does."
+    },
+    "0x12": {
+      "label": "Force Recalculation",
+      "description": "CPU karts touching it work out their route again."
+    }
+  }
+}

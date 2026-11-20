@@ -186,19 +186,31 @@ function GhostPreview({ ghost, onFrame, inline = true }: { ghost: any; onFrame?:
   const seek = (next: number) => { setPlaying(false); setFrame(next); };
   // Space plays and pauses. In the 3D window nothing else wants it. In the ghost editor it stays with
   // whatever has the focus, such as a field being typed in, and with any window opened over this one.
-  const section = React.useRef<HTMLElement>(null), toggle = React.useRef(togglePlay);
+  // The left and right arrows go back and forward one frame (ten with Shift), wherever a field, a list
+  // or a menu does not use them.
+  const section = React.useRef<HTMLElement>(null), toggle = React.useRef(togglePlay), stepBy = React.useRef((_: number) => {});
   toggle.current = togglePlay;
+  stepBy.current = (frames: number) => seek(Math.max(0, Math.min(total - 1, shown + frames)));
   React.useEffect(() => {
     let ours = false;
     const down = (e: KeyboardEvent) => {
-      if (e.code !== "Space" || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      const arrow = e.code === "ArrowLeft" ? -1 : e.code === "ArrowRight" ? 1 : 0;
+      if (e.code !== "Space" && !arrow) return;
       const target = e.target as Element | null;
       if (inline) {
         const box = section.current?.closest('[role="dialog"]');
         if (box && target && target !== document.body && !box.contains(target)) return;
         if (document.querySelector('[role="alertdialog"]')) return;
-        if (target?.closest?.('input, select, textarea, button, a, [role="button"], [role="menuitem"], [role="option"], [contenteditable="true"]')) return;
       }
+      if (arrow) {
+        if (document.querySelector('[role="menu"], [role="listbox"]')) return;
+        if (target?.closest?.('input, select, textarea, [role="slider"], [role="option"], [role="menuitem"], [role="tab"], [role="radio"], [role="combobox"], [contenteditable="true"]')) return;
+        e.preventDefault();
+        stepBy.current(arrow * (e.shiftKey ? 10 : 1));
+        return;
+      }
+      if (inline && target?.closest?.('input, select, textarea, button, a, [role="button"], [role="menuitem"], [role="option"], [contenteditable="true"]')) return;
       e.preventDefault();
       ours = true;
       if (!e.repeat) toggle.current();
@@ -246,8 +258,8 @@ function GhostPreview({ ghost, onFrame, inline = true }: { ghost: any; onFrame?:
     <div className="flex flex-wrap items-center gap-1.5">
       <Button size="sm" variant="secondary" className="h-7 gap-1 px-2 text-xs" title="Space" onClick={togglePlay} aria-label={playing ? "Pause" : "Play"}>{playing ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}{playing ? "Pause" : "Play"}</Button>
       <Button size="icon-sm" variant="ghost" aria-label="To the start" title="To the start" onClick={() => seek(0)}><SkipBack /></Button>
-      <Button size="icon-sm" variant="ghost" aria-label="Previous frame" title="Previous frame" onClick={() => seek(Math.max(0, shown - 1))}>‹</Button>
-      <Button size="icon-sm" variant="ghost" aria-label="Next frame" title="Next frame" onClick={() => seek(Math.min(total - 1, shown + 1))}>›</Button>
+      <Button size="icon-sm" variant="ghost" aria-label="Previous frame" title="Previous frame (←, Shift+← for 10)" onClick={() => seek(Math.max(0, shown - 1))}>‹</Button>
+      <Button size="icon-sm" variant="ghost" aria-label="Next frame" title="Next frame (→, Shift+→ for 10)" onClick={() => seek(Math.min(total - 1, shown + 1))}>›</Button>
       <label className="ml-1 flex items-center gap-1 text-[11px] text-muted-foreground">Speed
         <SelectBox aria-label="Preview speed" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} className="h-7 rounded-md border bg-background px-1 text-[11px]">
           {[.25, .5, 1, 2, 4].map((value) => <option key={value} value={value}>{value}×</option>)}

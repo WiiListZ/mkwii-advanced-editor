@@ -1,14 +1,18 @@
 // Beta: adds a primitive shape to the track model, deformed within limits, optionally with collision.
+// With "Keep it editable" its settings stay in the track, and `edit` opens such a shape again to change it.
 
 import * as React from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { X } from "lucide-react";
+import { CircleHelp, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { buildPrimitive, PRIMITIVE_DEFAULTS, PRIMITIVE_MAX_TRIANGLES, PRIMITIVE_SHAPES } from "../../../js/editor/primitives.js";
 import { editor } from "../editor";
 import { SelectBox } from "@/components/ui/select-box";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Hint } from "../common";
+import { primitiveName } from "../../../js/editor/primitive-store.js";
 
 type Field = { key: string; label: string; min: number; max: number; step: number; shapes?: string[] };
 const SIZE: Field[] = [
@@ -36,6 +40,7 @@ const DEFORM: Field[] = [
   { key: "roughness", label: "Roughness", min: 0, max: .5, step: .01 },
 ];
 const COLLISIONS: [string, string][] = [["none", "None"], ["0", "Road"], ["3", "Off-road"], ["12", "Wall"], ["6", "Boost panel"], ["7", "Boost ramp"]];
+const EDITABLE_HELP = "The shape's settings (size, deformations, colour, collision) are kept in a small file inside the track's .szs, which the game does not read. Select the shape later and press Edit this primitive… in the Inspector: this window opens again with them, and Apply puts the new shape in place of the old one, with its collision, where the shape stands now (Ctrl+Z brings the old one back). Its collision also follows the shape when you move, turn or resize it. Changes made to the shape by hand (vertices, UVs, turning it) are not kept when it is changed here, as it is built again from its settings. Off: the shape is an ordinary part of the model, as before.";
 
 function Slider({ field, value, onChange }: { field: Field; value: number; onChange: (value: number) => void }) {
   return <label className="flex items-center gap-2 text-xs">
@@ -45,10 +50,11 @@ function Slider({ field, value, onChange }: { field: Field; value: number; onCha
   </label>;
 }
 
-export function PrimitiveDialog({ close }: { close: (value: any) => void }) {
-  const [spec, setSpec] = React.useState<any>({ ...PRIMITIVE_DEFAULTS });
-  const [color, setColor] = React.useState("#c8c8c8");
-  const [collision, setCollision] = React.useState("none");
+export function PrimitiveDialog({ close, edit }: { close: (value: any) => void; edit?: any }) {
+  const [spec, setSpec] = React.useState<any>(() => ({ ...PRIMITIVE_DEFAULTS, ...(edit?.spec || {}) }));
+  const [color, setColor] = React.useState(edit?.color || "#c8c8c8");
+  const [collision, setCollision] = React.useState(edit ? (edit.collision === null || edit.collision === undefined ? "none" : String(edit.collision)) : "none");
+  const [editable, setEditable] = React.useState(false);
   const host = React.useRef<HTMLDivElement>(null), scene = React.useRef<any>(null);
   const [tris, error] = React.useMemo<[number[][], string]>(() => {
     try { return [buildPrimitive(spec), ""]; } catch (e: any) { return [[], e.message]; }
@@ -116,14 +122,16 @@ export function PrimitiveDialog({ close }: { close: (value: any) => void }) {
   const visible = (field: Field) => !field.shapes || field.shapes.includes(spec.shape);
   const place = () => {
     close(true);
-    void editor.addPrimitive(tris, color, collision === "none" ? null : Number(collision));
+    const type = collision === "none" ? null : Number(collision);
+    if (edit) void editor.editPrimitive(edit.id, tris, color, type, spec);
+    else void editor.addPrimitive(tris, color, type, { editable, spec });
   };
 
   return <div className="flex h-full min-h-0 flex-col gap-3">
     <div className="flex shrink-0 items-start gap-2">
       <div className="min-w-0 flex-1">
-        <DialogTitle className="text-sm">Add a primitive model (beta)</DialogTitle>
-        <DialogDescription className="text-xs">Build a shape and place it on the track as part of its model. Ctrl+Z in the main window takes it away.</DialogDescription>
+        <DialogTitle className="text-sm">{edit ? `Edit ${primitiveName(edit)} (beta)` : "Add a primitive model (beta)"}</DialogTitle>
+        <DialogDescription className="text-xs">{edit ? "Change its settings: Apply builds it again where it stands now, with its collision. Ctrl+Z in the main window brings back the shape it had." : "Build a shape and place it on the track as part of its model. Ctrl+Z in the main window takes it away."}</DialogDescription>
       </div>
       <Button size="icon-sm" variant="ghost" title="Close" aria-label="Close primitive editor" onClick={() => close(null)}><X /></Button>
     </div>
@@ -150,13 +158,17 @@ export function PrimitiveDialog({ close }: { close: (value: any) => void }) {
               {COLLISIONS.map(([id, text]) => <option key={id} value={id}>{text}</option>)}
             </SelectBox></label>
           {collision === "none" && <p className="text-[11px] text-muted-foreground">Without collision karts drive through it.</p>}
+          {!edit && <div className="flex items-center gap-2 text-xs">
+            <label className="flex items-center gap-2"><Checkbox aria-label="Keep it editable" checked={editable} onCheckedChange={(value) => setEditable(value === true)} data-primitive-editable />Keep it editable</label>
+            <Hint title="Keep it editable" text={EDITABLE_HELP}><button type="button" aria-label="What Keep it editable does" className="text-muted-foreground hover:text-foreground" data-primitive-editable-help><CircleHelp className="size-3.5" /></button></Hint>
+          </div>}
         </section>
       </div>
     </div>
     <div className="flex shrink-0 items-center justify-end gap-2">
       <span className={error ? "mr-auto text-[11px] text-destructive" : "mr-auto text-[11px] text-muted-foreground"}>{error || `${tris.length} triangles (limit ${PRIMITIVE_MAX_TRIANGLES})`}</span>
       <Button variant="ghost" onClick={() => close(null)}>Cancel</Button>
-      <Button disabled={!tris.length} onClick={place}>Place on the track…</Button>
+      <Button disabled={!tris.length} onClick={place}>{edit ? "Apply" : "Place on the track…"}</Button>
     </div>
   </div>;
 }

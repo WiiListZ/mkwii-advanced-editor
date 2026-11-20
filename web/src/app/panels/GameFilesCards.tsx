@@ -42,7 +42,7 @@ export function ObjectDocumentationButtons() {
           <Button size="sm" variant="secondary" className="w-full" aria-label="Replace with JSON…" onClick={() => void ed.replaceObjectDocumentation()} title="Use a documentation JSON in place of the one in use now"><FolderOpen /> Replace…</Button>
           <Button size="sm" variant="secondary" className="w-full" aria-label="Export JSON…" onClick={() => void ed.exportObjectDocumentation()} title="Save the documentation in use as a JSON file, to edit it and choose it with Replace…"><Download /> Export…</Button>
         </div>
-        {ed.usesCustomObjectDocumentation && <Button size="sm" variant="ghost" className="w-full justify-start" onClick={() => void ed.restoreDefaultObjectDocumentation()} title="Use the editor's own documentation again"><RotateCcw /> Restore default</Button>}
+        {ed.usesCustomDocumentation && <Button size="sm" variant="ghost" className="w-full justify-start" onClick={() => void ed.restoreDefaultObjectDocumentation()} title="Use the editor's own documentation again"><RotateCcw /> Restore default</Button>}
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
         <button type="button" className={linkClass} onClick={() => void dialogs.open("help", { tab: "objectDocs" })}><CircleHelp className="size-3" /> JSON format</button>

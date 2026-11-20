@@ -40,6 +40,36 @@ export function gateAcross(point, direction, groundAt, { step = 100, most = 8000
   };
 }
 
+// The way karts go at `point` ([x, y, z]): along the nearest point of the enemy routes (ENPT groups),
+// from the point before it to the one after, as [dx, dz]; null when no route point is within
+// `maxDistance`.
+export function routeDirection(enpt, point, maxDistance = 6000) {
+  let best = null, bestDistance = Infinity;
+  for (const group of enpt || []) {
+    const points = group.points || [];
+    if (points.length < 2) continue;
+    points.forEach((p, i) => {
+      const distance = Math.hypot(p.pos[0] - point[0], p.pos[2] - point[2]);
+      if (distance >= bestDistance) return;
+      const a = points[Math.max(0, i - 1)].pos, b = points[Math.min(points.length - 1, i + 1)].pos;
+      bestDistance = distance; best = [b[0] - a[0], b[2] - a[2]];
+    });
+  }
+  return best && bestDistance < maxDistance ? best : null;
+}
+
+// Which way a trigger piece faces, from its triangles' normal (sum) and the way karts go there:
+// "toward" (crossed going forward), "ahead" (crossed by karts driving back), "flat" (crossed from
+// above or below), "sideways", or "upright" when no route says the way.
+export function gateFacing(normal, direction) {
+  const length = Math.hypot(...normal) || 1, ny = normal[1] / length;
+  if (Math.abs(ny) > 0.5) return 'flat';
+  if (!direction) return 'upright';
+  const d = Math.hypot(direction[0], direction[1]) || 1, h = Math.hypot(normal[0], normal[2]) || 1;
+  const dot = (normal[0] * direction[0] + normal[2] * direction[1]) / d / h;
+  return dot < -0.5 ? 'toward' : dot > 0.5 ? 'ahead' : 'sideways';
+}
+
 // How far before the gate the one for karts going back stands: Nintendo's own pairs are about 200
 // apart along the road.
 export const BACK_GATE_GAP = 200;

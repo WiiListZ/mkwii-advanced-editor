@@ -1,8 +1,9 @@
 import * as React from "react";
 import {
   ArrowDownToLine, ArrowRight, BrickWall, ChevronRight, ClipboardPaste, Compass, Copy, Crosshair, ImagePlus, Lightbulb, MoveHorizontal, Paintbrush, Plus, Settings2, StretchHorizontal, Trash2, X,
-  Volume2, Sparkles,
+  Volume2, Sparkles, Shapes,
 } from "lucide-react";
+import { primitiveName } from "../../../js/editor/primitive-store.js";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -507,15 +508,19 @@ function ModelInspector() {
   const chosen = textures.find((t: any) => t.name === texture);
   const supported = chosen && [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 14].includes(chosen.format);
   const modelBytes = ed.doc.szs && findFile(ed.doc.szs, "course_model.brres")?.data;
+  const primitive = ed.primitiveOfPart(selected.partIndex);
   return (
     <div className="flex flex-col gap-4 p-4">
       <div>
         <div className="flex items-baseline gap-2">
-          <div className="min-w-0 flex-1 truncate text-sm font-semibold">{selected.name}</div>
-          <span className="shrink-0 text-[11px] text-muted-foreground">Track model</span>
+          <div className="min-w-0 flex-1 truncate text-sm font-semibold">{primitive ? primitiveName(primitive) : selected.name}</div>
+          <span className="shrink-0 text-[11px] text-muted-foreground">{primitive ? "Editable primitive" : "Track model"}</span>
         </div>
         <p className="mt-1 text-xs text-muted-foreground">Use Move, Rotate or Scale in the toolbar. Save the SZS to keep the change.</p>
       </div>
+      {primitive && <Hint title="Edit this primitive" text="Opens the shape's settings again: Apply builds it again where it stands now, with its collision. Ctrl+Z brings back the shape it had.">
+        <Button size="sm" className="self-start" onClick={() => dialogs.open("primitive", { edit: primitive })} data-edit-primitive><Shapes /> Edit this primitive…</Button>
+      </Hint>}
       <div className="flex flex-wrap gap-1.5">
         <Button size="sm" variant="secondary" onClick={() => ed.cmd("copy")}><Copy /> Copy</Button>
         <Button size="sm" variant="secondary" onClick={() => ed.cmd("paste")} disabled={!ed.modelClipboard}><ClipboardPaste /> Paste</Button>

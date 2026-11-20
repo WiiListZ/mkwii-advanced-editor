@@ -14,7 +14,7 @@ import { GameAssets } from "../../js/editor/assets.js";
 import { generateTrackArchive } from "./generated-track";
 import { validate } from "../../js/editor/validate.js";
 import { isYaz0, yaz0Decompress } from "../../js/formats/yaz0.js";
-import { isU8, parseU8, buildU8, findFile, setFile, setFilePath, newSzsTree, listFiles } from "../../js/formats/u8.js";
+import { isU8, parseU8, buildU8, findFile, setFile, setFilePath, deleteFilePath, newSzsTree, listFiles } from "../../js/formats/u8.js";
 import { parseKMP, buildKMP, make } from "../../js/formats/kmp.js";
 import { introChain, introIndex, introPose, introTimeline, selectionIndex, setCameraHeader, setIntroChain, simulateCamera } from "../../js/editor/cameras.js";
 import { appendShot, fixIntroShots, introKeyframes, introShotIssues, moveKey, removeKey, setKeyPose, shotSpeedLimits, splitShot } from "../../js/editor/intro-keys.js";
@@ -26,13 +26,15 @@ import { compareTrack, differencePlaces } from "../../js/editor/track-diff.js";
 import { DIFFERENCE_COLOURS } from "./dialogs/TrackCompareDialog";
 import { kartArchiveName } from "../../js/editor/kart-archives.js";
 import { applyCHRFrame, bindCHR, cloneModel } from "../../js/editor/brresmodel.js";
-import { primitiveOBJ } from "../../js/editor/primitives.js";
+import { primitiveOBJ, primitiveSpec } from "../../js/editor/primitives.js";
+import { PRIMITIVE_STORE_PATH, composeMove, editTriangles, entryCollision, matchTrianglePairs, matchTriangles, moveTriangles, nextPrimitiveId, partsBox, placedTriangles, placementMatrix, primitiveName, primitiveOfPart, readPrimitiveStore, standPoint, writePrimitiveStore } from "../../js/editor/primitive-store.js";
 import { parseKCL, buildKCL, patchKCLFlags } from "../../js/formats/kcl.js";
-import { GATE_TYPES, gateAcross, gatePair } from "../../js/editor/trigger-gate.js";
+import { GATE_TYPES, gateAcross, gatePair, routeDirection } from "../../js/editor/trigger-gate.js";
 import { parseOBJ, kclToOBJ, modelToOBJ } from "../../js/formats/obj.js";
 import { clearBRRESPolygon, isBRRES, parseBRRES, polygonPieces, resetPieceMemory, replaceBRRESTexture, restBRRESPartsOnPoint, setCHR0Loop, transformBRRESPart, translateBRRESPart } from "../../js/formats/brres.js";
 import { BrresModelBuilder, mainModel } from "../../js/editor/brresmodel.js";
 import { BUILTIN_OBJECTS, KCL_TYPES, OBJECT_DISPLAY, OBJECT_INFO, TRACK_NAMES, makeFlag, objectDisplayY, parseObjFlow, trackKind, trackLabel } from "../../js/data/defs.js";
+import { collisionDocumentation, defaultCollisionDocumentation, parseCollisionDocumentation, useDefaultCollisionDocumentation } from "../../js/data/collision-documentation.js";
 import { BUILTIN_OBJECT_DOCUMENTATION, OBJECT_INFO_URL, defaultDocumentation, mergeDocumentationUpdate, objectDocumentation, parseObjectDocumentation, useDefaultDocumentation } from "../../js/data/object-documentation.js";
 import { externalPath, parseRiivolution } from "../../js/formats/riivolution.js";
 import { findRiivolutionWorkspace, findWorkspaceRoot, resolveRiivolutionPath } from "../../js/editor/workspace.js";
@@ -158,6 +160,9 @@ export class Editor {
   objectNames: Record<number, string> = { ...BUILTIN_OBJECTS };
   customObjectDocumentation: Record<string, any> = {};
   customObjectDocumentationName = "";
+  // The "collisions" part of the person's documentation JSON (as written, and checked), or null.
+  customCollisionJson: Record<string, any> | null = null;
+  customCollisionDocumentation: Record<string, any> | null = null;
   commonPath: string | null = null;
   library: { folder: string; tracks: number; models: number; loading: boolean; error?: string } | null = null;
   // Every archive of the tracks folder with the files it holds (from the library's index): where an
@@ -330,6 +335,11 @@ export class Editor {
             : transformBRRESPart(data, target.modelName, target.partIndex, indices, { center, translation, rotation, scale }, allowed.get(target.modelName));
         }
         node.data = data;
+        const whole = [...byPart.values()].filter((target: any) => {
+          const part = target.mesh?.userData?.modelPart;
+          return part && new Set(part.positionIndices || []).size <= target.positionIndices.size;
+        }).map((target: any) => ({ modelName: target.modelName, partName: target.mesh.userData.modelPart.name }));
+        if (whole.length) this.movePrimitiveCollision(whole, { center, translation, rotation: mode === "translate" ? [0, 0, 0, 1] : rotation, scale: mode === "translate" ? [1, 1, 1] : scale });
         this.doc.endEdit(`${{ translate: "Move", rotate: "Rotate", scale: "Scale" }[mode] || "Transform"} ${targets.length} track model part${targets.length === 1 ? "" : "s"}`);
         this.doc.emit("model");
       } catch (e: any) {
@@ -376,6 +386,11 @@ export class Editor {
       if (this.settings.hideMoveArrows) this.settings.dragToMove = true;
       // "Auto" was removed: the model view, with the collision over it in the Collision tab (see setTab).
       if (!["visual", "collision", "both"].includes(this.settings.displayMode)) this.settings.displayMode = "visual";
+      // The Settings dialog used to save the Collision tab's temporary Both: back to Model once, then the person's choice is kept.
+      if (s.displayModeBothReset !== true) {
+        if (this.settings.displayMode === "both") this.settings.displayMode = "visual";
+        this.saveSettings({ displayMode: this.settings.displayMode, displayModeBothReset: true });
+      }
       // A generated track starts with its textured model, independently of the saved collision view.
       // This override belongs to this window and must not be saved over the person's preference.
       if (startupView === "visual") this.settings.displayMode = "visual";
@@ -415,6 +430,12 @@ export class Editor {
         // Entries imported before 1.0.5 (added to the old built-in documentation) give way to the new
         // default documentation; a JSON of the person's can be chosen again with Replace with JSON….
         this.saveSettings({ objectDocumentation: {} });
+      }
+      if (s.customCollisionDocumentation?.collisions) {
+        try {
+          this.customCollisionDocumentation = parseCollisionDocumentation(s.customCollisionDocumentation.collisions);
+          this.customCollisionJson = s.customCollisionDocumentation.collisions;
+        } catch (error) { console.warn("Collision documentation could not be loaded:", error); }
       }
       void this.updateDefaultObjectDocumentation(s.objectDocumentationOnline);
       if (s.objectResources) this.assets.setObjectInfo(Object.fromEntries(Object.entries(s.objectResources).map(([k, v]) => [Number(k), { name: this.objectNames[Number(k)], resources: v }])));
@@ -480,6 +501,11 @@ export class Editor {
   }
 
   setSettings(patch: Partial<Settings>) {
+    // The Settings dialog sends every value back: the Collision tab's temporary Both is not a choice.
+    if (this.collisionTabView && patch.displayMode === this.settings.displayMode) {
+      const { displayMode, ...rest } = patch;
+      patch = rest;
+    }
     Object.assign(this.settings, patch);
     this.saveSettings(patch as any);
     if ("uiFont" in patch) applyUiFont(this.settings.uiFont);
@@ -562,6 +588,33 @@ export class Editor {
   // The object documentation in use: the editor's default JSON (object-documentation.json), or a JSON
   // chosen by the person, which replaces it entirely until Restore default.
   get usesCustomObjectDocumentation() { return Object.keys(this.customObjectDocumentation).length > 0; }
+  // Either part (objects or collisions) of the person's documentation in use.
+  get usesCustomDocumentation() { return this.usesCustomObjectDocumentation || !!this.customCollisionJson; }
+
+  // What is known of a surface type on the open track (collision-documentation.js): the person's
+  // documentation completes the default one.
+  getCollisionDocumentation(type: number) {
+    return collisionDocumentation(type, this.doc.fileName || "", this.customCollisionDocumentation);
+  }
+  // The documentation in use as one JSON: objects and collisions, the person's or the default.
+  documentationJson() {
+    return {
+      version: 1,
+      objects: this.usesCustomObjectDocumentation ? this.customObjectDocumentation : defaultDocumentation().json.objects,
+      collisions: this.customCollisionJson || defaultCollisionDocumentation().json,
+    };
+  }
+  // The person's collision documentation ("collisions" of a JSON), or null for the default.
+  useCollisionDocumentation(json: Record<string, any> | null) {
+    this.customCollisionDocumentation = json ? parseCollisionDocumentation(json) : null;
+    this.customCollisionJson = json;
+    this.saveSettings({ customCollisionDocumentation: json ? { collisions: json } : null });
+    this.bump("settings", "doc", "kcl");
+  }
+  // The default collision documentation follows the online object documentation when it has one.
+  private useDefaultCollisions(json: any) {
+    try { useDefaultCollisionDocumentation(json?.collisions || null); } catch (error) { console.warn("Online collision documentation is not valid:", error); }
+  }
   get objectDocumentationInUse(): Record<string, any> { return this.usesCustomObjectDocumentation ? this.customObjectDocumentation : defaultDocumentation().objects; }
 
   // Display metadata for the music already written into each game's stream folder.
@@ -577,6 +630,7 @@ export class Editor {
     if (cached?.json) {
       try {
         useDefaultDocumentation(cached.json, { kind: "online", fetched: cached.fetched });
+        this.useDefaultCollisions(cached.json);
         this.objectDocumentationUpdated = cached.fetched;
         this.bringInDefaultUpdate();
         this.bump("settings", "doc");
@@ -592,6 +646,7 @@ export class Editor {
       const json = JSON.parse(text);
       const fetched = new Date().toISOString();
       useDefaultDocumentation(json, { kind: "online", fetched });
+      this.useDefaultCollisions(json);
       this.objectDocumentationUpdated = fetched;
       this.saveSettings({ objectDocumentationOnline: { fetched, json } });
       this.bringInDefaultUpdate();
@@ -630,13 +685,19 @@ export class Editor {
     if (!file) return;
     try {
       if (file.data.length > 2_000_000) throw new Error("The JSON file is larger than 2 MB");
-      const objects = parseObjectDocumentation(JSON.parse(new TextDecoder().decode(file.data)));
+      const json = JSON.parse(new TextDecoder().decode(file.data));
+      // Objects, collisions or both: a JSON with only "collisions" leaves the objects' documentation as it is.
+      const collisions = json?.collisions !== undefined ? parseCollisionDocumentation(json.collisions) : null;
+      const objects = json?.objects !== undefined || !collisions ? parseObjectDocumentation(json) : null;
+      const parts = [objects && `${Object.keys(objects).length} objects`, collisions && `${Object.keys(collisions).length} collision types`].filter(Boolean).join(" and ");
       if (!(await dialogs.confirm({
-        title: "Replace the object documentation?",
-        description: `${file.name} (${Object.keys(objects).length} entries) will be used instead of the ${this.usesCustomObjectDocumentation ? "JSON in use now" : "editor's default documentation"}. Objects it does not describe show as Unknown. Restore default brings the editor's documentation back at any time.`,
+        title: "Replace the documentation?",
+        description: `${file.name} (${parts}) will be used instead of the ${this.usesCustomDocumentation ? "JSON in use now" : "editor's default documentation"}.${objects ? " Objects it does not describe show as Unknown." : ""}${collisions ? " Its collision entries complete the default ones." : ""} Restore default brings the editor's documentation back at any time.`,
         confirmLabel: "Replace",
       }))) return;
-      this.useObjectDocumentation(objects, file.name);
+      if (collisions) this.useCollisionDocumentation(json.collisions);
+      if (objects) this.useObjectDocumentation(objects, file.name);
+      else toast.success(`Collision documentation: ${file.name}`, { description: `${Object.keys(collisions!).length} collision types, remembered for the next launch.` });
     } catch (error: any) { toast.error("Could not use this JSON", { description: error.message }); }
   }
 
@@ -655,18 +716,19 @@ export class Editor {
   }
 
   async restoreDefaultObjectDocumentation() {
-    if (!this.usesCustomObjectDocumentation) return;
-    if (!(await dialogs.confirm({ title: "Restore the default object documentation?", description: `The editor's own documentation is used again in place of ${this.customObjectDocumentationName || "the chosen JSON"}. A JSON file of yours on disk is not changed.`, confirmLabel: "Restore default" }))) return;
-    this.useObjectDocumentation(null);
+    if (!this.usesCustomDocumentation) return;
+    if (!(await dialogs.confirm({ title: "Restore the default documentation?", description: `The editor's own documentation is used again in place of ${this.customObjectDocumentationName || "the chosen JSON"}, for objects and collisions. A JSON file of yours on disk is not changed.`, confirmLabel: "Restore default" }))) return;
+    if (this.customCollisionJson) this.useCollisionDocumentation(null);
+    if (this.usesCustomObjectDocumentation) this.useObjectDocumentation(null);
+    else toast.success("Default documentation restored");
   }
 
   // Saves the documentation in use as a JSON file, a starting point to edit and choose with Replace.
   async exportObjectDocumentation() {
     const path = await api.chooseSavePath("object-documentation.json", FILTERS.json, "Export object documentation");
     if (!path) return;
-    const objects = this.usesCustomObjectDocumentation ? this.customObjectDocumentation : defaultDocumentation().json.objects;
     try {
-      await api.writeFile(path, new TextEncoder().encode(JSON.stringify({ version: 1, objects }, null, 2) + "\n"));
+      await api.writeFile(path, new TextEncoder().encode(JSON.stringify(this.documentationJson(), null, 2) + "\n"));
       toast.success("Object documentation exported", { description: path });
     } catch (error: any) { toast.error("Could not export the documentation", { description: error.message }); }
   }
@@ -1555,34 +1617,137 @@ export class Editor {
   }
 
   // ---- Primitive models ---------------------------------------------------------------------------
-  // Beta. tris: flat triangles with their base on y = 0, centred on the origin.
-  async addPrimitive(tris: number[][], color: string, collisionType: number | null) {
+  // Beta. tris: flat triangles with their base on y = 0, centred on the origin (buildPrimitive).
+  // `editable`: the shape's settings are kept in the archive (PRIMITIVE_STORE_PATH) so that it can be
+  // changed later with editPrimitive; its collision then follows the model when it is moved.
+  primitiveStore() {
+    return readPrimitiveStore(this.doc.szs ? findFile(this.doc.szs, PRIMITIVE_STORE_PATH)?.data : null);
+  }
+
+  // The editable primitive a course-model polygon belongs to.
+  primitiveOfPart(partIndex: number) {
+    const brres = this.doc.szs && this.assets?.brres(this.doc.szs, "course_model.brres");
+    const model = brres && mainModel(brres, "course"), part = model?.objects[partIndex];
+    return part ? primitiveOfPart(this.primitiveStore(), model.name, part.name) : null;
+  }
+
+  // Imports the shape into the course model standing on `point`: the new model and its polygons.
+  private async primitiveModel(data: Uint8Array, tris: number[][], color: string, point: number[]) {
+    const path = await api.writeTemp("primitive.obj", new TextEncoder().encode(primitiveOBJ(tris, color)));
+    try {
+      const before = parseBRRES(data);
+      let next = (await api.import3DModel(data, path, point, "")).data as Uint8Array;
+      const parsed = parseBRRES(next);
+      const model = parsed.models.find((m: any) => m.name === "course") || parsed.models[0];
+      const prior = before.models.find((m: any) => m.name === model.name);
+      const oldNames = new Set(prior?.objects.map((o: any) => o.name));
+      const indices: number[] = model.objects.flatMap((o: any, i: number) => oldNames.has(o.name) ? [] : [i]);
+      if (!indices.length) throw new Error("The shape was not found in the model after importing it");
+      next = this.restPartOnPoint(next, model.name, indices, point);
+      const parts: string[] = indices.map((i) => model.objects[i].name);
+      const box = partsBox(next, model.name, parts);
+      if (!box) throw new Error("The shape has no faces in the model");
+      return { data: next, model: model.name as string, parts, partIndex: indices[0], matrix: placementMatrix(tris, box) };
+    } finally {
+      api.removeTemp(path).catch(() => {});
+    }
+  }
+
+  async addPrimitive(tris: number[][], color: string, collisionType: number | null, options: { editable?: boolean; spec?: any } = {}) {
     const node = this.doc.szs && findFile(this.doc.szs, "course_model.brres");
     if (!node) return toast.error("Open a track with course_model.brres first");
     const point = await this.pickPoint("Click on the track where the shape goes · Esc for the centre of the view");
     const target = point || this.viewport?.viewCenterPoint() || [0, 0, 0];
-    const path = await api.writeTemp("primitive.obj", new TextEncoder().encode(primitiveOBJ(tris, color)));
     try {
-      const before = node.data;
-      await this.importTrackModelPath(path, target);
-      if (node.data === before) return;
-      if (collisionType === null) return;
-      const kcl = this.doc.kcl, oldVerts = kcl?.verts || new Float32Array(0), oldFlags = kcl?.flags || new Uint16Array(0);
-      const count = oldFlags.length, verts = new Float32Array((count + tris.length) * 9), flags = new Uint16Array(count + tris.length);
-      for (let i = 0; i < count; i++) { flags[i] = oldFlags[i]; }
-      verts.set(oldVerts.subarray(0, count * 9));
-      tris.forEach((tri, t) => {
-        for (let c = 0; c < 9; c += 3) verts.set([tri[c] + target[0], tri[c + 1] + target[1], tri[c + 2] + target[2]], (count + t) * 9 + c);
-        flags[count + t] = makeFlag(collisionType, 0, 0);
+      await this.withBusy("Adding the shape…", async () => {
+        const made = await this.primitiveModel(node.data, tris, color, target);
+        const collision = collisionType === null ? null
+          : editTriangles(this.doc.kcl, [], placedTriangles(tris, made.matrix), makeFlag(collisionType, 0, 0));
+        if (collision && collision.flags.length > KCL_MAX_TRIANGLES) throw new Error(`The collision would have more than ${KCL_MAX_TRIANGLES} triangles`);
+        const store = this.primitiveStore();
+        if (options.editable) store.primitives.push({ id: nextPrimitiveId(store), model: made.model, parts: made.parts, spec: primitiveSpec(options.spec), color, collision: collisionType, matrix: made.matrix });
+        const nextKCL = collision && parseKCL(buildKCL(collision.verts, collision.flags));
+        this.viewport?.selectGeometry(null);
+        this.doc.change(options.editable ? "Add editable primitive model" : "Add primitive model", () => {
+          node.data = made.data;
+          if (nextKCL) this.doc.setKCL(nextKCL, true);
+          if (options.editable) this.writePrimitiveStore(store);
+        }, { structural: true, archivePaths: options.editable ? [PRIMITIVE_STORE_PATH] : [] });
+        this.doc.emit("model");
+        await this.assets?.setTrack(this.doc.szs);
+        this.viewport?.selectModelPiece(made.partIndex, 0);
+        this.bump("doc");
       });
-      const next = parseKCL(buildKCL(verts, flags));
-      this.doc.change("Add primitive collision", () => { this.doc.setKCL(next, true); }, { structural: false });
-      toast.success("Collision added with the shape");
+      toast.success(collisionType === null ? "Shape added" : "Shape added with its collision", {
+        description: options.editable ? "Select it and press Edit this primitive… in the Inspector to change it. Ctrl+Z takes it away." : "Ctrl+Z takes it away. Save the SZS to keep it.",
+      });
     } catch (e: any) {
       toast.error("Could not add the shape", { description: e.message });
-    } finally {
-      api.removeTemp(path).catch(() => {});
     }
+  }
+
+  private writePrimitiveStore(store: any) {
+    const bytes = writePrimitiveStore(store);
+    if (bytes) setFilePath(this.doc.szs, PRIMITIVE_STORE_PATH, bytes);
+    else if (findFile(this.doc.szs, PRIMITIVE_STORE_PATH)) deleteFilePath(this.doc.szs, PRIMITIVE_STORE_PATH);
+  }
+
+  // Replaces an editable primitive with the same shape built from new settings, where its model stands
+  // now; its old collision goes and the new one comes, in one Undo step.
+  async editPrimitive(id: number, tris: number[][], color: string, collisionType: number | null, spec: any) {
+    const node = this.doc.szs && findFile(this.doc.szs, "course_model.brres");
+    const store = this.primitiveStore(), entry = store.primitives.find((p: any) => p.id === id);
+    if (!node || !entry) return toast.error("This primitive is no longer in the track");
+    try {
+      await this.withBusy("Changing the shape…", async () => {
+        const box = partsBox(node.data, entry.model, entry.parts);
+        if (!box) throw new Error("Its model was deleted from the track");
+        let data = node.data;
+        for (const part of entry.parts) data = clearBRRESPolygon(data, entry.model, part);
+        const made = await this.primitiveModel(data, tris, color, standPoint(box));
+        const old = matchTriangles(this.doc.kcl, entryCollision(entry));
+        const add = collisionType === null ? [] : placedTriangles(tris, made.matrix);
+        const collision = old.length || add.length ? editTriangles(this.doc.kcl, old, add, makeFlag(collisionType ?? 0, 0, 0)) : null;
+        if (collision && collision.flags.length > KCL_MAX_TRIANGLES) throw new Error(`The collision would have more than ${KCL_MAX_TRIANGLES} triangles`);
+        Object.assign(entry, { model: made.model, parts: made.parts, spec: primitiveSpec(spec), color, collision: collisionType, matrix: made.matrix });
+        const nextKCL = collision && parseKCL(buildKCL(collision.verts, collision.flags));
+        this.viewport?.selectGeometry(null);
+        this.doc.change(`Edit ${primitiveName(entry)}`, () => {
+          node.data = made.data;
+          if (nextKCL) this.doc.setKCL(nextKCL, true);
+          this.writePrimitiveStore(store);
+        }, { structural: true, archivePaths: [PRIMITIVE_STORE_PATH] });
+        this.doc.emit("model");
+        await this.assets?.setTrack(this.doc.szs);
+        this.viewport?.selectModelPiece(made.partIndex, 0);
+        this.bump("doc");
+      });
+      toast.success(`${primitiveName(entry)} changed`, { description: "Ctrl+Z brings back the shape it had." });
+    } catch (e: any) {
+      toast.error("Could not change the shape", { description: e.message });
+    }
+  }
+
+  // Moving the whole model of editable primitives moves their collision the same way, in the move's
+  // own history step (the primitives file is added to what it restores).
+  private movePrimitiveCollision(moved: { modelName: string; partName: string }[], move: any) {
+    if (!this.doc.szs || !this.doc.pending) return;
+    const store = this.primitiveStore();
+    const entries = store.primitives.filter((p: any) => moved.some((m) => m.modelName === p.model && p.parts.includes(m.partName)));
+    if (!entries.length) return;
+    let kcl = this.doc.kcl;
+    for (const entry of entries) {
+      const before = entryCollision(entry);
+      entry.matrix = composeMove(entry.matrix, move);
+      if (!before.length || !kcl) continue;
+      const pairs = matchTrianglePairs(kcl, before);
+      if (!pairs.length) continue;
+      const next = moveTriangles(kcl, pairs, entryCollision(entry));
+      kcl = parseKCL(buildKCL(next.verts, next.flags));
+    }
+    this.doc.pending.archiveFiles = [{ path: PRIMITIVE_STORE_PATH, data: findFile(this.doc.szs, PRIMITIVE_STORE_PATH)?.data ?? null }];
+    this.writePrimitiveStore(store);
+    if (kcl && kcl !== this.doc.kcl) this.doc.setKCL(kcl, true);
   }
 
   // ---- Minimap (map_model.brres of the open track) ---------------------------------------------
@@ -2321,6 +2486,41 @@ export class Editor {
     const kcl = this.doc.kcl;
     if (!kcl || !selected.length || type < 0 || type > 31) return;
     this.doc.change("Edit collision type", () => { for (const tri of selected) kcl.flags[tri] = (kcl.flags[tri] & ~31) | type; }, { structural: false, kclFlags: true });
+  }
+
+  // The other settings of the selected collision: variant (bits 5–7), shadow (8–10) and the Trickable
+  // flag (0x2000), the rest of each flag kept.
+  editCollisionFlag(patch: { variant?: number; shadow?: number; trickable?: boolean }) {
+    const selected = this.selectedCollisionTriangles();
+    const kcl = this.doc.kcl;
+    if (!kcl || !selected.length) return;
+    const set = (flag: number) => {
+      if (patch.variant !== undefined) flag = (flag & ~0xe0) | ((patch.variant & 7) << 5);
+      if (patch.shadow !== undefined) flag = (flag & ~0x700) | ((patch.shadow & 7) << 8);
+      if (patch.trickable !== undefined) flag = patch.trickable ? flag | 0x2000 : flag & ~0x2000;
+      return flag;
+    };
+    if (selected.every((tri) => set(kcl.flags[tri]) === kcl.flags[tri])) return;
+    const what = patch.variant !== undefined ? "variant" : patch.shadow !== undefined ? "shadow" : "Trickable";
+    this.doc.change(`Edit collision ${what}`, () => { for (const tri of selected) kcl.flags[tri] = set(kcl.flags[tri]); }, { structural: false, kclFlags: true });
+  }
+
+  // Selects collision triangles (from the list in the Collision tab), selecting triangles if needed;
+  // focus: the view moves to them.
+  selectCollisionTriangles(tris: number[], { focus = false, mode = "replace" }: { focus?: boolean; mode?: "replace" | "add" | "toggle" } = {}) {
+    const vp = this.viewport;
+    if (!vp || !this.doc.kcl || !tris.length) return;
+    if (!(this.tool?.type === "geometry" && this.tool.target === "collision")) this.startGeometryEditing("collision");
+    vp.selectGeometry({ type: "collision", tris, tri: tris[0] }, mode);
+    if (focus && vp.geometrySelection) vp.frameBox(vp.geometryBox(vp.geometrySelection).expandByScalar(400));
+  }
+
+  // New collision of a surface type: a shape drawn in the 3D view, or (gate) a trigger gate clicked on the road.
+  addCollision(type: number, kind: CollisionShapeKind | "gate", variant?: number) {
+    this.setPaint({ type, ...(variant !== undefined ? { variant } : this.paint.type !== type ? { variant: 0 } : {}) });
+    if (kind === "gate") { this.setPaint({ gate: true }); this.startPainting(); return; }
+    this.setCollisionShape({ kind });
+    this.startCollisionDrawing(kind);
   }
 
   // Where a placed object's model is drawn: KMP position, rotation and scale plus the display offset.
@@ -3167,18 +3367,8 @@ export class Editor {
 
   // The way karts go at a point: along the nearest enemy route, else the way the camera looks.
   private travelDirection(point: number[]): [number, number] {
-    let best: [number, number] | null = null, bestDistance = Infinity;
-    for (const group of this.doc.kmp.ENPT || []) {
-      const points = group.points || [];
-      points.forEach((p: any, i: number) => {
-        const distance = Math.hypot(p.pos[0] - point[0], p.pos[2] - point[2]);
-        if (distance >= bestDistance || points.length < 2) return;
-        const a = points[Math.max(0, i - 1)].pos, b = points[Math.min(points.length - 1, i + 1)].pos;
-        if (a === b) return;
-        bestDistance = distance; best = [b[0] - a[0], b[2] - a[2]];
-      });
-    }
-    if (best && bestDistance < 6000) return best;
+    const along = routeDirection(this.doc.kmp.ENPT, point);
+    if (along) return along as [number, number];
     const look = new THREE.Vector3();
     this.viewport.camera.getWorldDirection(look);
     return [look.x, look.z];

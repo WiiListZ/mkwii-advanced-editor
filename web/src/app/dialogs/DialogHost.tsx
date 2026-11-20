@@ -172,7 +172,7 @@ function DialogSwitch({ entry }: { entry: DialogEntry }) {
       case "scene": return <SceneDialog brres={p.brres} title={p.title} close={close} />;
       case "animationEditor": return <AnimationEditorDialog brres={p.brres} title={p.title} initial={p.initial} close={close} />;
       case "sculpt": return <SculptDialog close={close} />;
-      case "primitive": return <PrimitiveDialog close={close} />;
+      case "primitive": return <PrimitiveDialog close={close} edit={p.edit} />;
       case "mapColour": return <MapColourDialog close={close} />;
       case "fog": return <FogDialog close={close} />;
       case "versions": return <VersionsDialog close={close} />;
