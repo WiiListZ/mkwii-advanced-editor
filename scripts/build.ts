@@ -51,8 +51,9 @@ async function baselineRuntime() {
   await mkdir(dir, { recursive: true });
   const zipPath = join(dir, `${name}.zip`);
   await Bun.write(zipPath, zip);
-  await run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
-    `Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${dir}' -Force`]);
+  // Windows' own tar reads zip files. Expand-Archive broke when Windows PowerShell was started from
+  // PowerShell 7 (as on GitHub's runners), which loads PowerShell 7's archive module into it.
+  await run([join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe"), "-xf", zipPath, "-C", dir]);
   if (!(await Bun.file(exe).exists())) throw new Error(`bun.exe not found in ${name}.zip`);
   return exe;
 }
